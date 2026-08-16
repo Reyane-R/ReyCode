@@ -290,11 +290,17 @@ defmodule ReyCode.Diagnostics do
     case URI.new(raw) do
       {:ok, %URI{scheme: scheme, host: host, port: port}}
       when scheme in ["http", "https"] and is_binary(host) and host != "" ->
-        URI.to_string(%URI{scheme: scheme, host: host, port: explicit_port(scheme, port)})
+        format_endpoint(scheme, host, explicit_port(scheme, port))
 
       _other ->
         "[unavailable]"
     end
+  end
+
+  defp format_endpoint(scheme, host, port) do
+    host = if String.contains?(host, ":"), do: "[#{host}]", else: host
+    port = if is_integer(port), do: ":#{port}", else: ""
+    "#{scheme}://#{host}#{port}"
   end
 
   defp explicit_port("http", 80), do: nil
