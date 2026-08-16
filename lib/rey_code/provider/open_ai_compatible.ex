@@ -5,20 +5,20 @@ defmodule ReyCode.Provider.OpenAICompatible do
   Each profile (DeepSeek by default) is described by a base URL and an
   environment variable that holds the API key. The key is read from the
   environment at invocation time and is never persisted in events or in the
-  catalog snapshot. This provider is chat-only: it streams text and usage and
-  does not run tools or touch the request workspace.
+  catalog snapshot. OpenAI-compatible providers support streaming text, usage and
+  tool-call lifecycle frames while keeping prompt/workspace handling separate.
   """
-
-  @behaviour ReyCode.Provider
 
   alias ReyCode.Provider.{Frame, Request, Runtime, TextBuffer}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, SSE}
 
+  @behaviour ReyCode.Provider
+
   defmodule StreamContext do
     @moduledoc false
 
-    @enforce_keys [:transport, :profile, :key, :body, :emit]
-    defstruct [:transport, :profile, :key, :body, :emit]
+    @enforce_keys [:transport, :profile, :key, :request, :body, :emit]
+    defstruct [:transport, :profile, :key, :request, :body, :emit]
   end
 
   @default_chunk_bytes 8_192
@@ -54,6 +54,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
         transport: transport,
         profile: profile,
         key: key,
+        request: request,
         body: body,
         emit: emit
       })
@@ -85,7 +86,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
-  defp stream_task(%StreamContext{} = context) do
+  defp stream_task(%StreamContext{request: request} = context) do
     %{transport: transport, profile: profile, key: key, body: body} = context
     url = base_url(profile) <> "/chat/completions"
     headers = authorization(key) ++ [{"Accept", "text/event-stream"}]
@@ -96,7 +97,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
            transport.collect(
              ref,
              &handle_event(&1, &2, context),
-             initial_state(profile)
+             initial_state(profile, request)
            ) do
       {:ok, state}
     end
@@ -121,9 +122,21 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp apply_event({:text, text}, state, emit), do: buffer_text(state, text, emit)
+
+  defp apply_event({kind, tool, tool_state}, state_acc, emit)
+       when kind in [:tool_started, :tool_completed] do
+    emit_tool_event(state_acc, emit, kind, tool, tool_state)
+  end
+
   defp apply_event({:usage, usage}, state, _emit), do: %{state | usage: usage}
   defp apply_event(:done, state, _emit), do: state
   defp apply_event(:ignore, state, _emit), do: state
+
+  defp emit_tool_event(state, emit, kind, tool, tool_state) do
+    sequence = state.sequence + 1
+    :ok = emit.(%Frame{sequence: sequence, kind: kind, data: %{tool: tool, state: tool_state}})
+    %{state | sequence: sequence}
+  end
 
   defp buffer_text(state, "", _emit), do: state
 
@@ -138,15 +151,15 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp emit_text_chunks(state, chunks, emit),
-    do: Enum.reduce(chunks, state, &emit_text(&2, emit, &1))
+    do: Enum.reduce(chunks, state, &emit_text_chunk(&2, emit, &1))
 
-  defp emit_text(state, emit, text) do
+  defp emit_text_chunk(state, emit, text) do
     sequence = state.sequence + 1
     :ok = emit.(%Frame{sequence: sequence, kind: :text_delta, data: %{text: text}})
-    %{state | sequence: sequence}
+    %{state | sequence: sequence, protocol_activity?: true}
   end
 
-  defp initial_state(profile) do
+  defp initial_state(profile, request) do
     %{
       parser: SSE.new(),
       text_buffer:
@@ -161,10 +174,11 @@ defmodule ReyCode.Provider.OpenAICompatible do
             ),
           flush_tail_on_size?: true
         ),
-      sequence: 0,
+      sequence: request.resume_from,
       bytes: 0,
       max_bytes: profile.max_output_bytes,
-      usage: nil
+      usage: nil,
+      protocol_activity?: false
     }
   end
 

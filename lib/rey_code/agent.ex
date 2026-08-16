@@ -14,6 +14,8 @@ defmodule ReyCode.Agent do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @frame_batch_size 16
+
   @impl true
   def init(opts) do
     {:ok, Map.new(opts), {:continue, :stream}}
@@ -59,11 +61,15 @@ defmodule ReyCode.Agent do
   end
 
   defp execute(state, request, runtime) do
+    buffer_key = {__MODULE__, :frame_buffer, state.invocation_id}
+
+    emit = fn frame ->
+      enqueue_frame(state.engine, buffer_key, frame)
+    end
+
     result =
       try do
-        stream(runtime, request, fn frame ->
-          Client.record_frame(state.engine, state.invocation_id, frame)
-        end)
+        stream(runtime, request, emit)
       rescue
         error ->
           {:error,
@@ -80,6 +86,8 @@ defmodule ReyCode.Agent do
              "message" => Exception.format_banner(kind, reason),
              "retryable" => false
            }}
+      after
+        :ok = flush_frame_buffer(state.engine, buffer_key)
       end
 
     case result do
@@ -92,6 +100,32 @@ defmodule ReyCode.Agent do
 
     {:stop, :normal, state}
   end
+
+  defp enqueue_frame(engine, buffer_key, frame) do
+    frames = [frame | Process.get(buffer_key, [])]
+
+    if length(frames) >= @frame_batch_size do
+      Process.delete(buffer_key)
+      _ = Client.record_frames(engine, extract_invocation_id(buffer_key), Enum.reverse(frames))
+      :ok
+    else
+      Process.put(buffer_key, frames)
+      :ok
+    end
+  end
+
+  defp flush_frame_buffer(engine, buffer_key) do
+    case Process.delete(buffer_key) || [] do
+      [] ->
+        :ok
+
+      frames ->
+        _ = Client.record_frames(engine, extract_invocation_id(buffer_key), Enum.reverse(frames))
+        :ok
+    end
+  end
+
+  defp extract_invocation_id({_, :frame_buffer, invocation_id}), do: invocation_id
 
   defp stream(runtime, request, emit) do
     runtime.module.stream(runtime, request, emit)

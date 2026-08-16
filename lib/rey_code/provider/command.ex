@@ -96,15 +96,17 @@ defmodule ReyCode.Provider.Command do
   defp terminate_process_group(nil), do: :ok
 
   defp terminate_process_group(os_pid) do
-    signal_group(os_pid, "-TERM")
+    send_signal(["-TERM", "-#{os_pid}"])
     Process.sleep(150)
-    signal_group(os_pid, "-KILL")
+    send_signal(["-KILL", "-#{os_pid}"])
+    send_signal(["-KILL", "#{os_pid}"])
 
     :ok
   end
 
-  defp signal_group(os_pid, signal) do
-    System.cmd("/bin/kill", [signal, "-#{os_pid}"], stderr_to_stdout: true)
+  defp send_signal(args) do
+    _ = System.cmd("/bin/kill", args, stderr_to_stdout: true)
+    :ok
   rescue
     _ -> :ok
   end

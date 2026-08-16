@@ -97,6 +97,48 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
              ] = emitted
     end
 
+    test "starts emitted frame sequence from request.resume_from" do
+      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
+
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"there"}}]}\n\n),
+        ~s(data: [DONE]\n\n)
+      ])
+
+      frames =
+        collect_frames(fn emit ->
+          OpenAICompatible.stream(runtime(), %{request() | resume_from: 10}, emit)
+        end)
+
+      {_result, emitted} = frames
+
+      assert Enum.map(emitted, & &1.sequence) == [11, 12]
+    end
+
+    test "emits tool call started/completed events from streamed tool calls" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"type":"function","function":{"name":"bash","arguments":"{\\\"cmd"}}]}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"function":{"arguments":"\\\":\\\"date\\\"}"}}]}}]}\n\n),
+        ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
+      ])
+
+      frames =
+        collect_frames(fn emit ->
+          OpenAICompatible.stream(runtime(), request(), emit)
+        end)
+
+      {_, emitted} = frames
+
+      assert [
+               %Frame{kind: :tool_started, data: %{tool: "bash", state: started}},
+               %Frame{kind: :tool_completed, data: %{tool: "bash", state: finished}}
+             ] = emitted
+
+      assert started["arguments"] == ~s({"cmd)
+      assert finished["arguments"] == ~s({"cmd":"date"})
+    end
+
     test "returns a missing credentials error when the key is unset" do
       System.delete_env(@key_env)
 

@@ -179,6 +179,113 @@ defmodule ReyCode.Orchestration.EngineTest do
     refute Process.whereis(ReyCode.AgentSupervisor) == old_supervisor
   end
 
+  describe "record_frames batches" do
+    setup do
+      previous_delay = Application.get_env(:rey_code, :agent_delay_ms)
+      Application.put_env(:rey_code, :agent_delay_ms, 1_000)
+      on_exit(fn -> Application.put_env(:rey_code, :agent_delay_ms, previous_delay) end)
+      :ok
+    end
+
+    test "accepts empty batches and rejects unknown invocations and non-list frames" do
+      room_id = default_room_id()
+      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Batch validation check", :compare)
+      invocation = wait_for_running(turn_id)
+
+      assert :ok = Engine.Client.record_frames(Engine, invocation.id, [])
+      assert {:error, :invocation_not_found} = Engine.Client.record_frames(Engine, "inv-x", [])
+
+      assert {:error, :invalid_frames} =
+               GenServer.call(Engine, {:record_frames, invocation.id, :junk})
+
+      drain_turn(turn_id)
+    end
+
+    test "appends contiguous batches, subsumes duplicates, and rejects gaps and invalid frames" do
+      room_id = default_room_id()
+      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Batch append check", :compare)
+      invocation = wait_for_running(turn_id)
+
+      assert invocation.last_frame_sequence == 0
+
+      assert :ok =
+               Engine.Client.record_frames(Engine, invocation.id, [
+                 Frame.text_delta(1, "first"),
+                 Frame.text_delta(2, "second")
+               ])
+
+      assert ReyCode.snapshot().invocations[invocation.id].last_frame_sequence == 2
+
+      assert :ok =
+               Engine.Client.record_frames(Engine, invocation.id, [
+                 Frame.text_delta(2, "duplicate"),
+                 Frame.text_delta(3, "third")
+               ])
+
+      updated = ReyCode.snapshot().invocations[invocation.id]
+      assert updated.last_frame_sequence == 3
+
+      assert {:error, :invalid_frame_sequence} =
+               Engine.Client.record_frames(Engine, invocation.id, [
+                 Frame.text_delta(updated.last_frame_sequence + 2, "gap")
+               ])
+
+      assert {:error, :invalid_frame} =
+               Engine.Client.record_frames(Engine, invocation.id, [
+                 %Frame{
+                   sequence: updated.last_frame_sequence + 1,
+                   kind: :text_delta,
+                   data: %{text: 7}
+                 }
+               ])
+
+      drain_turn(turn_id)
+    end
+
+    test "rejects frame batches for a terminal invocation" do
+      room_id = default_room_id()
+      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Terminal batch check", :compare)
+      invocation = wait_for_running(turn_id)
+
+      drain_turn(turn_id)
+
+      final = ReyCode.snapshot().invocations[invocation.id]
+      assert final.status == :completed
+
+      assert {:error, :invocation_terminal} =
+               Engine.Client.record_frames(Engine, invocation.id, [
+                 Frame.text_delta(final.last_frame_sequence + 1, "late")
+               ])
+    end
+  end
+
+  defp wait_for_running(turn_id, attempts \\ 300) do
+    Wait.projection(
+      Engine,
+      &find_running_invocation(&1, turn_id),
+      attempts * 10
+    )
+  end
+
+  defp find_running_invocation(projection, turn_id) do
+    case projection.turns[turn_id] do
+      nil -> nil
+      turn -> Enum.find_value(turn.invocation_order, &lookup_running(projection, &1))
+    end
+  end
+
+  defp lookup_running(projection, invocation_id) do
+    case projection.invocations[invocation_id] do
+      %{status: :running} = invocation -> invocation
+      _other -> nil
+    end
+  end
+
+  defp drain_turn(turn_id) do
+    Application.put_env(:rey_code, :agent_delay_ms, 5)
+    assert wait_until_terminal(turn_id).status == :completed
+  end
+
   defp default_room_id do
     snapshot = ReyCode.snapshot()
     Enum.find(snapshot.room_order, &(snapshot.rooms[&1].slug == "reycode"))
