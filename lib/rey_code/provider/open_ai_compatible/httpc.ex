@@ -49,7 +49,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
 
   defp collect(context, url, headers, body, on_event, acc, redirects) when redirects >= 0 do
     request = {to_charlist(url), headers, ~c"application/json", body}
-    http_opts = [timeout: context.timeout, autoredirect: false]
+    http_opts = [timeout: context.timeout, autoredirect: false, ssl: ssl_opts()]
 
     case :httpc.request(:post, request, http_opts, []) do
       {:ok, {{_version, status, _reason}, response_headers, response_body}} ->
@@ -116,6 +116,14 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
       request.redirects >= request.context.max_redirects ->
         {:error,
          HTTP.error("request_failed", "Too many redirects while requesting #{request.url}", false)}
+
+      https_downgrade?(request.url, location) ->
+        {:error,
+         HTTP.error(
+           "request_failed",
+           "Refusing insecure HTTPS-to-HTTP redirect to #{location}",
+           false
+         )}
 
       true ->
         next_headers = sanitize_headers_for_redirect(request.headers, request.url, location)
@@ -201,6 +209,15 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     from.scheme == to.scheme and from.host == to.host and from.port == to.port
   end
 
+  @doc false
+  @spec https_downgrade?(String.t(), String.t()) :: boolean()
+  def https_downgrade?(from_url, to_url) do
+    %{scheme: from_scheme} = URI.parse(from_url)
+    %{scheme: to_scheme} = URI.parse(to_url)
+
+    from_scheme == "https" and to_scheme == "http"
+  end
+
   defp authorization_header?({name, _value}) when is_list(name) do
     String.downcase(to_string(name)) in ["authorization", "cookie"]
   end
@@ -259,5 +276,14 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
       {:error, {:already_started, _}} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp ssl_opts do
+    [verify: :verify_peer, depth: 3, cacerts: cacerts()]
+  end
+
+  defp cacerts do
+    _ = :public_key.cacerts_load()
+    :public_key.cacerts_get()
   end
 end

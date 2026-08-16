@@ -131,6 +131,43 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
              HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
   end
 
+  test "rejects HTTPS-to-HTTP redirects before following" do
+    assert HTTPC.https_downgrade?("https://api.example.com/v1", "http://api.example.com/v1")
+    assert HTTPC.https_downgrade?("https://api.example.com", "http://evil.example.com")
+
+    refute HTTPC.https_downgrade?("https://api.example.com", "https://api.example.com")
+    refute HTTPC.https_downgrade?("http://api.example.com", "https://api.example.com")
+    refute HTTPC.https_downgrade?("http://a.example.com", "http://b.example.com")
+  end
+
+  test "bounds redirect hops and keeps credentials out of the error text" do
+    start_test_pid = self()
+
+    {listen_socket, server_pid, port} =
+      start_test_server(fn %{path: path, headers: headers} ->
+        send(start_test_pid, {:request, path, headers})
+        {302, [{"Location", "/loop"}], ""}
+      end)
+
+    on_exit(fn ->
+      stop_test_server(listen_socket, server_pid)
+    end)
+
+    {:ok, context} =
+      HTTPC.start(
+        "http://#{@loopback}:#{port}/loop",
+        [{"Authorization", "Bearer top-secret"}],
+        "",
+        max_redirects: 2
+      )
+
+    assert {:error, %{"category" => "request_failed", "message" => message}} =
+             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+
+    assert message =~ "Too many redirects"
+    refute message =~ "top-secret"
+  end
+
   defp request_has_header?(headers, name) do
     headers
     |> Enum.any?(fn {header_name, _value} ->
