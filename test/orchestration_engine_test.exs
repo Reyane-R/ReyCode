@@ -262,19 +262,23 @@ defmodule ReyCode.Orchestration.EngineTest do
   defp wait_for_running(turn_id, attempts \\ 300) do
     Wait.projection(
       Engine,
-      fn projection ->
-        turn = projection.turns[turn_id]
-
-        turn &&
-          Enum.find_value(turn.invocation_order, fn id ->
-            case projection.invocations[id] do
-              %{status: :running} = invocation -> invocation
-              _other -> nil
-            end
-          end)
-      end,
+      &find_running_invocation(&1, turn_id),
       attempts * 10
     )
+  end
+
+  defp find_running_invocation(projection, turn_id) do
+    case projection.turns[turn_id] do
+      nil -> nil
+      turn -> Enum.find_value(turn.invocation_order, &lookup_running(projection, &1))
+    end
+  end
+
+  defp lookup_running(projection, invocation_id) do
+    case projection.invocations[invocation_id] do
+      %{status: :running} = invocation -> invocation
+      _other -> nil
+    end
   end
 
   defp drain_turn(turn_id) do
