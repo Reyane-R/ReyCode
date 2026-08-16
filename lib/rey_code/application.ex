@@ -1,0 +1,76 @@
+defmodule ReyCode.Application do
+  @moduledoc false
+
+  use Application
+
+  @impl true
+  def start(_type, _args) do
+    :ok = ReyCode.RuntimeConfig.validate!()
+    :ok = ReyCode.Logging.install!()
+
+    children = [
+      {Registry, keys: :unique, name: ReyCode.AgentRegistry},
+      {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
+      {ReyCode.EventStore, event_store_options()},
+      {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
+      {ReyCode.Provider.Catalog, []},
+      {ReyCode.Orchestration.Supervisor, []}
+    ]
+
+    children = children ++ tui_children()
+
+    opts = [strategy: :rest_for_one, name: ReyCode.Supervisor]
+    Supervisor.start_link(children, opts)
+  end
+
+  defp tui_children do
+    if Application.get_env(:rey_code, :start_tui, true) do
+      [
+        Supervisor.child_spec(
+          {Breeze.Server,
+           view: ReyCode.TUI,
+           theme: ReyCode.Theme.default(),
+           logger: :attach,
+           global_keybindings: ReyCode.TUI.global_keybindings()},
+          restart: :transient
+        )
+      ]
+    else
+      []
+    end
+  end
+
+  @doc false
+  def storage_paths do
+    case Application.get_env(:rey_code, :event_path) do
+      nil ->
+        %{
+          database: Path.join(data_home(), "rey_code.sqlite3"),
+          legacy: Path.join([xdg_data_home(), "rey_code", "events-v2.ndjson"])
+        }
+
+      path ->
+        %{database: Path.expand(path), legacy: nil}
+    end
+  end
+
+  defp event_store_options do
+    %{database: database, legacy: legacy} = storage_paths()
+
+    if is_nil(legacy) do
+      [path: database]
+    else
+      [path: database, backend: :sqlite, legacy_path: legacy]
+    end
+  end
+
+  defp data_home do
+    Application.get_env(:rey_code, :data_dir) ||
+      if(:os.type() == {:unix, :darwin},
+        do: Path.expand("~/Library/Application Support/ReyCode"),
+        else: Path.join(xdg_data_home(), "rey_code")
+      )
+  end
+
+  defp xdg_data_home, do: System.get_env("XDG_DATA_HOME") || Path.expand("~/.local/share")
+end

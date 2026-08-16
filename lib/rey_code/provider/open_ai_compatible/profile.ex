@@ -15,7 +15,8 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
     :key_env,
     request_timeout_ms: 600_000,
     max_output_bytes: 10_000_000,
-    max_prompt_bytes: 128_000
+    max_prompt_bytes: 128_000,
+    extra_headers: []
   ]
 
   @type t :: %__MODULE__{
@@ -25,7 +26,8 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
           key_env: String.t(),
           request_timeout_ms: pos_integer(),
           max_output_bytes: pos_integer(),
-          max_prompt_bytes: pos_integer()
+          max_prompt_bytes: pos_integer(),
+          extra_headers: [{String.t(), String.t()}]
         }
 
   @spec all() :: [t()]
@@ -68,7 +70,8 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
         :key_env,
         :request_timeout_ms,
         :max_output_bytes,
-        :max_prompt_bytes
+        :max_prompt_bytes,
+        :extra_headers
       ])
     )
     |> normalize()
