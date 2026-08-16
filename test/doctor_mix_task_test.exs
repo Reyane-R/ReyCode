@@ -38,7 +38,7 @@ defmodule ReyCode.DoctorMixTaskTest do
       %{
         id: :deepseek,
         name: "DeepSeek",
-        base_url: "https://api.deepseek.com"
+        endpoint: "https://api.deepseek.com"
       }
     ],
     limits: %{provider_timeout_ms: 600_000, squad_rework_budget: 3}
@@ -56,7 +56,7 @@ defmodule ReyCode.DoctorMixTaskTest do
     assert output =~ "Database path: /var/lib/rey_code/rey_code.sqlite3"
     assert output =~ "readable=unknown"
     assert output =~ "OpenCode: status=configured, ready=yes"
-    assert output =~ "DeepSeek (deepseek): base_url=https://api.deepseek.com"
+    assert output =~ "DeepSeek (deepseek): endpoint=https://api.deepseek.com"
     assert output =~ "provider_timeout_ms=600000"
   end
 

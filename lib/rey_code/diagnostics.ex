@@ -3,8 +3,12 @@ defmodule ReyCode.Diagnostics do
   Builds a sanitized operational diagnostics report.
 
   The report contains no environment dump, credential metadata, model names, event
-  contents, or prompts. Callers may inject probes for deterministic tests or use
-  `snapshot/0` from a running application or release CLI.
+  contents, or prompts. Configured provider endpoints are reduced to a sanitized
+  origin (scheme, host, and non-default port) so URL userinfo, paths, query values,
+  and fragments never enter the report; malformed or non-HTTP(S) values are
+  reported as unavailable without echoing the raw input. Callers may inject probes
+  for deterministic tests or use `snapshot/0` from a running application or
+  release CLI.
   """
 
   alias ReyCode.Provider.{Catalog, Registry}
@@ -277,10 +281,25 @@ defmodule ReyCode.Diagnostics do
       %{
         id: profile.id,
         name: profile.name,
-        base_url: profile.base_url
+        endpoint: sanitize_endpoint(profile.base_url)
       }
     end)
   end
+
+  defp sanitize_endpoint(raw) do
+    case URI.new(raw) do
+      {:ok, %URI{scheme: scheme, host: host, port: port}}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        URI.to_string(%URI{scheme: scheme, host: host, port: explicit_port(scheme, port)})
+
+      _other ->
+        "[unavailable]"
+    end
+  end
+
+  defp explicit_port("http", 80), do: nil
+  defp explicit_port("https", 443), do: nil
+  defp explicit_port(_scheme, port), do: port
 
   defp limits(config) do
     Map.new(@default_limits, fn {key, default} ->
