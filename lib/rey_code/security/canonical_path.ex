@@ -20,6 +20,37 @@ defmodule ReyCode.Security.CanonicalPath do
 
   def resolve(_path), do: {:error, :invalid_path}
 
+  @doc "Resolves a path's real identity, allowing a missing final file component."
+  @spec resolve_identity(term()) :: {:ok, String.t()} | {:error, term()}
+  def resolve_identity(path) when is_binary(path) do
+    path = Path.expand(path)
+
+    case resolve(path) do
+      {:ok, _canonical_path} = result -> result
+      {:error, :enoent} = error -> resolve_missing_leaf(path, error)
+      error -> error
+    end
+  rescue
+    ArgumentError -> {:error, :invalid_path}
+  end
+
+  def resolve_identity(_path), do: {:error, :invalid_path}
+
+  defp resolve_missing_leaf(path, error) do
+    case File.lstat(path) do
+      {:error, :enoent} ->
+        with {:ok, canonical_parent} <- resolve(Path.dirname(path)) do
+          {:ok, Path.join(canonical_parent, Path.basename(path))}
+        end
+
+      {:ok, _stat} ->
+        error
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp resolve_segments([], resolved, _links), do: {:ok, join_absolute(resolved)}
 
   defp resolve_segments(["." | rest], resolved, links),

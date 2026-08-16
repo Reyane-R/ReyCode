@@ -23,6 +23,27 @@ defmodule ReyCode.EventStoreSQLiteTest do
     assert :ok = SQLite.close(reopened)
   end
 
+  test "preserves the mode of an existing database parent directory" do
+    path = tmp_path("shared/fresh.sqlite3")
+    directory = Path.dirname(path)
+    File.mkdir_p!(directory)
+    File.chmod!(directory, 0o755)
+
+    assert {:ok, state} = SQLite.open(path)
+    assert :ok = SQLite.close(state)
+    assert File.stat!(directory).mode |> Bitwise.band(0o777) == 0o755
+  end
+
+  test "hardens a newly created parent and database" do
+    path = tmp_path("private/fresh.sqlite3")
+    directory = Path.dirname(path)
+
+    assert {:ok, state} = SQLite.open(path)
+    assert :ok = SQLite.close(state)
+    assert File.stat!(directory).mode |> Bitwise.band(0o777) == 0o700
+    assert File.stat!(path).mode |> Bitwise.band(0o777) == 0o600
+  end
+
   test "applies a missing migration to an existing version table" do
     path = tmp_path("missing-migration.sqlite3")
     connection = open_sqlite(path)
@@ -120,7 +141,8 @@ defmodule ReyCode.EventStoreSQLiteTest do
 
     assert {:ok, manifest} = EventStore.backup(backup, store)
     assert manifest.sequence == 1
-    assert manifest.sha256 == Hashing.file_sha256_hex(backup)
+    assert {:ok, digest} = Hashing.file_sha256_hex(backup)
+    assert manifest.sha256 == digest
     assert File.exists?(manifest.manifest)
     assert File.stat!(backup).mode |> Bitwise.band(0o777) == 0o600
 
@@ -251,6 +273,7 @@ defmodule ReyCode.EventStoreSQLiteTest do
   end
 
   defp start_store(path, opts \\ []) do
+    File.mkdir_p!(Path.dirname(path))
     id = {EventStore, System.unique_integer([:positive])}
 
     spec =

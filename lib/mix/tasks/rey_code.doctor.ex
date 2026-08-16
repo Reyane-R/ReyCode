@@ -83,7 +83,7 @@ defmodule Mix.Tasks.ReyCode.Doctor do
     Enum.reduce(providers, lines, fn provider, acc ->
       acc ++
         [
-          "  #{provider.name} (#{provider.id}): base_url=#{provider.base_url}"
+          "  #{provider.name} (#{provider.id}): endpoint=#{provider.endpoint}"
         ]
     end)
   end

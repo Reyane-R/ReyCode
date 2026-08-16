@@ -4,6 +4,7 @@ defmodule ReyCode.StoreMaintenance do
   alias ReyCode.{EventStore, Hashing}
   alias ReyCode.EventStore.SQLite
   alias ReyCode.Orchestration.Projector
+  alias ReyCode.Security.CanonicalPath
 
   @spec verify(Path.t()) :: {:ok, map()} | {:error, term()}
   def verify(path), do: with_store(path, &EventStore.verify/1)
@@ -49,13 +50,23 @@ defmodule ReyCode.StoreMaintenance do
   defp with_store(path, operation) do
     path = Path.expand(path)
 
-    with {:ok, _applications} <- Application.ensure_all_started(:exqlite),
+    with :ok <- ensure_source(path),
+         {:ok, _applications} <- Application.ensure_all_started(:exqlite),
          {:ok, store} <- EventStore.start_link(name: nil, path: path) do
       try do
         operation.(store)
       after
         GenServer.stop(store)
       end
+    end
+  end
+
+  defp ensure_source(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular}} -> :ok
+      {:ok, _stat} -> {:error, :source_not_a_store}
+      {:error, :enoent} -> {:error, :source_not_found}
+      {:error, reason} -> {:error, {:source_unavailable, reason}}
     end
   end
 
@@ -79,29 +90,46 @@ defmodule ReyCode.StoreMaintenance do
     with {:ok, payload} <- File.read(manifest_path),
          {:ok, manifest} <- Jason.decode(payload),
          expected when is_binary(expected) <- manifest["sha256"],
-         actual <- Hashing.file_sha256_hex(source),
-         true <- secure_compare(expected, actual) do
-      :ok
+         {:ok, actual} <- hash_source(source) do
+      if secure_compare(expected, actual), do: :ok, else: {:error, :backup_checksum_mismatch}
     else
       {:error, :enoent} -> {:error, :backup_manifest_missing}
+      {:error, {:source_unreadable, _}} = error -> error
       {:error, reason} -> {:error, {:invalid_backup_manifest, reason}}
       nil -> {:error, :backup_manifest_missing_sha256}
-      false -> {:error, :backup_checksum_mismatch}
+    end
+  end
+
+  defp hash_source(source) do
+    case Hashing.file_sha256_hex(source) do
+      {:ok, hex} -> {:ok, hex}
+      {:error, reason} -> {:error, {:source_unreadable, reason}}
     end
   end
 
   defp ensure_destination_offline(destination) do
-    ownership_key = {EventStore, destination}
+    case CanonicalPath.resolve_identity(destination) do
+      {:ok, canonical_destination} ->
+        ownership_key = {EventStore, canonical_destination}
 
-    cond do
-      :global.whereis_name(ownership_key) != :undefined ->
-        {:error, :destination_in_use}
+        cond do
+          :global.whereis_name(ownership_key) != :undefined ->
+            {:error, :destination_in_use}
 
-      not File.exists?(destination) ->
-        :ok
+          not File.exists?(destination) ->
+            :ok
 
-      true ->
-        probe_destination(destination)
+          true ->
+            probe_destination(destination)
+        end
+
+      {:error, :enoent} ->
+        if File.exists?(destination),
+          do: {:error, {:destination_identity_unavailable, :enoent}},
+          else: :ok
+
+      {:error, reason} ->
+        {:error, {:destination_identity_unavailable, reason}}
     end
   end
 
@@ -115,20 +143,25 @@ defmodule ReyCode.StoreMaintenance do
   defp install_copy(source, destination) do
     directory = Path.dirname(destination)
 
-    temporary =
-      destination <> ".restore-#{System.unique_integer([:positive, :monotonic])}.sqlite3"
-
     with :ok <- File.mkdir_p(directory),
-         :ok <- File.chmod(directory, 0o700),
-         {:ok, _bytes} <- File.copy(source, temporary),
-         :ok <- File.chmod(temporary, 0o600),
-         {:ok, _report} <- SQLite.verify_path(temporary),
-         :ok <- File.rename(temporary, destination) do
-      :ok
+         {:ok, canonical_destination} <- CanonicalPath.resolve_identity(destination) do
+      temporary =
+        canonical_destination <>
+          ".restore-#{System.unique_integer([:positive, :monotonic])}.sqlite3"
+
+      with :ok <- File.chmod(Path.dirname(canonical_destination), 0o700),
+           {:ok, _bytes} <- File.copy(source, temporary),
+           :ok <- File.chmod(temporary, 0o600),
+           {:ok, _report} <- SQLite.verify_path(temporary),
+           :ok <- File.rename(temporary, canonical_destination) do
+        :ok
+      else
+        error ->
+          _ = File.rm(temporary)
+          error
+      end
     else
-      error ->
-        _ = File.rm(temporary)
-        error
+      error -> error
     end
   end
 

@@ -13,15 +13,39 @@ defmodule ReyCode.Hashing do
     |> Base.encode16(case: :lower)
   end
 
-  @doc "Returns a lowercase hexadecimal SHA-256 digest for a file's contents."
-  @spec file_sha256_hex(Path.t()) :: String.t()
-  def file_sha256_hex(path) do
-    digest =
-      path
-      |> File.stream!(64 * 1024, [])
-      |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
-      |> :crypto.hash_final()
+  @doc """
+  Streams a file through SHA-256 and returns its lowercase hex digest.
 
-    Base.encode16(digest, case: :lower)
+  Open and read failures are returned as tagged errors instead of raising.
+  """
+  @spec file_sha256_hex(Path.t()) :: {:ok, String.t()} | {:error, term()}
+  def file_sha256_hex(path) do
+    case File.open(path, [:read, :binary]) do
+      {:ok, device} ->
+        try do
+          case hash_device(device, :crypto.hash_init(:sha256)) do
+            {:ok, digest} -> {:ok, Base.encode16(digest, case: :lower)}
+            {:error, reason} -> {:error, reason}
+          end
+        after
+          :ok = File.close(device)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp hash_device(device, state) do
+    case IO.binread(device, 64 * 1024) do
+      data when is_binary(data) and byte_size(data) > 0 ->
+        hash_device(device, :crypto.hash_update(state, data))
+
+      :eof ->
+        {:ok, :crypto.hash_final(state)}
+
+      {:error, reason} ->
+        {:error, {:read_failure, reason}}
+    end
   end
 end

@@ -18,6 +18,18 @@ defmodule ReyCode.HashingTest do
     File.write!(path, "abc")
     on_exit(fn -> File.rm(path) end)
 
-    assert Hashing.file_sha256_hex(path) == @abc_sha256
+    assert {:ok, @abc_sha256} = Hashing.file_sha256_hex(path)
+  end
+
+  test "file_sha256_hex/1 reports missing files without raising" do
+    assert {:error, :enoent} = Hashing.file_sha256_hex("/nonexistent/rey_code_hashing")
+  end
+
+  test "file_sha256_hex/1 reports unreadable inputs without raising" do
+    directory = Path.join(System.tmp_dir!(), "rey_code_hashing_dir_#{System.unique_integer()}")
+    File.mkdir_p!(directory)
+    on_exit(fn -> File.rm_rf(directory) end)
+
+    assert {:error, :eisdir} = Hashing.file_sha256_hex(directory)
   end
 end
