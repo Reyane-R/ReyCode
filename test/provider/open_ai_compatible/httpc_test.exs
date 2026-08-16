@@ -229,6 +229,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
       {:partial, _chunk}, acc ->
         {:cont, acc}
     end
+
     assert {:error, %{"category" => "output_too_large"}} =
              HTTPC.collect(context, on_event, :ok)
   end

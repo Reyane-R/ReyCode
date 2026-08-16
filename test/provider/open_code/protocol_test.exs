@@ -211,18 +211,20 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
       ])
 
     assert {:error,
-             %{
-               "category" => "provider_error",
-               "message" => "quota exhausted\nupstream refused\n42"
-             }} = result
+            %{
+              "category" => "provider_error",
+              "message" => "quota exhausted\nupstream refused\n42"
+            }} = result
   end
 
   test "ignores tool_use records without a usable part or tool name" do
     {result, frames} =
       run([
         {:stdout, ~s({"type":"tool_use","sessionID":"session-1","part":"not-a-map"}\n)},
-        {:stdout, ~s({"type":"tool_use","sessionID":"session-1","part":{"tool":null,"state":"running"}}\n)},
-        {:stdout, ~s({"type":"tool_use","sessionID":"session-1","part":{"tool":"bash","state":{"status":"pending"}}}\n)},
+        {:stdout,
+         ~s({"type":"tool_use","sessionID":"session-1","part":{"tool":null,"state":"running"}}\n)},
+        {:stdout,
+         ~s({"type":"tool_use","sessionID":"session-1","part":{"tool":"bash","state":{"status":"pending"}}}\n)},
         {:exit, {:status, 0}}
       ])
 
@@ -251,11 +253,11 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
       ])
 
     assert {:error,
-             %{
-               "category" => "command_failed",
-               "message" => "one line\ntwo line",
-               "retryable" => false
-             }} = result
+            %{
+              "category" => "command_failed",
+              "message" => "one line\ntwo line",
+              "retryable" => false
+            }} = result
   end
 
   test "marks diagnostics truncated when a separator no longer fits" do
@@ -271,10 +273,10 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
       ])
 
     assert {:error,
-             %{
-               "category" => "command_failed",
-               "message" => "0123456789\n[diagnostics truncated]"
-             }} = result
+            %{
+              "category" => "command_failed",
+              "message" => "0123456789\n[diagnostics truncated]"
+            }} = result
   end
 
   defp run(elements) do

@@ -79,7 +79,10 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
 
   test "discovers through the default wrapper runner against a real executable" do
     path =
-      Path.join(System.tmp_dir!(), "fake_opencode_discovery_#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "fake_opencode_discovery_#{System.unique_integer([:positive])}"
+      )
 
     File.write!(path, """
     #!/bin/sh

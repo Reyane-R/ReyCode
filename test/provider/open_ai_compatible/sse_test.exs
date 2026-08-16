@@ -124,7 +124,9 @@ defmodule ReyCode.Provider.OpenAICompatible.SSETest do
     {[], parser} = SSE.feed(SSE.new(), unnamed)
 
     empty_arguments =
-      tool_calls_payload([%{"id" => "call-9", "function" => %{"name" => "edit", "arguments" => ""}}])
+      tool_calls_payload([
+        %{"id" => "call-9", "function" => %{"name" => "edit", "arguments" => ""}}
+      ])
 
     {[], parser} = SSE.feed(parser, empty_arguments)
 
