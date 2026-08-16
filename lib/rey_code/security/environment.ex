@@ -48,11 +48,16 @@ defmodule ReyCode.Security.Environment do
     ulimit -c 0
     ulimit -n #{open_files}
     ulimit -t #{cpu_seconds}
-    trap 'trap "" TERM INT HUP; kill -TERM -- -$$ 2>/dev/null; sleep 0.1; kill -KILL -- -$$ 2>/dev/null' TERM INT HUP
-    /usr/bin/env -i #{assignments} "$@" <&0 &
+    exec 3<&0
+    (while kill -0 "$$" 2>/dev/null; do sleep 0.05; done; /bin/kill -KILL -- -$$ 2>/dev/null) &
+    watchdog=$!
+    trap 'trap "" TERM INT HUP; /bin/kill -TERM -- -$$ 2>/dev/null; sleep 0.1; /bin/kill -KILL -- -$$ 2>/dev/null' TERM INT HUP
+    /usr/bin/env -i #{assignments} "$@" <&3 &
     child=$!
     wait "$child"
     status=$?
+    kill "$watchdog" 2>/dev/null
+    wait "$watchdog" 2>/dev/null
     trap - TERM INT HUP
     exit "$status"
     """
