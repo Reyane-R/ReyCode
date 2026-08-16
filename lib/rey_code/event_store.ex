@@ -73,18 +73,19 @@ defmodule ReyCode.EventStore do
   def init(opts) do
     path = opts |> Keyword.fetch!(:path) |> Path.expand()
 
-    with {:ok, canonical_path} <- CanonicalPath.resolve_identity(path) do
-      ownership_key = {__MODULE__, canonical_path}
-      backend = Keyword.get(opts, :backend, backend_for(path))
+    case CanonicalPath.resolve_identity(path) do
+      {:ok, canonical_path} ->
+        ownership_key = {__MODULE__, canonical_path}
+        backend = Keyword.get(opts, :backend, backend_for(path))
 
-      case :global.register_name(ownership_key, self()) do
-        :yes ->
-          init_backend(backend, path, ownership_key, opts)
+        case :global.register_name(ownership_key, self()) do
+          :yes ->
+            init_backend(backend, path, ownership_key, opts)
 
-        :no ->
-          {:stop, {:already_started, :global.whereis_name(ownership_key)}}
-      end
-    else
+          :no ->
+            {:stop, {:already_started, :global.whereis_name(ownership_key)}}
+        end
+
       {:error, reason} ->
         {:stop, {:ownership_path_unavailable, reason}}
     end

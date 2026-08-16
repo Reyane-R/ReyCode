@@ -122,7 +122,12 @@ defmodule ReyCode.DiagnosticsSanitizationTest do
         key_env: "REYCODE_SENTINEL_KEY"
       },
       %{id: :broken, name: "Broken", base_url: "::::not a url::::", key_env: "REYCODE_MISSING"},
-      %{id: :odd, name: "Odd", base_url: "ftp://files.example.test/pub", key_env: "REYCODE_MISSING"}
+      %{
+        id: :odd,
+        name: "Odd",
+        base_url: "ftp://files.example.test/pub",
+        key_env: "REYCODE_MISSING"
+      }
     ])
 
     on_exit(fn ->

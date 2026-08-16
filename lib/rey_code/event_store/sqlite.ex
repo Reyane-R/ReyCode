@@ -30,9 +30,9 @@ defmodule ReyCode.EventStore.SQLite do
   defp ensure_directory(directory) do
     directory_exists = File.dir?(directory)
 
-    with :ok <- File.mkdir_p(directory),
-         :ok <- maybe_harden_new_directory(directory, directory_exists) do
-      :ok
+    case File.mkdir_p(directory) do
+      :ok -> maybe_harden_new_directory(directory, directory_exists)
+      error -> error
     end
   end
 
