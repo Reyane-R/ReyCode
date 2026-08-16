@@ -157,22 +157,6 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     end
   end
 
-  defp location_header({name, value}) when is_binary(name) and is_binary(value) do
-    case String.downcase(name) do
-      "location" -> String.trim(value)
-      _ -> nil
-    end
-  end
-
-  defp location_header({name, value}) when is_atom(name) do
-    case name do
-      :location -> to_string(value)
-      _ -> nil
-    end
-  end
-
-  defp location_header({_name, _value}), do: nil
-
   defp resolve_redirect_location(raw, current_url) do
     resolved =
       case String.trim(raw) do
@@ -222,27 +206,9 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     String.downcase(to_string(name)) in ["authorization", "cookie"]
   end
 
-  defp authorization_header?({name, _value}) when is_binary(name) do
-    String.downcase(name) in ["authorization", "cookie"]
-  end
-
-  defp authorization_header?({name, _value}) when is_atom(name) do
-    name == :authorization or name == :cookie
-  end
-
-  defp authorization_header?(_), do: false
-
   defp normalize_headers(headers) do
-    headers
-    |> Enum.map(fn
-      {name, value} when is_binary(name) and is_binary(value) ->
-        {String.to_charlist(name), String.to_charlist(value)}
-
-      {name, value} when is_list(name) and is_list(value) ->
-        {to_charlist(name), to_charlist(value)}
-
-      {name, value} ->
-        {to_charlist(name), to_charlist(value)}
+    Enum.map(headers, fn {name, value} ->
+      {String.to_charlist(name), String.to_charlist(value)}
     end)
   end
 

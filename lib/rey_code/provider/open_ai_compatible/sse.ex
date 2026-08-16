@@ -146,7 +146,7 @@ defmodule ReyCode.Provider.OpenAICompatible.SSE do
 
   defp parse_tool_call(_key, _call, tools), do: {[], tools}
 
-  defp emit_tool_start(_key, nil, _next, tools), do: {[], tools}
+  defp emit_tool_start(key, nil, next, tools), do: {[], Map.put(tools, key, next)}
 
   defp emit_tool_start(key, tool, next, tools) when is_binary(tool) do
     {[{:tool_started, tool, tool_state_payload(next)}], Map.put(tools, key, next)}
@@ -172,13 +172,13 @@ defmodule ReyCode.Provider.OpenAICompatible.SSE do
     |> append_arguments(arguments)
   end
 
+  defp append_arguments(state, nil), do: state
   defp append_arguments(state, ""), do: state
 
   defp append_arguments(state, arguments) when is_binary(arguments),
     do: Map.update(state, "arguments", arguments, &append_arguments_value(&1, arguments))
 
   defp append_arguments_value(existing, chunk) when is_binary(existing), do: existing <> chunk
-  defp append_arguments_value(_existing, chunk), do: chunk
 
   defp complete_tool_calls(tools) do
     completed =

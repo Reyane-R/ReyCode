@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
   use ExUnit.Case, async: true
 
+  alias ReyCode.Provider.OpenAICompatible.HTTP
   alias ReyCode.Provider.OpenAICompatible.HTTPC
 
   @loopback "127.0.0.1"
@@ -166,6 +167,70 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
 
     assert message =~ "Too many redirects"
     refute message =~ "top-secret"
+  end
+
+  test "rejects an invalid transport context" do
+    assert {:error, %{"category" => "request_failed", "message" => "Invalid transport context"}} =
+             HTTPC.collect(:not_a_context, fn _, _acc -> {:cont, :ok} end, :ok)
+  end
+
+  test "maps a server error status to a provider error" do
+    start_test_pid = self()
+
+    {listen_socket, server_pid, port} =
+      start_test_server(fn %{path: path, headers: headers} ->
+        send(start_test_pid, {:request, path, headers})
+        {500, [], ~s({"error":{"message":"upstream exploded"}})}
+      end)
+
+    on_exit(fn ->
+      stop_test_server(listen_socket, server_pid)
+    end)
+
+    {:ok, context} = HTTPC.start("http://#{@loopback}:#{port}/fail", [], "", [])
+
+    assert {:error, %{"category" => "server_error", "retryable" => true, "message" => message}} =
+             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+
+    assert message =~ "upstream exploded"
+  end
+
+  test "maps a failed connection to a request failure" do
+    {:ok, socket} = :gen_tcp.listen(0, [])
+    {:ok, free_port} = :inet.port(socket)
+    :gen_tcp.close(socket)
+
+    {:ok, context} = HTTPC.start("http://#{@loopback}:#{free_port}/nowhere", [], "", [])
+
+    assert {:error, %{"category" => "request_failed", "retryable" => false}} =
+             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+  end
+
+  test "halts chunk delivery when the consumer stops the stream" do
+    start_test_pid = self()
+
+    {listen_socket, server_pid, port} =
+      start_test_server(fn %{path: path, headers: headers} ->
+        send(start_test_pid, {:request, path, headers})
+        {200, [], "twelve bytes"}
+      end)
+
+    on_exit(fn ->
+      stop_test_server(listen_socket, server_pid)
+    end)
+
+    {:ok, context} =
+      HTTPC.start("http://#{@loopback}:#{port}/chunks", [], "", chunk_bytes: 5)
+
+    on_event = fn
+      {:partial, "twelv"}, :ok ->
+        {:halt, :ok, HTTP.error("output_too_large", "consumer halted", false)}
+
+      {:partial, _chunk}, acc ->
+        {:cont, acc}
+    end
+    assert {:error, %{"category" => "output_too_large"}} =
+             HTTPC.collect(context, on_event, :ok)
   end
 
   defp request_has_header?(headers, name) do

@@ -106,4 +106,66 @@ defmodule ReyCode.Provider.OpenAICompatible.SSETest do
     assert first["index"] == 0
     assert second["index"] == 1
   end
+
+  test "starts tools keyed by integer index, string index, and skips keyless calls" do
+    by_index = tool_calls_payload([%{"index" => 0, "function" => %{"name" => "list"}}])
+    assert [{:tool_started, "list", started}] = SSE.feed(SSE.new(), by_index) |> elem(0)
+    assert started["index"] == 0
+
+    by_string_index = tool_calls_payload([%{"index" => "3", "function" => %{"name" => "glob"}}])
+    assert [{:tool_started, "glob", _}] = SSE.feed(SSE.new(), by_string_index) |> elem(0)
+
+    keyless = tool_calls_payload([%{"function" => %{"name" => "anon"}}])
+    assert {[], _parser} = SSE.feed(SSE.new(), keyless)
+  end
+
+  test "defers tool start until a name arrives and completes with accumulated arguments" do
+    unnamed = tool_calls_payload([%{"id" => "call-9", "function" => %{"arguments" => "{\"a\""}}])
+    {[], parser} = SSE.feed(SSE.new(), unnamed)
+
+    empty_arguments =
+      tool_calls_payload([%{"id" => "call-9", "function" => %{"name" => "edit", "arguments" => ""}}])
+
+    {[], parser} = SSE.feed(parser, empty_arguments)
+
+    finish = ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
+    assert [{:tool_completed, "edit", finished}] = SSE.feed(parser, finish) |> elem(0)
+    assert finished["arguments"] == ~s({"a")
+  end
+
+  test "sorts started and completed calls across string indexes and id-only keys" do
+    payload =
+      tool_calls_payload([
+        %{"id" => "call-z", "function" => %{"name" => "by_id"}},
+        %{"index" => "abc", "function" => %{"name" => "unparseable"}},
+        %{"index" => "10", "function" => %{"name" => "ten"}},
+        %{"index" => "2", "function" => %{"name" => "two"}}
+      ])
+
+    assert [
+             {:tool_started, "two", _},
+             {:tool_started, "ten", _},
+             {:tool_started, "unparseable", _},
+             {:tool_started, "by_id", _}
+           ] = SSE.feed(SSE.new(), payload) |> elem(0)
+
+    finish = ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
+
+    assert [
+             {:tool_completed, "two", _},
+             {:tool_completed, "ten", _},
+             {:tool_completed, "unparseable", _},
+             {:tool_completed, "by_id", _}
+           ] = SSE.feed(SSE.new(), payload) |> elem(1) |> then(&SSE.feed(&1, finish)) |> elem(0)
+  end
+
+  test "names tools from the top-level tool field" do
+    payload = tool_calls_payload([%{"id" => "call-t", "tool" => "read"}])
+    assert [{:tool_started, "read", _}] = SSE.feed(SSE.new(), payload) |> elem(0)
+  end
+
+  defp tool_calls_payload(calls) do
+    encoded = Jason.encode!(calls)
+    ~s(data: {"choices":[{"delta":{"tool_calls":#{encoded}}}]}\n\n)
+  end
 end

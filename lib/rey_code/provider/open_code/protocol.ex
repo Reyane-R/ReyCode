@@ -250,13 +250,9 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
   end
 
   defp normalize_tool_name(value) when is_binary(value), do: value
-  defp normalize_tool_name(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_tool_name(_), do: nil
 
   defp classify_tool_state(%{"status" => status}), do: classify_tool_state(status)
-
-  defp classify_tool_state(status) when is_atom(status),
-    do: classify_tool_state(Atom.to_string(status))
 
   defp classify_tool_state(status) when is_binary(status) do
     if String.downcase(String.trim(status)) in @tool_started_states,

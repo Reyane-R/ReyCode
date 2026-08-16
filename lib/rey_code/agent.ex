@@ -120,13 +120,8 @@ defmodule ReyCode.Agent do
         :ok
 
       frames ->
-        case Client.record_frames(engine, extract_invocation_id(buffer_key), Enum.reverse(frames)) do
-          :ok ->
-            :ok
-
-          {:error, _reason} ->
-            :ok
-        end
+        _ = Client.record_frames(engine, extract_invocation_id(buffer_key), Enum.reverse(frames))
+        :ok
     end
   end
 

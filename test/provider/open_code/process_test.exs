@@ -13,6 +13,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     ]
 
   alias ReyCode.Provider.{Command, OpenCode, Runtime}
+  alias ReyCode.Provider.OpenCode.Process
   alias ReyCode.Security.Environment
 
   test "runs OpenCode in the request workspace and passes the same --dir" do
@@ -323,5 +324,35 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
              File.read!(env_file) |> String.split("\n", trim: false) |> Enum.drop(-1)
 
     assert path_value != ""
+  end
+
+  describe "collect/4 task failures" do
+    test "maps a raising stream to a launch failure" do
+      stream = Stream.map([:only], fn _ -> raise "stream exploded" end)
+
+      assert {:error, %{"category" => "launch_failed", "message" => "stream exploded"}} =
+               Process.collect(stream, fn _, acc -> {:cont, acc} end, :ok, 5_000)
+    end
+
+    test "maps a throwing stream to a launch failure" do
+      stream = Stream.map([:only], fn _ -> throw(:thrown) end)
+
+      assert {:error, %{"category" => "launch_failed", "message" => message}} =
+               Process.collect(stream, fn _, acc -> {:cont, acc} end, :ok, 5_000)
+
+      assert message =~ ":thrown"
+    end
+
+    test "maps an unfinished stream to a timeout" do
+      assert {:error, %{"category" => "timeout", "message" => message}} =
+               Process.collect(
+                 Stream.cycle([:tick]),
+                 fn _, acc -> {:cont, acc} end,
+                 :ok,
+                 50
+               )
+
+      assert message =~ "did not finish within 50ms"
+    end
   end
 end

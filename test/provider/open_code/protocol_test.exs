@@ -175,6 +175,108 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
     assert Enum.map(frames, & &1.sequence) == Enum.to_list(1..8)
   end
 
+  test "treats abnormal exit reasons as command failures" do
+    {result, _frames} =
+      run([
+        {:stdout, text_record("partial work")},
+        {:exit, :killed}
+      ])
+
+    assert {:error,
+            %{
+              "category" => "command_failed",
+              "message" => "OpenCode exited with status killed",
+              "retryable" => false
+            }} = result
+  end
+
+  test "flushes a buffered stdout record on exit" do
+    {result, frames} =
+      run([
+        {:stdout, ~s({"type":"text","sessionID":"session-1","part":{"text":"tail"}})},
+        {:exit, {:status, 0}}
+      ])
+
+    assert {:ok, %{session_id: "session-1"}} = result
+    assert Enum.any?(frames, &match?(%{kind: :text_delta, data: %{text: "tail"}}, &1))
+  end
+
+  test "joins provider error records by shape" do
+    {result, _frames} =
+      run([
+        {:stdout, ~s({"type":"error","error":"quota exhausted"}\n)},
+        {:stdout, ~s({"type":"error","error":{"data":{"message":"upstream refused"}}}\n)},
+        {:stdout, ~s({"type":"error","error":42}\n)},
+        {:exit, {:status, 0}}
+      ])
+
+    assert {:error,
+             %{
+               "category" => "provider_error",
+               "message" => "quota exhausted\nupstream refused\n42"
+             }} = result
+  end
+
+  test "ignores tool_use records without a usable part or tool name" do
+    {result, frames} =
+      run([
+        {:stdout, ~s({"type":"tool_use","sessionID":"session-1","part":"not-a-map"}\n)},
+        {:stdout, ~s({"type":"tool_use","sessionID":"session-1","part":{"tool":null,"state":"running"}}\n)},
+        {:stdout, ~s({"type":"tool_use","sessionID":"session-1","part":{"tool":"bash","state":{"status":"pending"}}}\n)},
+        {:exit, {:status, 0}}
+      ])
+
+    assert {:ok, %{session_id: "session-1"}} = result
+    assert [%{kind: :tool_started, data: %{tool: "bash"}}] = Enum.drop(frames, 1)
+  end
+
+  test "marks empty text records as protocol activity without emitting frames" do
+    {result, frames} =
+      run([
+        {:stdout, ~s({"type":"text","sessionID":"session-1","part":{"text":""}}\n)},
+        {:exit, {:status, 0}}
+      ])
+
+    assert {:ok, %{session_id: "session-1"}} = result
+    assert [%{kind: :session_started}] = frames
+  end
+
+  test "keeps full diagnostics when under the limit" do
+    {result, _frames} =
+      run([
+        {:stderr, "one line\n"},
+        {:stderr, "\n"},
+        {:stderr, "two line"},
+        {:exit, {:status, 3}}
+      ])
+
+    assert {:error,
+             %{
+               "category" => "command_failed",
+               "message" => "one line\ntwo line",
+               "retryable" => false
+             }} = result
+  end
+
+  test "marks diagnostics truncated when a separator no longer fits" do
+    previous = Application.get_env(:rey_code, :opencode_max_diagnostic_bytes)
+    Application.put_env(:rey_code, :opencode_max_diagnostic_bytes, 10)
+    on_exit(fn -> restore_env(:opencode_max_diagnostic_bytes, previous) end)
+
+    {result, _frames} =
+      run([
+        {:stderr, "0123456789\n"},
+        {:stderr, "x"},
+        {:exit, {:status, 3}}
+      ])
+
+    assert {:error,
+             %{
+               "category" => "command_failed",
+               "message" => "0123456789\n[diagnostics truncated]"
+             }} = result
+  end
+
   defp run(elements) do
     test_pid = self()
     emit = emit_frame(test_pid)
