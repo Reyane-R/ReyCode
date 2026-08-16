@@ -10,16 +10,34 @@ defmodule ReyCode.EventStore.SQLite do
   @projection_version 2
   @checkpoint_retention 3
 
+  @doc """
+  Opens or creates a SQLite event store.
+
+  The database parent is created with mode `0o700` only when it does not
+  already exist. The database and SQLite sidecar files owned by ReyCode are
+  hardened to mode `0o600` after initialization.
+  """
   def open(path) do
     path = Path.expand(path)
     directory = Path.dirname(path)
 
-    with :ok <- File.mkdir_p(directory),
-         :ok <- File.chmod(directory, 0o700),
+    with :ok <- ensure_directory(directory),
          {:ok, connection} <- Sqlite3.open(path) do
       initialize(connection, path)
     end
   end
+
+  defp ensure_directory(directory) do
+    directory_exists = File.dir?(directory)
+
+    with :ok <- File.mkdir_p(directory),
+         :ok <- maybe_harden_new_directory(directory, directory_exists) do
+      :ok
+    end
+  end
+
+  defp maybe_harden_new_directory(_directory, true), do: :ok
+  defp maybe_harden_new_directory(directory, false), do: File.chmod(directory, 0o700)
 
   def close(%{connection: connection}), do: Sqlite3.close(connection)
 
