@@ -213,6 +213,10 @@ mix rey_code.store checkpoint
 mix rey_code.store backup ~/Backups/rey_code.sqlite3
 ```
 
+The source database must already exist and be a regular file. These maintenance
+commands never create a missing source; a missing source or directory is reported
+as an error.
+
 `checkpoint` builds a versioned, checksummed projection checkpoint for an older
 database before its replay tail exceeds the configured startup limit.
 

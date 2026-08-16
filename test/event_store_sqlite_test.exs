@@ -273,6 +273,7 @@ defmodule ReyCode.EventStoreSQLiteTest do
   end
 
   defp start_store(path, opts \\ []) do
+    File.mkdir_p!(Path.dirname(path))
     id = {EventStore, System.unique_integer([:positive])}
 
     spec =

@@ -50,13 +50,23 @@ defmodule ReyCode.StoreMaintenance do
   defp with_store(path, operation) do
     path = Path.expand(path)
 
-    with {:ok, _applications} <- Application.ensure_all_started(:exqlite),
+    with :ok <- ensure_source(path),
+         {:ok, _applications} <- Application.ensure_all_started(:exqlite),
          {:ok, store} <- EventStore.start_link(name: nil, path: path) do
       try do
         operation.(store)
       after
         GenServer.stop(store)
       end
+    end
+  end
+
+  defp ensure_source(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :regular}} -> :ok
+      {:ok, _stat} -> {:error, :source_not_a_store}
+      {:error, :enoent} -> {:error, :source_not_found}
+      {:error, reason} -> {:error, {:source_unavailable, reason}}
     end
   end
 

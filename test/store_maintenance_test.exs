@@ -77,6 +77,23 @@ defmodule ReyCode.StoreMaintenanceTest do
              StoreMaintenance.restore(orphan_manifest, destination, replace: true)
   end
 
+  test "maintenance commands reject missing and directory sources without creating them" do
+    missing = tmp_path("missing.sqlite3")
+    backup = tmp_path("missing-backup.sqlite3")
+    directory = tmp_path("source-directory")
+    File.mkdir_p!(directory)
+
+    assert {:error, :source_not_found} = StoreMaintenance.verify(missing)
+    assert {:error, :source_not_found} = StoreMaintenance.backup(missing, backup)
+    assert {:error, :source_not_found} = StoreMaintenance.checkpoint(missing)
+    refute File.exists?(missing)
+    refute File.exists?(backup)
+
+    assert {:error, :source_not_a_store} = StoreMaintenance.verify(directory)
+    assert {:error, :source_not_a_store} = StoreMaintenance.backup(directory, backup)
+    assert {:error, :source_not_a_store} = StoreMaintenance.checkpoint(directory)
+  end
+
   defp start_store(path) do
     File.mkdir_p!(Path.dirname(path))
     id = {EventStore, System.unique_integer([:positive])}
