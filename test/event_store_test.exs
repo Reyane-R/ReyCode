@@ -148,6 +148,23 @@ defmodule ReyCode.EventStoreTest do
     {_restarted_store, _id} = start_store(equivalent_path)
   end
 
+  test "rejects a second owner for the same file through a symlink" do
+    path = tmp_path("canonical/real.ndjson")
+    alias_path = tmp_path("canonical/alias.ndjson")
+    write!(path, "")
+    File.mkdir_p!(Path.dirname(alias_path))
+    File.ln_s!(path, alias_path)
+    {store, _id} = start_store(path)
+
+    assert {:error, {:already_started, ^store}} = isolated_start(alias_path)
+  end
+
+  test "fails explicitly when the ownership path parent is missing" do
+    path = tmp_path("missing-parent/events.ndjson")
+
+    assert {:error, {:ownership_path_unavailable, :enoent}} = isolated_start(path)
+  end
+
   test "loads only events from the last snapshot onward" do
     path = tmp_path("snapshot-trim.ndjson")
 
@@ -262,6 +279,7 @@ defmodule ReyCode.EventStoreTest do
   end
 
   defp start_store(path) do
+    File.mkdir_p!(Path.dirname(path))
     id = {EventStore, System.unique_integer([:positive])}
     spec = Supervisor.child_spec({EventStore, name: nil, path: path}, id: id)
     {start_supervised!(spec), id}

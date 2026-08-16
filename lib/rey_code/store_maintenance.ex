@@ -4,6 +4,7 @@ defmodule ReyCode.StoreMaintenance do
   alias ReyCode.{EventStore, Hashing}
   alias ReyCode.EventStore.SQLite
   alias ReyCode.Orchestration.Projector
+  alias ReyCode.Security.CanonicalPath
 
   @spec verify(Path.t()) :: {:ok, map()} | {:error, term()}
   def verify(path), do: with_store(path, &EventStore.verify/1)
@@ -97,17 +98,28 @@ defmodule ReyCode.StoreMaintenance do
   end
 
   defp ensure_destination_offline(destination) do
-    ownership_key = {EventStore, destination}
+    case CanonicalPath.resolve_identity(destination) do
+      {:ok, canonical_destination} ->
+        ownership_key = {EventStore, canonical_destination}
 
-    cond do
-      :global.whereis_name(ownership_key) != :undefined ->
-        {:error, :destination_in_use}
+        cond do
+          :global.whereis_name(ownership_key) != :undefined ->
+            {:error, :destination_in_use}
 
-      not File.exists?(destination) ->
-        :ok
+          not File.exists?(destination) ->
+            :ok
 
-      true ->
-        probe_destination(destination)
+          true ->
+            probe_destination(destination)
+        end
+
+      {:error, :enoent} ->
+        if File.exists?(destination),
+          do: {:error, {:destination_identity_unavailable, :enoent}},
+          else: :ok
+
+      {:error, reason} ->
+        {:error, {:destination_identity_unavailable, reason}}
     end
   end
 
@@ -121,20 +133,25 @@ defmodule ReyCode.StoreMaintenance do
   defp install_copy(source, destination) do
     directory = Path.dirname(destination)
 
-    temporary =
-      destination <> ".restore-#{System.unique_integer([:positive, :monotonic])}.sqlite3"
-
     with :ok <- File.mkdir_p(directory),
-         :ok <- File.chmod(directory, 0o700),
-         {:ok, _bytes} <- File.copy(source, temporary),
-         :ok <- File.chmod(temporary, 0o600),
-         {:ok, _report} <- SQLite.verify_path(temporary),
-         :ok <- File.rename(temporary, destination) do
-      :ok
+         {:ok, canonical_destination} <- CanonicalPath.resolve_identity(destination) do
+      temporary =
+        canonical_destination <>
+          ".restore-#{System.unique_integer([:positive, :monotonic])}.sqlite3"
+
+      with :ok <- File.chmod(Path.dirname(canonical_destination), 0o700),
+           {:ok, _bytes} <- File.copy(source, temporary),
+           :ok <- File.chmod(temporary, 0o600),
+           {:ok, _report} <- SQLite.verify_path(temporary),
+           :ok <- File.rename(temporary, canonical_destination) do
+        :ok
+      else
+        error ->
+          _ = File.rm(temporary)
+          error
+      end
     else
-      error ->
-        _ = File.rm(temporary)
-        error
+      error -> error
     end
   end
 

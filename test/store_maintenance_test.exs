@@ -21,6 +21,23 @@ defmodule ReyCode.StoreMaintenanceTest do
     assert EventStore.load(restored_store) == [event]
   end
 
+  test "detects a live destination store through a symlink alias" do
+    source = tmp_path("source.sqlite3")
+    backup = tmp_path("backup.sqlite3")
+    destination = tmp_path("destination.sqlite3")
+    alias_path = tmp_path("destination-alias.sqlite3")
+    {source_store, _source_id} = start_store(source)
+    {_destination_store, _destination_id} = start_store(destination)
+
+    assert {:ok, _event} = EventStore.append(:room_created, room_data(), source_store, metadata())
+    assert {:ok, _manifest} = EventStore.backup(backup, source_store)
+    File.mkdir_p!(Path.dirname(alias_path))
+    File.ln_s!(destination, alias_path)
+
+    assert {:error, :destination_in_use} =
+             StoreMaintenance.restore(backup, alias_path, replace: true)
+  end
+
   test "rejects missing and mismatched backup manifests" do
     source = tmp_path("source.sqlite3")
     backup = tmp_path("backup.sqlite3")
@@ -61,6 +78,7 @@ defmodule ReyCode.StoreMaintenanceTest do
   end
 
   defp start_store(path) do
+    File.mkdir_p!(Path.dirname(path))
     id = {EventStore, System.unique_integer([:positive])}
     spec = Supervisor.child_spec({EventStore, name: nil, path: path}, id: id)
     {start_supervised!(spec), id}
