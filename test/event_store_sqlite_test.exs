@@ -120,7 +120,8 @@ defmodule ReyCode.EventStoreSQLiteTest do
 
     assert {:ok, manifest} = EventStore.backup(backup, store)
     assert manifest.sequence == 1
-    assert manifest.sha256 == Hashing.file_sha256_hex(backup)
+    assert {:ok, digest} = Hashing.file_sha256_hex(backup)
+    assert manifest.sha256 == digest
     assert File.exists?(manifest.manifest)
     assert File.stat!(backup).mode |> Bitwise.band(0o777) == 0o600
 

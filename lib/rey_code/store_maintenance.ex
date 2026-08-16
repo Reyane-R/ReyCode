@@ -79,14 +79,20 @@ defmodule ReyCode.StoreMaintenance do
     with {:ok, payload} <- File.read(manifest_path),
          {:ok, manifest} <- Jason.decode(payload),
          expected when is_binary(expected) <- manifest["sha256"],
-         actual <- Hashing.file_sha256_hex(source),
-         true <- secure_compare(expected, actual) do
-      :ok
+         {:ok, actual} <- hash_source(source) do
+      if secure_compare(expected, actual), do: :ok, else: {:error, :backup_checksum_mismatch}
     else
       {:error, :enoent} -> {:error, :backup_manifest_missing}
+      {:error, {:source_unreadable, _}} = error -> error
       {:error, reason} -> {:error, {:invalid_backup_manifest, reason}}
       nil -> {:error, :backup_manifest_missing_sha256}
-      false -> {:error, :backup_checksum_mismatch}
+    end
+  end
+
+  defp hash_source(source) do
+    case Hashing.file_sha256_hex(source) do
+      {:ok, hex} -> {:ok, hex}
+      {:error, reason} -> {:error, {:source_unreadable, reason}}
     end
   end
 

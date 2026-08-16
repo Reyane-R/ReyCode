@@ -37,6 +37,29 @@ defmodule ReyCode.StoreMaintenanceTest do
     assert {:error, :backup_checksum_mismatch} = StoreMaintenance.restore(backup, restored)
   end
 
+  test "distinguishes a missing source store from a missing manifest" do
+    vanished = tmp_path("vanished.sqlite3")
+    destination = tmp_path("vanished_restored.sqlite3")
+
+    File.mkdir_p!(Path.dirname(vanished))
+    File.write!(vanished <> ".manifest.json", ~s({"sha256":"#{String.duplicate("a", 64)}"}))
+
+    on_exit(fn ->
+      File.rm(vanished <> ".manifest.json")
+      File.rm(destination)
+    end)
+
+    assert {:error, {:source_unreadable, :enoent}} =
+             StoreMaintenance.restore(vanished, destination, replace: true)
+
+    refute File.exists?(destination)
+
+    orphan_manifest = tmp_path("orphan.sqlite3")
+
+    assert {:error, :backup_manifest_missing} =
+             StoreMaintenance.restore(orphan_manifest, destination, replace: true)
+  end
+
   defp start_store(path) do
     id = {EventStore, System.unique_integer([:positive])}
     spec = Supervisor.child_spec({EventStore, name: nil, path: path}, id: id)

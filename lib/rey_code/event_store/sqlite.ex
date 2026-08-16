@@ -573,19 +573,21 @@ defmodule ReyCode.EventStore.SQLite do
   end
 
   defp write_manifest(destination, sequence) do
-    manifest = %{
-      database: destination,
-      sequence: sequence,
-      schema_version: @schema_version,
-      sha256: Hashing.file_sha256_hex(destination),
-      created_at: now()
-    }
+    with {:ok, digest} <- Hashing.file_sha256_hex(destination) do
+      manifest = %{
+        database: destination,
+        sequence: sequence,
+        schema_version: @schema_version,
+        sha256: digest,
+        created_at: now()
+      }
 
-    manifest_path = destination <> ".manifest.json"
+      manifest_path = destination <> ".manifest.json"
 
-    with :ok <- File.write(manifest_path, Jason.encode!(manifest, pretty: true)),
-         :ok <- File.chmod(manifest_path, 0o600) do
-      {:ok, Map.put(manifest, :manifest, manifest_path)}
+      with :ok <- File.write(manifest_path, Jason.encode!(manifest, pretty: true)),
+           :ok <- File.chmod(manifest_path, 0o600) do
+        {:ok, Map.put(manifest, :manifest, manifest_path)}
+      end
     end
   end
 
