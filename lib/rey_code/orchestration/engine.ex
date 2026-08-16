@@ -237,29 +237,32 @@ defmodule ReyCode.Orchestration.Engine do
     end
   end
 
-  def handle_call({:record_frame, invocation_id, frame}, _from, state) do
+  def handle_call({:record_frames, invocation_id, frames}, _from, state) do
     invocation = state.projection.invocations[invocation_id]
 
     cond do
       invocation == nil ->
         {:reply, {:error, :invocation_not_found}, state}
 
-      Frame.validate(frame) != :ok ->
-        {:reply, {:error, :invalid_frame}, state}
-
-      frame.sequence <= invocation.last_frame_sequence ->
-        {:reply, :ok, state}
-
-      invocation.status in [:completed, :failed, :cancelled] ->
-        {:reply, {:error, :invocation_terminal}, state}
-
-      frame.sequence != invocation.last_frame_sequence + 1 ->
-        {:reply, {:error, :invalid_frame_sequence}, state}
+      not is_list(frames) ->
+        {:reply, {:error, :invalid_frames}, state}
 
       true ->
-        {:reply, :ok,
-         Persistence.append_and_apply!(state, [EventEntries.provider_frame(invocation, frame)])}
+        case collect_provider_frames(invocation, frames) do
+          {:ok, []} ->
+            {:reply, :ok, state}
+
+          {:ok, pending_frames} ->
+            append_pending_frames(state, invocation, pending_frames)
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
     end
+  end
+
+  def handle_call({:record_frame, invocation_id, frame}, from, state) do
+    handle_call({:record_frames, invocation_id, [frame]}, from, state)
   end
 
   def handle_call({:complete_invocation, invocation_id, metadata}, _from, state) do
@@ -333,6 +336,41 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp append_pending_frames(state, invocation, pending_frames) do
+    if invocation.status in [:completed, :failed, :cancelled] do
+      {:reply, {:error, :invocation_terminal}, state}
+    else
+      entries = Enum.map(pending_frames, &EventEntries.provider_frame(invocation, &1))
+      {:reply, :ok, Persistence.append_and_apply!(state, entries)}
+    end
+  end
+
+  defp collect_provider_frames(invocation, frames) do
+    frames
+    |> Enum.reduce_while({:ok, [], invocation.last_frame_sequence}, &collect_provider_frame/2)
+    |> case do
+      {:ok, pending, _cursor} -> {:ok, Enum.reverse(pending)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp collect_provider_frame(frame, {:ok, accepted, cursor}) do
+    if Frame.validate(frame) != :ok do
+      {:halt, {:error, :invalid_frame}}
+    else
+      cond do
+        frame.sequence <= cursor ->
+          {:cont, {:ok, accepted, cursor}}
+
+        frame.sequence == cursor + 1 ->
+          {:cont, {:ok, [frame | accepted], cursor + 1}}
+
+        true ->
+          {:halt, {:error, :invalid_frame_sequence}}
+      end
+    end
+  end
 
   defp ensure_default_room(%{projection: %{room_order: []}} = state) do
     room_id = "room-reycode"

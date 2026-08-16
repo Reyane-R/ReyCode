@@ -78,6 +78,23 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
     assert retry_spec.logical_work_id == invocation.logical_work_id
   end
 
+  test "turns invalid provider output into a retryable failure path" do
+    invocation = invocation("analyst", "stories")
+    message = %{body: "this is not json"}
+
+    assert {:retry, [failed, retry], retry_spec} =
+             Squad.finalize(invocation, message, {:completed, %{}}, human_release_review?: true)
+
+    assert {:invocation_failed,
+            %{"error" => %{"category" => "invalid_squad_output", "retryable" => true}}, _} =
+             failed
+
+    assert {:squad_retry_scheduled, %{"attempt" => 2, "reason" => "invalid_squad_output"}, _} =
+             retry
+
+    assert retry_spec.attempt == 2
+  end
+
   test "delegates squad finalization to the pure finalizer" do
     invocation = invocation("analyst", "stories")
     message = %{body: "not json"}

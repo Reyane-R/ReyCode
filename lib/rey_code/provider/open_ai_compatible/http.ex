@@ -10,9 +10,9 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTP do
   @type final :: %{status: non_neg_integer(), body: binary()}
 
   @callback start(url, headers, body :: binary(), keyword()) ::
-              {:ok, reference()} | {:error, map()}
+              {:ok, term()} | {:error, map()}
 
-  @callback collect(reference(), on_event, term()) :: {:ok, term(), final} | {:error, map()}
+  @callback collect(term(), on_event, term()) :: {:ok, term(), final} | {:error, map()}
 
   @spec error(String.t(), String.t(), boolean()) :: map()
   def error(category, message, retryable) do

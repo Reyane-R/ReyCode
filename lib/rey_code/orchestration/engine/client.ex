@@ -13,9 +13,14 @@ defmodule ReyCode.Orchestration.Engine.Client do
     GenServer.call(server, {:invocation_started, invocation_id})
   end
 
+  @spec record_frames(GenServer.server(), String.t(), [Frame.t()]) :: :ok | {:error, term()}
+  def record_frames(server, invocation_id, frames) when is_list(frames) do
+    GenServer.call(server, {:record_frames, invocation_id, frames}, :infinity)
+  end
+
   @spec record_frame(GenServer.server(), String.t(), Frame.t()) :: :ok | {:error, term()}
   def record_frame(server, invocation_id, %Frame{} = frame) do
-    GenServer.call(server, {:record_frame, invocation_id, frame}, :infinity)
+    record_frames(server, invocation_id, [frame])
   end
 
   @spec complete_invocation(GenServer.server(), String.t(), map()) :: :ok
