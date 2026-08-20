@@ -9,6 +9,12 @@ available only for automated FSM, failure-injection, and Monte Carlo testing.
 OpenCode credentials remain in OpenCode; ReyCode discovers its configured models
 and stores only each room agent's runtime and model selection.
 
+ReyCode is a personal-first harness becoming **standalone**: ReyCode will own
+the agent loop and tool execution itself, with OpenCode remaining one provider
+among several during the transition. Shipping real work through the squad
+pipeline takes priority over distribution. Active decisions and their
+acceptance criteria are recorded in [DECISIONS.md](DECISIONS.md).
+
 ## Run
 
 ```sh

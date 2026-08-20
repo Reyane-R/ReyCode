@@ -15,6 +15,7 @@ defmodule ReyCode.Agent do
   end
 
   @frame_batch_size 16
+  @buffer_key :frames
 
   @impl true
   def init(opts) do
@@ -61,71 +62,80 @@ defmodule ReyCode.Agent do
   end
 
   defp execute(state, request, runtime) do
-    buffer_key = {__MODULE__, :frame_buffer, state.invocation_id}
-
-    emit = fn frame ->
-      enqueue_frame(state.engine, buffer_key, frame)
-    end
+    buffer = :ets.new(__MODULE__, [:set, :public])
+    emit = fn frame -> enqueue_frame(state.engine, buffer, state.invocation_id, frame) end
 
     result =
       try do
         stream(runtime, request, emit)
       rescue
         error ->
-          {:error,
-           %{
-             "category" => "internal",
-             "message" => Exception.message(error),
-             "retryable" => false
-           }}
+          {:error, internal_error(Exception.message(error))}
       catch
         kind, reason ->
-          {:error,
-           %{
-             "category" => "internal",
-             "message" => Exception.format_banner(kind, reason),
-             "retryable" => false
-           }}
-      after
-        :ok = flush_frame_buffer(state.engine, buffer_key)
+          {:error, internal_error(Exception.format_banner(kind, reason))}
       end
 
-    case result do
-      {:ok, metadata} ->
-        Client.complete_invocation(state.engine, state.invocation_id, metadata)
+    flush = flush_frame_buffer(state.engine, buffer, state.invocation_id)
+    :ets.delete(buffer)
 
-      {:error, error} ->
+    cond do
+      match?({:error, _}, result) ->
+        {:error, error} = result
         Client.fail_invocation(state.engine, state.invocation_id, error)
+
+      flush != :ok ->
+        {:error, reason} = flush
+        error = internal_error("frame flush rejected: " <> inspect(reason))
+        Client.fail_invocation(state.engine, state.invocation_id, error)
+
+      true ->
+        {:ok, metadata} = result
+        Client.complete_invocation(state.engine, state.invocation_id, metadata)
     end
 
     {:stop, :normal, state}
   end
 
-  defp enqueue_frame(engine, buffer_key, frame) do
-    frames = [frame | Process.get(buffer_key, [])]
+  defp enqueue_frame(engine, buffer, invocation_id, frame) do
+    frames = [frame | buffered_frames(buffer)]
 
     if length(frames) >= @frame_batch_size do
-      Process.delete(buffer_key)
-      _ = Client.record_frames(engine, extract_invocation_id(buffer_key), Enum.reverse(frames))
-      :ok
+      true = :ets.delete(buffer, @buffer_key)
+      record_batch!(engine, invocation_id, frames)
     else
-      Process.put(buffer_key, frames)
+      true = :ets.insert(buffer, {@buffer_key, frames})
       :ok
     end
   end
 
-  defp flush_frame_buffer(engine, buffer_key) do
-    case Process.delete(buffer_key) || [] do
-      [] ->
-        :ok
-
-      frames ->
-        _ = Client.record_frames(engine, extract_invocation_id(buffer_key), Enum.reverse(frames))
-        :ok
+  defp buffered_frames(buffer) do
+    case :ets.lookup(buffer, @buffer_key) do
+      [{@buffer_key, frames}] -> frames
+      [] -> []
     end
   end
 
-  defp extract_invocation_id({_, :frame_buffer, invocation_id}), do: invocation_id
+  defp flush_frame_buffer(engine, buffer, invocation_id) do
+    case :ets.take(buffer, @buffer_key) do
+      [{@buffer_key, frames}] -> Client.record_frames(engine, invocation_id, Enum.reverse(frames))
+      [] -> :ok
+    end
+  end
+
+  defp record_batch!(engine, invocation_id, frames) do
+    case Client.record_frames(engine, invocation_id, Enum.reverse(frames)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        raise ArgumentError, "frame batch rejected: " <> inspect(reason)
+    end
+  end
+
+  defp internal_error(message) do
+    %{"category" => "internal", "message" => message, "retryable" => false}
+  end
 
   defp stream(runtime, request, emit) do
     runtime.module.stream(runtime, request, emit)

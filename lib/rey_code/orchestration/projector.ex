@@ -166,7 +166,6 @@ defmodule ReyCode.Orchestration.Projector do
       system_prompt: data["system_prompt"],
       status: :queued,
       attempt: data["attempt"] || 1,
-      session_id: nil,
       usage: nil,
       tool_events: [],
       completion_metadata: nil,
@@ -190,40 +189,10 @@ defmodule ReyCode.Orchestration.Projector do
     |> put_sequence(event.sequence)
   end
 
-  def apply(%Event{type: :invocation_session_recorded, data: data} = event, state) do
-    update_invocation(state, data["invocation_id"], fn invocation ->
-      %{
-        invocation
-        | session_id: data["session_id"],
-          last_frame_sequence: max(invocation.last_frame_sequence, data["frame_sequence"])
-      }
-    end)
-    |> put_sequence(event.sequence)
-  end
-
   def apply(%Event{type: :provider_frame_recorded, data: data} = event, state) do
     state
     |> apply_provider_frame(data["invocation_id"], data)
     |> put_sequence(event.sequence)
-  end
-
-  def apply(%Event{type: :message_delta_appended, data: data} = event, state) do
-    invocation = state.invocations[data["invocation_id"]]
-
-    next =
-      if data["frame_sequence"] > invocation.last_frame_sequence do
-        state
-        |> update_invocation(data["invocation_id"], fn value ->
-          %{value | last_frame_sequence: data["frame_sequence"], status: :running}
-        end)
-        |> update_message(data["message_id"], fn message ->
-          %{message | body: message.body <> data["delta"], status: :streaming}
-        end)
-      else
-        state
-      end
-
-    put_sequence(next, event.sequence)
   end
 
   def apply(%Event{type: :invocation_completed, data: data} = event, state) do
@@ -279,6 +248,7 @@ defmodule ReyCode.Orchestration.Projector do
         | squad: %{
             room_id: turn.room_id,
             workflow_version: data["workflow_version"] || "squad-v1",
+            release_authority: data["release_authority"] || "human",
             stage: 0,
             phase: data["phase"] || "leader_intake",
             cycle: 0,
@@ -293,8 +263,7 @@ defmodule ReyCode.Orchestration.Projector do
             retries: [],
             directives: [],
             gate_reviews: [],
-            pending_review: nil,
-            seed: data["seed"]
+            pending_review: nil
           }
       }
     end)
@@ -444,6 +413,13 @@ defmodule ReyCode.Orchestration.Projector do
     |> put_sequence(event.sequence)
   end
 
+  def apply(%Event{type: :squad_budget_extended, data: data} = event, state) do
+    update_turn(state, data["turn_id"], fn turn ->
+      %{turn | squad: Map.put(turn.squad, :rework_budget, data["budget"])}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
   # Old compacted logs can begin with a schema-v2 projection snapshot.
   def apply(%Event{type: :snapshot_recorded, data: %{"binary" => binary}} = event, _state) do
     binary
@@ -514,10 +490,6 @@ defmodule ReyCode.Orchestration.Projector do
       actor: actor,
       recorded_at: recorded_at
     }
-  end
-
-  defp apply_invocation_frame(invocation, "session_started", data) do
-    %{invocation | session_id: data["session_id"]}
   end
 
   defp apply_invocation_frame(invocation, "usage", data) do

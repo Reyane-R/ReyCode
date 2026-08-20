@@ -6,18 +6,17 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
 
   alias ReyCode.Provider.OpenCode.Protocol
 
-  test "maps OpenCode JSON output into session and text frames" do
+  test "maps OpenCode JSON output into text frames" do
     {result, frames} =
       run([
         {:stdout, text_record("Hello from OpenCode")},
         {:exit, {:status, 0}}
       ])
 
-    assert result == {:ok, %{session_id: "session-1"}}
+    assert result == {:ok, %{}}
 
     assert [
-             %{kind: :session_started, sequence: 1},
-             %{kind: :text_delta, sequence: 2, data: %{text: "Hello from OpenCode"}}
+             %{kind: :text_delta, sequence: 1, data: %{text: "Hello from OpenCode"}}
            ] = frames
   end
 
@@ -30,11 +29,10 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
       ])
 
     assert [
-             %{kind: :session_started, sequence: 1},
-             %{kind: :tool_started, sequence: 2, data: %{tool: "bash", state: "  PENDING "}},
+             %{kind: :tool_started, sequence: 1, data: %{tool: "bash", state: "  PENDING "}},
              %{
                kind: :tool_completed,
-               sequence: 3,
+               sequence: 2,
                data: %{tool: "bash", state: %{"status" => "completed"}}
              }
            ] = frames
@@ -48,10 +46,9 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
       ])
 
     assert [
-             %{kind: :session_started, sequence: 1},
              %{
                kind: :tool_completed,
-               sequence: 2,
+               sequence: 1,
                data: %{tool: "bash", state: %{"output" => "done"}}
              }
            ] = frames
@@ -65,7 +62,7 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
         {:exit, {:status, 0}}
       ])
 
-    assert [_, %{kind: :text_delta, data: %{text: "partial JSON"}}] = frames
+    assert [%{kind: :text_delta, data: %{text: "partial JSON"}}] = frames
   end
 
   test "keeps non-JSON output as diagnostics when the command succeeds" do
@@ -76,7 +73,7 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
         {:exit, {:status, 0}}
       ])
 
-    assert result == {:ok, %{session_id: "session-1"}}
+    assert result == {:ok, %{}}
 
     assert Enum.any?(
              frames,
@@ -172,7 +169,7 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
     assert length(text_frames) == 7
     assert Enum.all?(text_frames, &(byte_size(&1.data.text) <= 16))
     assert Enum.map_join(text_frames, & &1.data.text) == String.duplicate("x", 100)
-    assert Enum.map(frames, & &1.sequence) == Enum.to_list(1..8)
+    assert Enum.map(frames, & &1.sequence) == Enum.to_list(1..7)
   end
 
   test "treats abnormal exit reasons as command failures" do
@@ -197,7 +194,7 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
         {:exit, {:status, 0}}
       ])
 
-    assert {:ok, %{session_id: "session-1"}} = result
+    assert {:ok, %{}} = result
     assert Enum.any?(frames, &match?(%{kind: :text_delta, data: %{text: "tail"}}, &1))
   end
 
@@ -228,8 +225,8 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
         {:exit, {:status, 0}}
       ])
 
-    assert {:ok, %{session_id: "session-1"}} = result
-    assert [%{kind: :tool_started, data: %{tool: "bash"}}] = Enum.drop(frames, 1)
+    assert {:ok, %{}} = result
+    assert [%{kind: :tool_started, data: %{tool: "bash"}}] = frames
   end
 
   test "marks empty text records as protocol activity without emitting frames" do
@@ -239,8 +236,8 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
         {:exit, {:status, 0}}
       ])
 
-    assert {:ok, %{session_id: "session-1"}} = result
-    assert [%{kind: :session_started}] = frames
+    assert {:ok, %{}} = result
+    assert frames == []
   end
 
   test "keeps full diagnostics when under the limit" do

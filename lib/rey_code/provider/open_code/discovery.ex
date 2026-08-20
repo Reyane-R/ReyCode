@@ -85,12 +85,36 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
 
   defp discover_provider(executable, executable_identity, runner, command_opts) do
     with executable when is_binary(executable) <- executable,
-         {:ok, models} <- runner.(executable, ["models"], command_opts) do
+         {:ok, models} <- runner.(executable, ["models"], command_opts),
+         :ok <- verify_launch_support(executable, runner, command_opts) do
       discovery_metadata(executable, executable_identity, models, runner, command_opts)
     else
       nil -> {:error, :missing_executable}
       {:error, reason} -> {:error, command_error(reason)}
     end
+  end
+
+  defp verify_launch_support(executable, runner, command_opts) do
+    case safe_run(runner, executable, ["run", "--help"], command_opts) do
+      {:ok, help} when is_binary(help) ->
+        if launch_flags_documented?(help) do
+          :ok
+        else
+          {:error, unsupported_launch(executable, "run help does not document --dir/--format")}
+        end
+
+      _other ->
+        {:error, unsupported_launch(executable, "run help could not be read")}
+    end
+  end
+
+  defp launch_flags_documented?(help) do
+    String.contains?(help, "--dir") and String.contains?(help, "--format")
+  end
+
+  defp unsupported_launch(executable, detail) do
+    "opencode at #{executable} cannot serve ReyCode launches (#{detail}); " <>
+      "a stale binary may be shadowing the intended one — set opencode_path or fix PATH"
   end
 
   defp discovery_metadata(executable, executable_identity, models, runner, command_opts) do

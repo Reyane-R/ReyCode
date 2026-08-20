@@ -235,6 +235,23 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  @doc "Builds the event durably extending a squad turn's rework budget."
+  @spec squad_budget_extended(map(), pos_integer()) :: event_entry()
+  def squad_budget_extended(turn, budget) do
+    event(
+      :squad_budget_extended,
+      %{
+        "turn_id" => turn.id,
+        "room_id" => turn.room_id,
+        "budget" => budget
+      },
+      :turn,
+      turn.id,
+      turn.room_id,
+      turn.id
+    )
+  end
+
   @doc "Builds the configuration and initial-stage events for a squad turn."
   @spec squad_start(map(), keyword()) :: [event_entry()]
   def squad_start(turn, config) do
@@ -248,9 +265,9 @@ defmodule ReyCode.Orchestration.EventEntries do
           "room_id" => turn.room_id,
           "seats" => Enum.map(Squad.roles(), & &1.id),
           "rework_budget" => Keyword.fetch!(config, :rework_budget),
+          "release_authority" => Keyword.fetch!(config, :release_authority),
           "workflow_version" => Squad.workflow_version(),
-          "phase" => Squad.stage_label(0),
-          "seed" => Keyword.fetch!(config, :seed)
+          "phase" => Squad.stage_label(0)
         },
         metadata
       },

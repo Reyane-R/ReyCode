@@ -19,6 +19,20 @@ defmodule ReyCode.SquadMixTaskTest do
     end
   end
 
+  test "release flag accepts auto or wait and rejects anything else" do
+    Mix.Task.reenable("rey_code.squad")
+
+    assert_raise Mix.Error, ~r/--release must be auto or wait/, fn ->
+      Mix.Task.run("rey_code.squad", ["--release", "bogus", "A theme"])
+    end
+
+    Mix.Task.reenable("rey_code.squad")
+
+    assert_raise Mix.Error, ~r/--provider opencode/, fn ->
+      Mix.Task.run("rey_code.squad", ["--release", "wait", "A theme"])
+    end
+  end
+
   test "explicit Monte Carlo runs remain available without a live provider" do
     Mix.Task.reenable("rey_code.squad")
 

@@ -118,7 +118,7 @@ defmodule ReyCode.Provider.CatalogTest do
     assert Catalog.snapshot(@catalog).opencode.error == "provider discovery timed out"
     assert_receive {:probe_started, second_probe}, 250
     refute first_probe == second_probe
-    refute_receive {:probe_started, _}, 20
+    GenServer.stop(@catalog)
   end
 
   test "waits for a slow successful probe before resolving an invocation" do

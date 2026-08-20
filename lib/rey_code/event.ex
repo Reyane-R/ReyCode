@@ -45,10 +45,10 @@ defmodule ReyCode.Event do
 
   @types ~w(
     room_created participant_configured message_posted turn_queued turn_started assistant_message_opened
-    invocation_started invocation_session_recorded provider_frame_recorded message_delta_appended invocation_completed invocation_failed invocation_cancelled
+    invocation_started provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
     turn_completed snapshot_recorded squad_configured squad_stage_entered squad_decision_recorded
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
-    gate_review_requested gate_resolved
+    gate_review_requested gate_resolved squad_budget_extended
   )a
   @type type ::
           unquote(
@@ -67,9 +67,7 @@ defmodule ReyCode.Event do
     assistant_message_opened:
       ~w(invocation_id message_id turn_id room_id participant stage label system_prompt),
     invocation_started: ~w(invocation_id message_id turn_id room_id),
-    invocation_session_recorded: ~w(invocation_id frame_sequence session_id),
     provider_frame_recorded: ~w(invocation_id message_id frame_sequence kind data),
-    message_delta_appended: ~w(invocation_id message_id frame_sequence delta),
     invocation_completed: ~w(invocation_id message_id turn_id room_id),
     invocation_failed: ~w(invocation_id message_id turn_id room_id error),
     invocation_cancelled: ~w(invocation_id message_id turn_id room_id reason),
@@ -83,7 +81,8 @@ defmodule ReyCode.Event do
     squad_role_configured: ~w(room_id role_id provider model),
     squad_directive_added: ~w(turn_id room_id text phase cycle),
     gate_review_requested: ~w(turn_id room_id seat_id decision phase cycle),
-    gate_resolved: ~w(turn_id room_id seat_id decision phase cycle)
+    gate_resolved: ~w(turn_id room_id seat_id decision phase cycle),
+    squad_budget_extended: ~w(turn_id room_id budget)
   }
 
   @doc "Returns the event schema version accepted by this module."

@@ -101,6 +101,34 @@ defmodule ReyCode.Orchestration.SquadFSMTest do
     assert SquadFSM.outcome(state) == :failed
   end
 
+  test "the human owner may grant rework beyond an exhausted budget" do
+    state =
+      "room-1"
+      |> SquadFSM.new(rework_budget: 1)
+      |> advance_to(Squad.phase_index("code_gate"))
+      |> Map.put(:rework_count, 1)
+
+    assert {:continue, granted} =
+             SquadFSM.gate(state, %{
+               "role_id" => "human_owner",
+               "decision" => "rework",
+               "target_phase" => "integration"
+             })
+
+    assert granted.rework_budget == 2
+    assert granted.rework_count == 2
+    assert granted.cycle == 1
+
+    assert {:complete, failed} =
+             SquadFSM.gate(state, %{
+               "role_id" => "squad_leader",
+               "decision" => "rework",
+               "target_phase" => "integration"
+             })
+
+    assert SquadFSM.outcome(failed) == :failed
+  end
+
   defp advance_to(state, target) when state.phase >= target, do: state
 
   defp advance_to(state, target) do

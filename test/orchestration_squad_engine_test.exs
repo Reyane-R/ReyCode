@@ -32,7 +32,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
     assert turn.status == :completed
-    assert turn.squad.workflow_version == "squad-v2"
+    assert turn.squad.workflow_version == "squad-v3"
     assert turn.squad.phase == "release_gate"
     assert turn.squad.rework_count == 0
     assert length(invocations) == 16
@@ -169,6 +169,93 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert :gate_resolved in event_types
   end
 
+  test "owner rework resolutions keep the squad alive when the budget is exhausted" do
+    previous_review = Application.get_env(:rey_code, :squad_release_gate_human)
+    Application.put_env(:rey_code, :squad_release_gate_human, true)
+
+    Application.put_env(:rey_code, :squad_simulator,
+      delay_ms: 0,
+      seed: 246,
+      leader_rework_rounds: 4
+    )
+
+    on_exit(fn ->
+      Application.put_env(:rey_code, :squad_release_gate_human, previous_review || false)
+    end)
+
+    room_id = ReyCode.snapshot().room_order |> hd()
+    role_ids = Enum.map(Squad.roles(), & &1.id)
+    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil)
+
+    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Exhaust the rework budget", :squad)
+
+    on_exit(fn -> ReyCode.cancel_turn(turn_id) end)
+
+    # Three rework cycles inside the budget plus one beyond it: each release-gate
+    # rework recommendation is owner-reviewed, and the owner-approved rework
+    # beyond the budget must extend it instead of silently failing the turn.
+    Enum.each(1..4, fn cycle ->
+      flush_projection_snapshots()
+
+      turn = wait_until_pending_review(turn_id)
+
+      assert turn.status == :running
+      assert turn.squad.rework_count == cycle - 1
+      assert turn.squad.pending_review.decision == "rework"
+      assert turn.squad.pending_review.cycle == cycle - 1
+
+      assert :ok =
+               Engine.resolve_gate(turn_id, :rework, "integration", [
+                 "owner approves cycle #{cycle}"
+               ])
+    end)
+
+    flush_projection_snapshots()
+
+    final = wait_until_pending_review(turn_id)
+    assert final.squad.pending_review.decision == "approve"
+
+    assert :ok = Engine.resolve_gate(turn_id, :approve, nil, ["owner approves release"])
+
+    completed = wait_until_terminal(turn_id)
+    assert completed.status == :completed
+
+    # Four reworks happened: three budgeted plus one durably granted by the
+    # owner beyond the budget (squad_budget_extended event).
+    assert completed.squad.rework_count == 4
+    assert completed.squad.rework_budget == 4
+  end
+
+  test "release authority is frozen at turn start" do
+    previous_review = Application.get_env(:rey_code, :squad_release_gate_human)
+    Application.put_env(:rey_code, :squad_release_gate_human, true)
+    Application.put_env(:rey_code, :squad_simulator, delay_ms: 0, seed: 777)
+
+    on_exit(fn ->
+      Application.put_env(:rey_code, :squad_release_gate_human, previous_review || false)
+    end)
+
+    room_id = ReyCode.snapshot().room_order |> hd()
+    role_ids = Enum.map(Squad.roles(), & &1.id)
+    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil)
+
+    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Freeze the authority", :squad)
+
+    on_exit(fn -> ReyCode.cancel_turn(turn_id) end)
+
+    # The runtime flag flips after the turn started; the authority recorded in
+    # squad_configured ("human") must still hold at the release gate.
+    Application.put_env(:rey_code, :squad_release_gate_human, false)
+
+    turn = wait_until_pending_review(turn_id)
+    assert turn.squad.release_authority == "human"
+    assert turn.squad.pending_review.decision == "approve"
+
+    assert :ok = Engine.resolve_gate(turn_id, :approve, nil, ["owner approves release"])
+
+    assert wait_until_terminal(turn_id).status == :completed
+  end
+
   test "blocks a squad turn when required roles are unconfigured" do
     assert {:ok, room_id} = ReyCode.create_room("Unconfigured Squad", System.tmp_dir!())
 
@@ -211,6 +298,14 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
 
   defp wait_until_pending_review(turn_id, attempts \\ 400),
     do: Wait.pending_review(Engine, turn_id, attempts * 10)
+
+  defp flush_projection_snapshots do
+    receive do
+      {:projection_snapshot, _projection} -> flush_projection_snapshots()
+    after
+      0 -> :ok
+    end
+  end
 
   defp wait_for_new_engine(_old_engine, 0), do: flunk("engine did not restart")
 

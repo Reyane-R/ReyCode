@@ -25,8 +25,7 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       cycle: invocation.cycle,
       logical_work_id: invocation.logical_work_id,
       agent_delay_ms: agent_delay_ms,
-      dependencies: invocation.dependencies,
-      session_id: invocation.session_id
+      dependencies: invocation.dependencies
     }
   end
 end

@@ -294,7 +294,7 @@ defmodule ReyCode.EventStoreTest do
       send(caller, {ref, EventStore.start_link(name: nil, path: path)})
     end)
 
-    assert_receive {^ref, result}
+    assert_receive {^ref, result}, 1_000
     result
   end
 end

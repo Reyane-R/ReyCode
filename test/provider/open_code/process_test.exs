@@ -239,7 +239,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       File.rm(path)
     end)
 
-    assert {:ok, %{session_id: "session-1"}} =
+    assert {:ok, %{}} =
              OpenCode.stream(runtime(path), request(), fn frame ->
                send(test_pid, {:frame, frame})
                :ok
@@ -268,7 +268,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       File.rm(stdin_file)
     end)
 
-    assert {:ok, %{session_id: "session-1"}} =
+    assert {:ok, %{}} =
              OpenCode.stream(runtime(path), request(), fn frame ->
                send(self(), {:frame, frame})
                :ok

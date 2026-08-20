@@ -5,7 +5,6 @@ defmodule ReyCode.Provider.FrameTest do
 
   test "constructors produce valid typed frames" do
     assert :ok = Frame.validate(Frame.text_delta(1, "hello"))
-    assert :ok = Frame.validate(Frame.session_started(2, "session-1"))
     assert :ok = Frame.validate(Frame.usage(3, %{output_tokens: 2}))
     assert :ok = Frame.validate(Frame.tool_started(4, "bash", %{status: "running"}))
     assert :ok = Frame.validate(Frame.tool_completed(5, "bash", %{status: "completed"}))

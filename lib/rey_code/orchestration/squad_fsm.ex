@@ -82,7 +82,7 @@ defmodule ReyCode.Orchestration.SquadFSM do
 
       decision == "rework" ->
         target = target_phase || current.rework_to
-        rework(state, target)
+        rework(owner_grant(state, role_id), target)
 
       true ->
         {:error, :invalid_decision}
@@ -111,6 +111,17 @@ defmodule ReyCode.Orchestration.SquadFSM do
          }}
     end
   end
+
+  # The human owner may authorize one rework cycle beyond an exhausted budget;
+  # the leader cannot. The grant is recomputed from the current count on every
+  # human resolution, so repeated owner overrides keep working; the projection
+  # budget itself is not extended (durable extension lands with the squad-v3
+  # schema pass).
+  defp owner_grant(%{rework_count: count, rework_budget: budget} = state, "human_owner")
+       when count >= budget,
+       do: %{state | rework_budget: max(budget, count) + 1}
+
+  defp owner_grant(state, _role_id), do: state
 
   @doc "Moves the workflow to its terminal stage while preserving a set outcome."
   @spec complete(t()) :: {:complete, t()}

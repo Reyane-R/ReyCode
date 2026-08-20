@@ -55,17 +55,19 @@ defmodule ReyCode.Orchestration.ProjectorTest do
         "invocation_id" => "inv-1",
         "message_id" => "msg-agent"
       }),
-      event(7, :message_delta_appended, :invocation, "inv-1", %{
+      event(7, :provider_frame_recorded, :invocation, "inv-1", %{
         "invocation_id" => "inv-1",
         "message_id" => "msg-agent",
         "frame_sequence" => 1,
-        "delta" => "Hello "
+        "kind" => "text_delta",
+        "data" => %{"text" => "Hello "}
       }),
-      event(8, :message_delta_appended, :invocation, "inv-1", %{
+      event(8, :provider_frame_recorded, :invocation, "inv-1", %{
         "invocation_id" => "inv-1",
         "message_id" => "msg-agent",
         "frame_sequence" => 2,
-        "delta" => "world"
+        "kind" => "text_delta",
+        "data" => %{"text" => "world"}
       }),
       event(9, :invocation_completed, :invocation, "inv-1", %{
         "invocation_id" => "inv-1",
@@ -122,7 +124,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert state.sequence == 2
   end
 
-  test "provider frames project text, session, usage, and strict sequence state" do
+  test "provider frames project text, usage, and strict sequence state" do
     participant = %{
       "id" => "builder",
       "name" => "Builder",
@@ -172,20 +174,13 @@ defmodule ReyCode.Orchestration.ProjectorTest do
         "invocation_id" => "inv-1",
         "message_id" => "msg-agent",
         "frame_sequence" => 1,
-        "kind" => "session_started",
-        "data" => %{"session_id" => "session-1"}
+        "kind" => "text_delta",
+        "data" => %{"text" => "Hello"}
       }),
       event(7, :provider_frame_recorded, :invocation, "inv-1", %{
         "invocation_id" => "inv-1",
         "message_id" => "msg-agent",
         "frame_sequence" => 2,
-        "kind" => "text_delta",
-        "data" => %{"text" => "Hello"}
-      }),
-      event(8, :provider_frame_recorded, :invocation, "inv-1", %{
-        "invocation_id" => "inv-1",
-        "message_id" => "msg-agent",
-        "frame_sequence" => 3,
         "kind" => "usage",
         "data" => %{"usage" => %{"output_tokens" => 4}}
       })
@@ -195,9 +190,8 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     invocation = state.invocations["inv-1"]
 
     assert state.messages["msg-agent"].body == "Hello"
-    assert invocation.session_id == "session-1"
     assert invocation.usage == %{"output_tokens" => 4}
-    assert invocation.last_frame_sequence == 3
+    assert invocation.last_frame_sequence == 2
   end
 
   test "replays a legacy projection snapshot" do

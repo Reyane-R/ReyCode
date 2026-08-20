@@ -302,8 +302,9 @@ defmodule ReyCode.Orchestration.Engine do
 
     case Validation.gate_resolution(turn, raw_decision, raw_target_phase, raw_reasons) do
       {:ok, review, decision, target_phase, reasons} ->
-        entry = EventEntries.gate_resolved(turn, review, decision, target_phase, reasons)
-        next = state |> Persistence.append_and_apply!([entry]) |> advance_turn(turn.id)
+        entries = [EventEntries.gate_resolved(turn, review, decision, target_phase, reasons)]
+        entries = entries ++ budget_extension_entries(turn, decision)
+        next = state |> Persistence.append_and_apply!(entries) |> advance_turn(turn.id)
         {:reply, :ok, next}
 
       {:error, reason} ->
@@ -586,7 +587,11 @@ defmodule ReyCode.Orchestration.Engine do
       if turn.mode == :squad do
         squad_config = [
           rework_budget: Application.get_env(:rey_code, :squad_rework_budget, Squad.max_rework()),
-          seed: Application.get_env(:rey_code, :squad_seed, 0)
+          release_authority:
+            if(Application.get_env(:rey_code, :squad_release_gate_human, true),
+              do: "human",
+              else: "leader"
+            )
         ]
 
         Persistence.append_and_apply!(
@@ -712,6 +717,23 @@ defmodule ReyCode.Orchestration.Engine do
     %{state | active_executions: Map.delete(state.active_executions, invocation_id)}
   end
 
+  # Release-gate authority is frozen at turn start (squad_configured carries it);
+  # flipping the runtime env mid-turn does not change an in-flight squad.
+  defp human_release_review?(turn) do
+    turn.squad != nil and Map.get(turn.squad, :release_authority) != "leader"
+  end
+
+  defp budget_extension_entries(%{squad: squad} = turn, :rework)
+       when squad.rework_count >= squad.rework_budget,
+       do: [
+         EventEntries.squad_budget_extended(
+           turn,
+           max(squad.rework_budget, squad.rework_count) + 1
+         )
+       ]
+
+  defp budget_extension_entries(_turn, _decision), do: []
+
   defp finalize_invocation(state, invocation_id, outcome) do
     state = release_execution(state, invocation_id)
     invocation = state.projection.invocations[invocation_id]
@@ -724,7 +746,8 @@ defmodule ReyCode.Orchestration.Engine do
         message = state.projection.messages[invocation.message_id]
 
         opts = [
-          human_release_review?: Application.get_env(:rey_code, :squad_release_gate_human, true)
+          human_release_review?:
+            invocation.phase == "release_gate" and human_release_review?(turn)
         ]
 
         turn.mode

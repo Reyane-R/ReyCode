@@ -229,7 +229,10 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
     turn = %{id: "turn-1", room_id: "room-1"}
 
     assert [configured, entered] =
-             EventEntries.squad_start(turn, rework_budget: 5, seed: 42)
+             EventEntries.squad_start(turn,
+               rework_budget: 5,
+               release_authority: "human"
+             )
 
     assert configured ==
              {
@@ -239,9 +242,9 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "room_id" => "room-1",
                  "seats" => Enum.map(Squad.roles(), & &1.id),
                  "rework_budget" => 5,
+                 "release_authority" => "human",
                  "workflow_version" => Squad.workflow_version(),
-                 "phase" => Squad.stage_label(0),
-                 "seed" => 42
+                 "phase" => Squad.stage_label(0)
                },
                @turn_metadata
              }

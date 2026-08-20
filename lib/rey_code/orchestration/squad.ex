@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Squad do
   @moduledoc "Fixed leader-supervised squad roster and workflow definition."
 
-  @workflow_version "squad-v2"
+  @workflow_version "squad-v3"
   @max_rework 3
   @retry_limit 2
 

@@ -552,7 +552,7 @@ defmodule ReyCode.TUITest do
       outcome: :completed,
       squad: %{
         room_id: room_id,
-        workflow_version: "squad-v2",
+        workflow_version: "squad-v3",
         stage: 3,
         phase: "story_gate",
         cycle: 0,

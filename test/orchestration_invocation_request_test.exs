@@ -25,8 +25,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
       phase: "implementation",
       cycle: 1,
       logical_work_id: "work-1",
-      dependencies: ["inv-0"],
-      session_id: "session-1"
+      dependencies: ["inv-0"]
     }
 
     projection = %{
@@ -73,8 +72,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
              cycle: 1,
              logical_work_id: "work-1",
              agent_delay_ms: 25,
-             dependencies: ["inv-0"],
-             session_id: "session-1"
+             dependencies: ["inv-0"]
            }
   end
 end

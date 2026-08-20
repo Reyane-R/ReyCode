@@ -14,35 +14,59 @@ defmodule ReyCode.Provider.Simulator do
     sample = regular_delay(request, sample)
 
     case sample.failure do
-      :retryable -> {:error, error("simulated_retryable", true)}
-      :permanent -> {:error, error("simulated_permanent", false)}
-      :timeout -> {:error, error("simulated_timeout", true)}
-      :crash -> exit(:simulated_provider_crash)
-      :invalid_output -> emit_result("not valid squad output", %{}, emit, sample.delay_ms)
-      :after_frame -> fail_after_frame(request, emit)
-      nil -> success(request, scenario, sample.delay_ms, emit)
+      :retryable ->
+        {:error, error("simulated_retryable", true)}
+
+      :permanent ->
+        {:error, error("simulated_permanent", false)}
+
+      :timeout ->
+        {:error, error("simulated_timeout", true)}
+
+      :crash ->
+        exit(:simulated_provider_crash)
+
+      :invalid_output ->
+        emit_result("not valid squad output", %{}, emit, sample.delay_ms, scenario.emit_process)
+
+      :after_frame ->
+        fail_after_frame(request, emit)
+
+      nil ->
+        success(request, scenario, sample.delay_ms, emit)
     end
   end
 
   defp success(%{mode: :squad} = request, scenario, delay, emit) do
     output = squad_output(request, scenario)
     text = Jason.encode!(output)
-    emit_result(text, %{"squad_output" => output}, emit, delay)
+    emit_result(text, %{"squad_output" => output}, emit, delay, scenario.emit_process)
   end
 
-  defp success(request, _scenario, delay, emit) do
-    emit_result(regular_response(request), %{}, emit, delay)
+  defp success(request, scenario, delay, emit) do
+    emit_result(regular_response(request), %{}, emit, delay, scenario.emit_process)
   end
 
-  defp emit_result(text, metadata, emit, delay) do
+  defp emit_result(text, metadata, emit, delay, emit_process) do
     frames = text |> chunks(80) |> Enum.with_index(1)
+    runner = fn -> emit_each(frames, emit, delay) end
 
+    case emit_process do
+      :task ->
+        runner |> Task.async() |> Task.await(:infinity)
+
+      :caller ->
+        runner.()
+    end
+
+    {:ok, Map.put(metadata, "usage", %{"output_frames" => length(frames)})}
+  end
+
+  defp emit_each(frames, emit, delay) do
     Enum.each(frames, fn {chunk, sequence} ->
       :ok = emit.(%Frame{sequence: sequence, kind: :text_delta, data: %{text: chunk}})
       maybe_sleep(delay)
     end)
-
-    {:ok, Map.put(metadata, "usage", %{"output_frames" => length(frames)})}
   end
 
   defp fail_after_frame(request, emit) do

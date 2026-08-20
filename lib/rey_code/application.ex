@@ -1,6 +1,8 @@
 defmodule ReyCode.Application do
   @moduledoc false
 
+  require Logger
+
   use Application
 
   @impl true
@@ -27,18 +29,41 @@ defmodule ReyCode.Application do
 
   defp tui_children do
     if Application.get_env(:rey_code, :start_tui, true) do
-      [
-        Supervisor.child_spec(
-          {Breeze.Server,
-           view: ReyCode.TUI,
-           theme: ReyCode.Theme.default(),
-           logger: :attach,
-           global_keybindings: ReyCode.TUI.global_keybindings()},
-          restart: :transient
-        )
-      ]
+      if terminal_attached?() do
+        [
+          Supervisor.child_spec(
+            {Breeze.Server,
+             view: ReyCode.TUI,
+             theme: ReyCode.Theme.default(),
+             logger: :attach,
+             global_keybindings: ReyCode.TUI.global_keybindings()},
+            restart: :transient
+          )
+        ]
+      else
+        announce_headless()
+        []
+      end
     else
       []
+    end
+  end
+
+  defp terminal_attached? do
+    match?({:ok, _}, :io.columns())
+  rescue
+    _ -> false
+  end
+
+  defp announce_headless do
+    message =
+      "ReyCode: no terminal detected — starting headless. Run inside a terminal for the TUI, " <>
+        "or use `mix rey_code.squad` for headless squads."
+
+    try do
+      IO.puts(message)
+    rescue
+      _ -> Logger.info(message)
     end
   end
 

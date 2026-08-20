@@ -87,7 +87,6 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       assert {:ok,
               %{
-                session_id: nil,
                 usage: %{"prompt_tokens" => 2, "completion_tokens" => 2}
               }} = result
 

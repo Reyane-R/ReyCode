@@ -2,6 +2,7 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Provider.OpenCode.Discovery
+  @run_help "usage: opencode run [message..]\n  --dir <path>\n  --format <format>\n"
 
   test "discovers credentials and stable provider/model identifiers" do
     runner = fn _executable, args, _opts ->
@@ -9,6 +10,7 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
         ["--version"] -> {:ok, "1.18.11\n"}
         ["auth", "list"] -> {:ok, "OpenAI oauth\nOpenRouter api\n2 credentials\n"}
         ["models"] -> {:ok, "openai/gpt-5.6-sol\nnoise\nopenrouter/qwen/qwen3\n"}
+        ["run", "--help"] -> {:ok, @run_help}
       end
     end
 
@@ -26,6 +28,7 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
         ["models"] -> {:ok, "openai/gpt-5.6-sol\n"}
         ["--version"] -> {:error, :timeout}
         ["auth", "list"] -> {:error, {:exit_status, 1, "not signed in"}}
+        ["run", "--help"] -> {:ok, @run_help}
       end
     end
 
@@ -70,6 +73,7 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
         ["models"] -> {:ok, "openai/gpt-5.6-sol\n"}
         ["--version"] -> raise "version probe exploded"
         ["auth", "list"] -> throw(:auth_threw)
+        ["run", "--help"] -> {:ok, @run_help}
       end
     end
 
@@ -90,6 +94,7 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
       *models*) printf 'openai/gpt-5.6-sol\\n' ;;
       *version*) printf '1.18.11\\n' ;;
       *auth*) printf 'OpenAI oauth\\n1 credential\\n' ;;
+      *run*help*) printf 'usage: opencode run --dir <path> --format <format>\\n' ;;
     esac
     """)
 
@@ -104,10 +109,44 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
   end
 
   test "keeps an unusable executable identity when identification fails" do
-    runner = fn _executable, ["models"], _opts -> {:ok, "openai/gpt-5.6-sol\n"} end
+    runner = fn _executable, args, _opts ->
+      case args do
+        ["models"] -> {:ok, "openai/gpt-5.6-sol\n"}
+        ["run", "--help"] -> {:ok, @run_help}
+      end
+    end
 
     assert {:ok, %{executable_identity: nil}} =
              Discovery.discover(executable: "/nonexistent/opencode-probe", runner: runner)
+  end
+
+  test "rejects an executable whose run help lacks the launch flags" do
+    runner = fn _executable, args, _opts ->
+      case args do
+        ["models"] -> {:ok, "openai/gpt-5.6-sol\n"}
+        ["run", "--help"] -> {:ok, "usage: opencode run [message..]\n"}
+      end
+    end
+
+    assert {:error, message} =
+             Discovery.discover(executable: "/tmp/old-opencode", runner: runner)
+
+    assert message =~ "cannot serve ReyCode launches"
+    assert message =~ "/tmp/old-opencode"
+  end
+
+  test "rejects an executable whose run help cannot be read" do
+    runner = fn _executable, args, _opts ->
+      case args do
+        ["models"] -> {:ok, "openai/gpt-5.6-sol\n"}
+        ["run", "--help"] -> {:error, :timeout}
+      end
+    end
+
+    assert {:error, message} =
+             Discovery.discover(executable: "/tmp/old-opencode", runner: runner)
+
+    assert message =~ "run help could not be read"
   end
 
   test "parses model identifiers and ignores non-model lines" do

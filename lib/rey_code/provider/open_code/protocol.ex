@@ -19,7 +19,6 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
               stderr_buffer: "",
               text_buffer: nil,
               sequence: 0,
-              session_id: nil,
               provider_errors: [],
               diagnostics: [],
               diagnostic_bytes: 0,
@@ -36,7 +35,6 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
             stderr_buffer: binary(),
             text_buffer: TextBuffer.t(),
             sequence: non_neg_integer(),
-            session_id: binary() | nil,
             provider_errors: [binary()],
             diagnostics: [binary()],
             diagnostic_bytes: non_neg_integer(),
@@ -141,7 +139,7 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
          )}
 
       true ->
-        {:ok, %{session_id: state.session_id}}
+        {:ok, %{}}
     end
   end
 
@@ -197,8 +195,6 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
   end
 
   defp handle_record(record, state, emit) do
-    state = maybe_emit_session(record["sessionID"], state, emit)
-
     case record do
       %{"type" => "text", "part" => %{"text" => text}} when is_binary(text) ->
         buffer_text(state, text, emit)
@@ -261,16 +257,6 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
   end
 
   defp classify_tool_state(_), do: :tool_completed
-
-  defp maybe_emit_session(nil, state, _emit), do: state
-  defp maybe_emit_session(session_id, %State{session_id: session_id} = state, _emit), do: state
-
-  defp maybe_emit_session(session_id, state, emit) do
-    state
-    |> flush_pending_text(emit)
-    |> Map.put(:session_id, session_id)
-    |> emit_frame(emit, :session_started, %{session_id: session_id})
-  end
 
   defp buffer_text(state, "", _emit), do: %{state | protocol_activity?: true}
 

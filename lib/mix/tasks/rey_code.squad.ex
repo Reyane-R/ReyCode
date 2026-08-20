@@ -24,7 +24,8 @@ defmodule Mix.Tasks.ReyCode.Squad do
     provider: :string,
     model: :string,
     workspace: :string,
-    json: :boolean
+    json: :boolean,
+    release: :string
   ]
 
   @impl true
@@ -32,6 +33,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
     {opts, args, invalid} = OptionParser.parse(argv, strict: @switches)
 
     if invalid != [], do: Mix.raise("Invalid options: #{inspect(invalid)}")
+    validate_release!(opts)
     runs = Keyword.get(opts, :runs, 1)
 
     if runs > 1 do
@@ -68,7 +70,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
     %{
       application_env: [
         start_tui: false,
-        squad_release_gate_human: false,
+        squad_release_gate_human: Keyword.get(opts, :release, "auto") == "wait",
         squad_rework_budget: Keyword.get(opts, :rework_budget, 3)
       ],
       format: if(opts[:json], do: :json, else: :human),
@@ -76,6 +78,14 @@ defmodule Mix.Tasks.ReyCode.Squad do
       theme: Enum.join(args, " "),
       workspace: opts[:workspace]
     }
+  end
+
+  defp validate_release!(opts) do
+    case Keyword.get(opts, :release) do
+      nil -> :ok
+      mode when mode in ["auto", "wait"] -> :ok
+      other -> Mix.raise("--release must be auto or wait, got: #{inspect(other)}")
+    end
   end
 
   defp with_application_env(values, fun) do

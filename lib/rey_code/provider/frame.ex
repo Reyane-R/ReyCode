@@ -4,10 +4,9 @@ defmodule ReyCode.Provider.Frame do
   @enforce_keys [:sequence, :kind, :data]
   defstruct [:sequence, :kind, :data]
 
-  @type kind :: :text_delta | :usage | :session_started | :tool_started | :tool_completed
+  @type kind :: :text_delta | :usage | :tool_started | :tool_completed
   @type data ::
           %{text: String.t()}
-          | %{session_id: String.t()}
           | %{usage: map()}
           | %{tool: String.t(), state: term()}
 
@@ -27,11 +26,6 @@ defmodule ReyCode.Provider.Frame do
     }
   end
 
-  @spec session_started(pos_integer(), String.t()) :: t()
-  def session_started(sequence, session_id) do
-    %__MODULE__{sequence: sequence, kind: :session_started, data: %{session_id: session_id}}
-  end
-
   @spec usage(pos_integer(), map()) :: t()
   def usage(sequence, usage),
     do: %__MODULE__{sequence: sequence, kind: :usage, data: %{usage: usage}}
@@ -46,15 +40,14 @@ defmodule ReyCode.Provider.Frame do
     %__MODULE__{sequence: sequence, kind: :tool_started, data: %{tool: tool, state: state}}
   end
 
-  @spec validate(t()) :: :ok | {:error, atom()}
+  @spec validate(term()) :: :ok | {:error, atom()}
   def validate(%__MODULE__{} = frame) do
     if valid_payload?(frame) and json_safe?(frame.data), do: :ok, else: {:error, :invalid_frame}
   end
 
-  defp to_wire_data(:text_delta, %{text: text}), do: %{"text" => text}
+  def validate(_other), do: {:error, :invalid_frame}
 
-  defp to_wire_data(:session_started, %{session_id: session_id}),
-    do: %{"session_id" => session_id}
+  defp to_wire_data(:text_delta, %{text: text}), do: %{"text" => text}
 
   defp to_wire_data(:usage, %{usage: usage}), do: %{"usage" => usage}
 
@@ -64,14 +57,6 @@ defmodule ReyCode.Provider.Frame do
 
   defp valid_payload?(%__MODULE__{sequence: sequence, kind: :text_delta, data: %{text: text}})
        when is_integer(sequence) and sequence > 0 and is_binary(text),
-       do: true
-
-  defp valid_payload?(%__MODULE__{
-         sequence: sequence,
-         kind: :session_started,
-         data: %{session_id: id}
-       })
-       when is_integer(sequence) and sequence > 0 and is_binary(id) and id != "",
        do: true
 
   defp valid_payload?(%__MODULE__{sequence: sequence, kind: :usage, data: %{usage: usage}})

@@ -69,7 +69,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
     case Task.yield(task, timeout) do
       {:ok, {:ok, state}} ->
         flush_pending(state, emit)
-        {:ok, %{session_id: nil, usage: state.usage}}
+        {:ok, %{usage: state.usage}}
 
       {:ok, {:error, _} = error} ->
         error

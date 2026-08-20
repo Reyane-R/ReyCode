@@ -165,6 +165,32 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   @tag capture_log: true
+  test "records frames emitted from a helper task process" do
+    previous = Application.get_env(:rey_code, :squad_simulator)
+    Application.put_env(:rey_code, :squad_simulator, seed: 5, delay_ms: 0, emit_process: :task)
+
+    on_exit(fn ->
+      if previous do
+        Application.put_env(:rey_code, :squad_simulator, previous)
+      else
+        Application.delete_env(:rey_code, :squad_simulator)
+      end
+    end)
+
+    room_id = default_room_id()
+    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Frames from a task process", :compare)
+    turn = wait_until_terminal(turn_id)
+    snapshot = ReyCode.snapshot()
+    invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
+
+    assert turn.status == :completed
+
+    assert Enum.all?(invocations, fn invocation ->
+             invocation.status == :completed and invocation.last_frame_sequence > 0
+           end)
+  end
+
+  @tag capture_log: true
   test "restarts Engine when its AgentSupervisor dependency crashes" do
     old_engine = Process.whereis(Engine)
     old_supervisor = Process.whereis(ReyCode.AgentSupervisor)
@@ -197,6 +223,27 @@ defmodule ReyCode.Orchestration.EngineTest do
 
       assert {:error, :invalid_frames} =
                GenServer.call(Engine, {:record_frames, invocation.id, :junk})
+
+      drain_turn(turn_id)
+    end
+
+    test "rejects batches containing non-frame elements without crashing the engine" do
+      room_id = default_room_id()
+      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Non-frame batch check", :compare)
+      invocation = wait_for_running(turn_id)
+
+      assert {:error, :invalid_frame} =
+               Engine.Client.record_frames(Engine, invocation.id, [:junk])
+
+      updated = ReyCode.snapshot().invocations[invocation.id]
+
+      assert :ok =
+               Engine.Client.record_frames(Engine, invocation.id, [
+                 Frame.text_delta(updated.last_frame_sequence + 1, "engine still alive")
+               ])
+
+      assert ReyCode.snapshot().invocations[invocation.id].last_frame_sequence ==
+               updated.last_frame_sequence + 1
 
       drain_turn(turn_id)
     end
