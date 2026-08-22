@@ -198,6 +198,29 @@ OpenCode remains a provider during the transition. Its CLI still owns tool
 execution over the current stdio adapter; the ReyCode-owned tool loop is active
 for OpenAI-compatible providers and the simulator.
 
+## Tool approval
+
+Providers can only request workspace tools — `read`, `write`, `edit`, `bash`,
+`grep`, `glob`, and `list`. ReyCode executes them itself, one durable tool run
+at a time, inside the trusted workspace roots. `read`, `grep`, `glob`, `list`,
+and `edit` run without prompting; `bash` and `write` always wait for owner
+approval first.
+
+When a tool needs approval, a banner appears above the room timeline:
+
+    tool approval required  /  write  /  /tools
+
+Run `/tools` (or click the banner's command) to open the review modal. For
+`bash` it shows the exact command, working directory, the names of every
+environment variable that will be passed through, and a reminder that Bash is
+explicit host execution rather than a sandbox. For `write` it shows the target
+path, content size, and a bounded preview. Approve with `A`, deny with `D`.
+
+Decisions are addressed to a specific durable tool run ID, so a stale modal can
+never approve a different request than the one displayed. Waiting approvals
+consume no concurrency slot, survive an engine restart, and denial finishes the
+turn as failed without any side effect.
+
 ## Diagnostics
 
 Inspect production readiness with the doctor task:

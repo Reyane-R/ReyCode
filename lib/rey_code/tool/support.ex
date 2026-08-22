@@ -18,6 +18,30 @@ defmodule ReyCode.Tool.Support do
     end
   end
 
+  @doc """
+  Reads a non-negative integer argument, accepting integers or digit strings
+  and falling back to `default` when absent.
+  """
+  @spec integer_arg(map(), atom() | String.t(), integer()) ::
+          {:ok, integer()} | {:error, :invalid_integer}
+  def integer_arg(arguments, key, default) when is_map(arguments) do
+    with :error <- Map.fetch(arguments, to_string(key)),
+         :error <- Map.fetch(arguments, key) do
+      {:ok, default}
+    else
+      {:ok, value} when is_integer(value) and value >= 0 ->
+        {:ok, value}
+
+      {:ok, value} when is_binary(value) ->
+        if Regex.match?(~r/^\d+$/, String.trim(value)),
+          do: {:ok, String.to_integer(String.trim(value))},
+          else: {:error, :invalid_integer}
+
+      {:ok, _other} ->
+        {:error, :invalid_integer}
+    end
+  end
+
   @doc "Returns `{:ok, canonical}` when `key` is present and resolves within the trusted roots."
   @spec require_path(map(), atom(), Request.t()) :: {:ok, String.t()} | {:error, :missing_path}
   def require_path(arguments, key, %Request{} = request) do

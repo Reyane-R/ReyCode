@@ -319,7 +319,13 @@ defmodule ReyCode.Orchestration.Projector do
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
       update_run(invocation, data["tool_run_id"], fn run ->
-        %{run | status: :failed, error: data["error"], completed_at: event.recorded_at}
+        %{
+          run
+          | status: :failed,
+            error: data["error"],
+            result: data["result"],
+            completed_at: event.recorded_at
+        }
       end)
     end)
     |> put_sequence(event.sequence)

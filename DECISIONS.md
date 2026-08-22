@@ -320,6 +320,17 @@ D4 live-squad cycle runs through the OpenCode provider for FSM/workflow
 evidence and re-runs on the standalone loop once it exists. FSM evidence and
 execution-plane evidence are independent; gather them in parallel.
 
+**Amendment (2026-08-23): ReyCode-managed vs provider-managed tools.** D22
+now distinguishes two capabilities. `:reycode_tools` is the default and only
+fully-supported mode: the provider returns normalized tool calls each round,
+ReyCode persists durable ToolRuns, enforces authorization, executes tools
+itself, and feeds results back. `:provider_managed_tools` (OpenCode stdio) is
+an explicit legacy capability: the provider's CLI owns execution inside its
+own sandbox and ReyCode only observes frames. Provider-managed execution does
+NOT satisfy this decision's ownership guarantees (durable authorization,
+crash-safe indeterminate failure, approval dormancy); it remains available
+only until a serve/permission adapter exists.
+
 ## D23 — Tool layer v1 scope (Resolved 2026-08-20: Round 4)
 
 **v1 tools:** per issue #30 — `read`, `write`, `edit`, `bash`, `grep`, `glob`,
@@ -336,6 +347,22 @@ roots.
 
 Acceptance: the tool registry enforces the policy; an `ask` event pauses the
 invocation until the owner responds in the TUI (durable, like release gates).
+
+**Amendment (2026-08-23): Bash is approved host execution.** Bash runs with a
+minimal allowlisted environment, rlimits, byte-capped captured output, and a
+process-tree teardown on timeout, but it is not filesystem-sandboxed to the
+workspace: it can read and write anywhere the host user can. Every Bash run
+therefore shows the exact command, working directory, environment names, and
+execution scope for owner approval before it starts — the approval IS the
+boundary, matching D22's ownership guarantees rather than pretending to a
+sandbox that does not exist.
+
+**Amendment (2026-08-23): durable tool-run semantics supersede tool_ask
+events.** Approvals are recorded as `tool_run_approval_resolved` against a
+specific ToolRun ID; at most one owner review is active per invocation;
+waiting consumes no admission slot; recovery reuses completed results, fails
+running runs as indeterminate, and keeps awaiting runs dormant. The legacy
+`tool_ask_*` event types are retained for replay only.
 
 ## D24 — OpenCode demoted, not deleted (Policy — 2026-08-20)
 

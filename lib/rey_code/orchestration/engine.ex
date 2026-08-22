@@ -110,10 +110,15 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:resolve_gate, turn_id, decision, target_phase, reasons})
   end
 
-  @doc "Records the human decision for a pending tool approval."
-  @spec resolve_tool_ask(term(), term(), GenServer.server()) :: :ok | {:error, atom()}
-  def resolve_tool_ask(invocation_id, decision, server \\ __MODULE__) do
-    GenServer.call(server, {:resolve_tool_ask, invocation_id, decision})
+  @doc """
+  Records the owner's decision for one durable tool run.
+
+  Decisions are addressed by ToolRun ID so a stale or duplicated review can
+  never resolve a different request than the one displayed.
+  """
+  @spec resolve_tool_run(term(), term(), term(), GenServer.server()) :: :ok | {:error, atom()}
+  def resolve_tool_run(invocation_id, run_id, decision, server \\ __MODULE__) do
+    GenServer.call(server, {:resolve_tool_run, invocation_id, run_id, decision})
   end
 
   @impl true
@@ -215,10 +220,11 @@ defmodule ReyCode.Orchestration.Engine do
     |> apply_configuration(state)
   end
 
-  def handle_call({:resolve_tool_ask, invocation_id, raw_decision}, _from, state) do
+  def handle_call({:resolve_tool_run, invocation_id, run_id, raw_decision}, _from, state) do
     invocation = state.projection.invocations[invocation_id]
 
-    with {:ok, review, decision} <- Validation.tool_ask_resolution(invocation, raw_decision),
+    with {:ok, review, decision} <-
+           Validation.tool_run_resolution(invocation, run_id, raw_decision),
          {:ok, run} <- resumable_run(invocation, review) do
       entry = EventEntries.tool_run_approval_resolved(invocation, run, decision)
       next = Persistence.append_and_apply!(state, [entry])

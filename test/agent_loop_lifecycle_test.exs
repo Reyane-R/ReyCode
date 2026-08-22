@@ -187,7 +187,14 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     assert events_of_type(store, :tool_run_completed) == []
 
     assert Enum.all?(failed, fn event ->
-             event.data["error"] == %{"ok" => false, "error" => "enoent"}
+             event.data["error"] == %{
+               "ok" => false,
+               "output" => nil,
+               "error" => "enoent",
+               "truncated" => false,
+               "metadata" => %{}
+             } and
+               event.data["result"] == event.data["error"]
            end)
 
     snapshot = Engine.snapshot(@engine)

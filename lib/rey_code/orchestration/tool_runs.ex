@@ -38,11 +38,33 @@ defmodule ReyCode.Orchestration.ToolRuns do
   @doc "Encodes a terminal run as the JSON tool-result content for the next round."
   @spec result_content(map()) :: String.t()
   def result_content(%{status: :completed, result: result}) do
-    Jason.encode!(%{"ok" => true, "output" => result["output"], "error" => nil})
+    Jason.encode!(%{
+      "ok" => true,
+      "output" => result["output"],
+      "error" => nil,
+      "truncated" => !!result["truncated"],
+      "metadata" => result["metadata"] || %{}
+    })
+  end
+
+  def result_content(%{status: status, error: error, result: result}) do
+    Jason.encode!(%{
+      "ok" => false,
+      "output" => nil,
+      "error" => error || Atom.to_string(status),
+      "truncated" => !!result["truncated"],
+      "metadata" => (result && result["metadata"]) || %{}
+    })
   end
 
   def result_content(%{status: status, error: error}) do
-    Jason.encode!(%{"ok" => false, "output" => nil, "error" => error || Atom.to_string(status)})
+    Jason.encode!(%{
+      "ok" => false,
+      "output" => nil,
+      "error" => error || Atom.to_string(status),
+      "truncated" => false,
+      "metadata" => %{}
+    })
   end
 
   defp ordered_runs(invocation) do

@@ -51,10 +51,13 @@ defmodule ReyCode.TUI.ToolReview do
 
   @spec submit(map()) :: {:noreply, map()}
   def submit(term) do
-    decision = Enum.at(@options, term.assigns.tool_review.index)
+    review_state = term.assigns.tool_review
+    decision = Enum.at(@options, review_state.index)
+    run_id = review_state.review && review_state.review.request_id
 
-    case Engine.resolve_tool_ask(
-           term.assigns.tool_review.invocation_id,
+    case Engine.resolve_tool_run(
+           review_state.invocation_id,
+           run_id,
            decision,
            term.assigns.engine
          ) do

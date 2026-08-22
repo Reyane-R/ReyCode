@@ -341,7 +341,8 @@ defmodule ReyCode.Orchestration.EventEntries do
         "room_id" => invocation.room_id,
         "tool_run_id" => run.id,
         "tool" => run.tool,
-        "error" => error
+        "error" => error,
+        "result" => error
       },
       invocation
     )

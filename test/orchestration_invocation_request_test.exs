@@ -95,7 +95,14 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
                ),
                Message.new(
                  role: :tool,
-                 content: Jason.encode!(%{"ok" => true, "output" => "contents", "error" => nil}),
+                 content:
+                   Jason.encode!(%{
+                     "ok" => true,
+                     "output" => "contents",
+                     "error" => nil,
+                     "truncated" => false,
+                     "metadata" => %{}
+                   }),
                  tool_call_id: "call-1",
                  name: "read"
                )

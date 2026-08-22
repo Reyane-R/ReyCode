@@ -6,6 +6,7 @@ defmodule ReyCode.TUI.Components.Modals do
 
   alias ReyCode.Orchestration.Squad.Dashboard
   alias ReyCode.Provider.Presentation
+  alias ReyCode.Security.Environment
   alias ReyCode.TUI.Settings
 
   attr :modal, :any, required: true
@@ -332,6 +333,13 @@ defmodule ReyCode.TUI.Components.Modals do
       </box>
       <box class="pt-2 text-muted">TOOL</box>
       <box class="pt-1 font-bold text-warning">{@tool_review.review.tool}</box>
+      <box
+        :for={{label, value} <- tool_review_details(@tool_review.review)}
+        class="pt-2 w-full overflow-hidden"
+      >
+        <box class="text-muted">{label}</box>
+        <box class="pt-1 text-default w-full overflow-hidden">{value}</box>
+      </box>
       <box class="pt-2 text-muted">WORKSPACE</box>
       <box class="pt-1 text-muted w-full overflow-hidden">{@tool_review.review.workspace}</box>
       <box class="pt-3 text-muted">OWNER DECISION</box>
@@ -341,10 +349,94 @@ defmodule ReyCode.TUI.Components.Modals do
       >
         {settings_marker(index, @tool_review.index)} {decision}
       </box>
+      <box :if={not is_nil(@notice)} class="pt-2 text-error">{@notice}</box>
       <box class="pt-3 text-muted">A approve   D deny   Enter confirm   Esc close</box>
     </box>
     """
   end
+
+  defp tool_review_details(%{tool: "bash", arguments: arguments}) do
+    [
+      {"COMMAND", argument(arguments, "command", "(none)")},
+      {"CWD", argument(arguments, "cwd", "(workspace)")},
+      {"ENV NAMES", bash_env_names()},
+      {"SCOPE", "host execution — not sandboxed to the workspace"}
+    ]
+  end
+
+  defp tool_review_details(%{tool: "write", arguments: arguments}) do
+    content = argument(arguments, "content", "")
+
+    [
+      {"WRITE PATH", argument(arguments, "path", "(none)")},
+      {"CONTENT SIZE", "#{byte_size(content)} bytes"},
+      {"CONTENT PREVIEW", preview(content)}
+    ]
+  end
+
+  defp tool_review_details(%{tool: "edit", arguments: arguments}) do
+    old = argument(arguments, "old_string", "")
+    new = argument(arguments, "new_string", "")
+
+    [
+      {"EDIT PATH", argument(arguments, "path", "(none)")},
+      {"OLD STRING (#{byte_size(old)} bytes)", preview(old)},
+      {"NEW STRING (#{byte_size(new)} bytes)", preview(new)},
+      {"MATCHING", "the anchor must match exactly once or the edit fails"}
+    ]
+  end
+
+  defp tool_review_details(%{tool: tool, arguments: arguments}) do
+    [{"ARGUMENTS", compact_arguments(tool, arguments)}]
+  end
+
+  defp argument(arguments, key, default) when is_map(arguments) do
+    case Map.fetch(arguments, key) do
+      {:ok, value} when is_binary(value) -> value
+      _other -> default
+    end
+  end
+
+  defp argument(_arguments, _key, default), do: default
+
+  defp bash_env_names do
+    names =
+      Environment.allowlisted(
+        source: System.get_env(),
+        additional_names: Application.get_env(:rey_code, :tool_bash_env_allowlist, [])
+      )
+      |> Map.keys()
+      |> Enum.sort()
+      |> Enum.join(", ")
+
+    truncate(names, 160)
+  end
+
+  defp compact_arguments(_tool, arguments) when is_map(arguments) do
+    arguments
+    |> Enum.map_join(" ", fn {key, value} -> "#{key}=#{inspect(value)}" end)
+    |> truncate(200)
+  end
+
+  defp compact_arguments(_tool, _arguments), do: "(none)"
+
+  defp preview(content) do
+    content
+    |> String.replace("\n", "\\n")
+    |> truncate(200)
+    |> case do
+      "" -> "(empty)"
+      shown -> shown
+    end
+  end
+
+  defp truncate(value, limit) when is_binary(value) do
+    if String.length(value) <= limit,
+      do: value,
+      else: String.slice(value, 0, limit - 1) <> "…"
+  end
+
+  defp truncate(_value, _limit), do: ""
 
   defp settings_header_controls(:providers), do: "Esc back   R recheck"
   defp settings_header_controls(_step), do: "Esc back"

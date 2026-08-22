@@ -96,7 +96,7 @@ defmodule ReyCode.Event do
       ~w(invocation_id message_id turn_id room_id tool_run_id tool decision),
     tool_run_started: ~w(invocation_id message_id turn_id room_id tool_run_id tool),
     tool_run_completed: ~w(invocation_id message_id turn_id room_id tool_run_id tool result),
-    tool_run_failed: ~w(invocation_id message_id turn_id room_id tool_run_id tool error),
+    tool_run_failed: ~w(invocation_id message_id turn_id room_id tool_run_id tool error result),
     tool_run_interrupted: ~w(invocation_id message_id turn_id room_id tool_run_id tool reason)
   }
 

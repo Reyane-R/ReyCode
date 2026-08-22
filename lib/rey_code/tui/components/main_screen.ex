@@ -129,6 +129,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box :if={release_review_status(@room, @projection) != ""} class="text-warning">
         {release_review_status(@room, @projection)}
       </box>
+      <box :if={tool_approval_status(@room, @projection) != ""} class="text-warning">
+        {tool_approval_status(@room, @projection)}
+      </box>
     </box>
     """
   end
@@ -417,6 +420,23 @@ defmodule ReyCode.TUI.Components.MainScreen do
     else
       ""
     end
+  end
+
+  defp tool_approval_status(room, projection) do
+    case pending_tool_invocation(projection, room.active_turn_id) do
+      nil -> ""
+      %{pending_tool_review: review} -> "tool approval required  /  #{review.tool}  /  /tools"
+    end
+  end
+
+  defp pending_tool_invocation(_projection, nil), do: nil
+
+  defp pending_tool_invocation(projection, turn_id) do
+    projection.invocations
+    |> Map.values()
+    |> Enum.find(fn invocation ->
+      invocation.turn_id == turn_id and not is_nil(invocation.pending_tool_review)
+    end)
   end
 
   defp timestamp(value) do

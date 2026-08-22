@@ -172,12 +172,21 @@ rounds.
    `test/agent_loop_approval_test.exs`,
    `test/agent_loop_lifecycle_test.exs`, and
    `test/orchestration_projector_snapshot_test.exs`)*
-3. OpenAI-compatible adapter hardening. *(one-round contract done; multi-round
-   and malformed-argument integration tests pending)*
-4. Tool security and issue #30 semantics. *(relative paths now resolve
-   against the invocation workspace; caps, unique edits, symlink-safe grep,
-   glob containment, bash process-tree kill remain)*
-5. TUI, migration, diagnostics, and documentation.
+3. OpenAI-compatible adapter hardening. *(complete: one-round contract,
+   multi-round continuation through the real provider interface, parallel
+   call-batch assembly, malformed-argument normalization, and wire-body
+   assertions; locked by `test/provider/open_ai_compatible_test.exs`)*
+4. Tool security and issue #30 semantics. *(complete: bounded line-oriented
+   reads with offset/limit windows, unique edit matching with ambiguity
+   rejection, write/edit byte caps, binary-safe grep, symlink-safe traversal,
+   glob containment re-validation, JSON-safe result metadata with truncation
+   flags, and Bash process-tree teardown, stderr capture, output caps, and
+   exit-code/timeout/truncation/wall-time reporting; locked by
+   `test/rey_code/tool/tool_execution_test.exs`)*
+5. TUI, migration, diagnostics, and documentation. *(complete: approval
+   resolves by durable ToolRun ID, per-tool review modal with exact command/
+   cwd/env names/content preview, pending-approval banner, `/tools`
+   documentation, D22/D23 amendments; legacy `tool_ask_*` replay retained)*
 6. OpenCode serve/permission bridge as a separate project.
 
 ## Non-Goals

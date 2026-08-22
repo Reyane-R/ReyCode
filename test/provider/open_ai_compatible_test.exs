@@ -5,6 +5,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
   alias ReyCode.Provider.{
     Frame,
+    Message,
     OpenAICompatible,
     OpenAICompatible.Profile,
     Request,
@@ -146,6 +147,114 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert emitted == []
     end
 
+    test "assembles several parallel calls from one round in order" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"a.txt\\"}"}}]}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-2","index":1,"type":"function","function":{"name":"list","arguments":"{}"}}]}}]}\n\n),
+        ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
+      ])
+
+      {:ok, %Response{tool_calls: calls}} =
+        OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+      assert Enum.map(calls, &{&1.id, &1.tool}) == [{"call-1", "read"}, {"call-2", "list"}]
+    end
+
+    test "drives a complete two-round conversation through the one-round contract" do
+      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
+
+      # Round 1: the model asks for a tool.
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-9","index":0,"type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]}}]}\n\n),
+        ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {:ok, round_one} = OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+      assert [%ToolCall{id: "call-9"} = call] = round_one.tool_calls
+
+      # Round 2: ReyCode rebuilds the conversation from durable state — the
+      # original user turn, the assistant's tool-call batch, and the durable
+      # tool result — never from provider-local recursion state.
+      continuation = %{
+        request()
+        | round_index: 1,
+          messages: [
+            %{role: :user, content: "Hi", author: %{id: "user", name: "You"}},
+            Message.new(role: :assistant, content: "", tool_calls: [call]),
+            Message.new(
+              role: :tool,
+              content:
+                Jason.encode!(%{
+                  "ok" => true,
+                  "output" => "file body",
+                  "error" => nil,
+                  "truncated" => false,
+                  "metadata" => %{}
+                }),
+              tool_call_id: "call-9",
+              name: "read"
+            )
+          ]
+      }
+
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"content":"The file says: file body"}}]}\n\n),
+        ~s(data: {"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":6}}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {:ok, round_two} = OpenAICompatible.stream(runtime(), continuation, fn _frame -> :ok end)
+
+      assert round_two.text == "The file says: file body"
+      assert round_two.tool_calls == []
+      assert round_two.usage == %{"prompt_tokens" => 5, "completion_tokens" => 6}
+
+      # The wire body must carry the tool result keyed by call ID.
+      body = Jason.decode!(FakeTransport.last_body())
+      roles = Enum.map(body["messages"], & &1["role"])
+
+      assert roles == ["system", "user", "assistant", "tool"]
+
+      assert List.last(body["messages"]) == %{
+               "role" => "tool",
+               "tool_call_id" => "call-9",
+               "content" =>
+                 Jason.encode!(%{
+                   "ok" => true,
+                   "output" => "file body",
+                   "error" => nil,
+                   "truncated" => false,
+                   "metadata" => %{}
+                 })
+             }
+
+      assert [%{"id" => "call-9", "type" => "function"}] =
+               body["messages"] |> Enum.at(2) |> Map.get("tool_calls")
+    end
+
+    test "normalizes malformed tool-call arguments to an empty map" do
+      FakeTransport.set_stream([
+        # Truncated JSON…
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-a","index":0,"function":{"name":"bash","arguments":"{\\"cmd\\""}}]}}]}\n\n),
+        # …a non-object payload…
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-b","index":1,"function":{"name":"list","arguments":"[1,2]"}}]}}]}\n\n),
+        # …and a null payload must all survive normalization.
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-c","index":2,"function":{"name":"glob"}}]}}]}\n\n),
+        ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
+      ])
+
+      {:ok, %Response{tool_calls: calls}} =
+        OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+      assert [
+               %ToolCall{id: "call-a", tool: "bash", arguments: %{}},
+               %ToolCall{id: "call-b", tool: "list", arguments: %{}},
+               %ToolCall{id: "call-c", tool: "glob", arguments: %{}}
+             ] = calls
+    end
+
     test "returns a missing credentials error when the key is unset" do
       System.delete_env(@key_env)
 
@@ -277,12 +386,14 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
   alias ReyCode.Provider.OpenAICompatible.HTTP
 
   def clear do
-    [:models, :stream, :models_status, :stream_status]
+    [:models, :stream, :models_status, :stream_status, :last_body]
     |> Enum.each(&:persistent_term.erase({__MODULE__, &1}))
   end
 
   def set_models(body), do: :persistent_term.put({__MODULE__, :models}, body)
   def set_stream(chunks), do: :persistent_term.put({__MODULE__, :stream}, chunks)
+
+  def last_body, do: :persistent_term.get({__MODULE__, :last_body}, "{}")
 
   def set_models_status(status, body),
     do: :persistent_term.put({__MODULE__, :models_status}, {status, body})
@@ -291,7 +402,9 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
     do: :persistent_term.put({__MODULE__, :stream_status}, {status, body})
 
   @impl true
-  def start(url, _headers, _body, _opts) do
+  def start(url, _headers, body, _opts) do
+    :persistent_term.put({__MODULE__, :last_body}, body)
+
     if String.ends_with?(url, "/models"), do: {:ok, :models}, else: {:ok, :stream}
   end
 

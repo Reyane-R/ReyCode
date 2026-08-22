@@ -70,7 +70,12 @@ defmodule ReyCode.Orchestration.ToolApprovalTest do
 
     assert projected.status == :waiting_tool_approval
     assert projected.pending_tool_review.tool == "write"
-    assert {:ok, _review, :approve} = Validation.tool_ask_resolution(projected, "approve")
+
+    assert {:ok, _review, :approve} =
+             Validation.tool_run_resolution(projected, "request-1", "approve")
+
+    assert {:error, :tool_run_not_found} =
+             Validation.tool_run_resolution(projected, "other-run", "approve")
 
     resolved =
       event(

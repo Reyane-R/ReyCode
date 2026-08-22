@@ -76,14 +76,27 @@ defmodule ReyCode.Orchestration.Validation do
     end
   end
 
-  @doc "Checks invocation preconditions and normalizes a human tool decision."
-  @spec tool_ask_resolution(map() | nil, term()) :: {:ok, map(), atom()} | {:error, atom()}
-  def tool_ask_resolution(invocation, raw_decision) do
+  @doc """
+  Checks invocation preconditions and normalizes a human tool decision.
+
+  The decision must be addressed to the ToolRun ID carried by the pending
+  review, so a stale UI can never resolve a different request.
+  """
+  @spec tool_run_resolution(map() | nil, term(), term()) ::
+          {:ok, map(), atom()} | {:error, atom()}
+  def tool_run_resolution(invocation, raw_run_id, raw_decision) do
     with {:ok, review} <- pending_tool_review(invocation),
+         :ok <- require_requested_run(review, raw_run_id),
          {:ok, decision} <- normalize_tool_decision(raw_decision) do
       {:ok, review, decision}
     end
   end
+
+  defp require_requested_run(%{request_id: request_id}, raw_run_id)
+       when is_binary(raw_run_id),
+       do: if(raw_run_id == request_id, do: :ok, else: {:error, :tool_run_not_found})
+
+  defp require_requested_run(_review, _raw_run_id), do: {:error, :tool_run_not_found}
 
   defp directive_turn_ready(nil), do: {:error, :turn_not_found}
 

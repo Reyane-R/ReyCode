@@ -141,7 +141,12 @@ defmodule ReyCode.AgentLoopApprovalTest do
   end
 
   defp resolve_next_waiting(turn_id, decision, attempts, [invocation | _rest]) do
-    case Engine.resolve_tool_ask(invocation.id, decision, @engine) do
+    case Engine.resolve_tool_run(
+           invocation.id,
+           invocation.pending_tool_review.request_id,
+           decision,
+           @engine
+         ) do
       :ok ->
         resolve_all_waiting(turn_id, decision, attempts - 1)
 
@@ -215,12 +220,10 @@ defmodule ReyCode.AgentLoopApprovalTest do
     assert Enum.all?(invocations, &(&1.error["retryable"] == false))
 
     # Denial is terminal: resolving again is rejected, and no run ever started.
+    denied_invocation = snapshot.invocations[hd(snapshot.turns[turn_id].invocation_order)]
+
     assert {:error, :tool_review_not_pending} =
-             Engine.resolve_tool_ask(
-               hd(snapshot.turns[turn_id].invocation_order),
-               :approve,
-               @engine
-             )
+             Engine.resolve_tool_run(denied_invocation.id, "any-run", :approve, @engine)
   end
 
   test "approve after a complete engine restart executes exactly once", %{
@@ -292,7 +295,14 @@ defmodule ReyCode.AgentLoopApprovalTest do
     assert invocation.pending_tool_review == nil
     assert [] == Registry.lookup(@agent_registry, waiting.id)
 
-    assert {:error, reason} = Engine.resolve_tool_ask(waiting.id, :approve, @engine)
+    assert {:error, reason} =
+             Engine.resolve_tool_run(
+               waiting.id,
+               waiting.pending_tool_review.request_id,
+               :approve,
+               @engine
+             )
+
     assert reason in [:invocation_not_running, :tool_review_not_pending]
 
     :ok = GenServer.stop(@engine)

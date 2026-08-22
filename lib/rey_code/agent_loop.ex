@@ -14,7 +14,7 @@ defmodule ReyCode.AgentLoop do
   alias ReyCode.Orchestration.Engine.Client
   alias ReyCode.Provider.Catalog
   alias ReyCode.Provider.Response
-  alias ReyCode.Tool.Request
+  alias ReyCode.Tool.{Request, Result}
   alias ReyCode.ToolRegistry
 
   @max_rounds 16
@@ -128,16 +128,16 @@ defmodule ReyCode.AgentLoop do
       )
 
     result = ToolRegistry.execute(tool_request)
-    record_tool_result(state, run, result)
+    record_tool_result(state, run, Result.to_wire(result))
   end
 
-  defp record_tool_result(state, run, %{ok: true} = result) do
+  defp record_tool_result(state, run, %{"ok" => true} = result) do
     :ok =
       Client.tool_run_completed(
         state.engine,
         state.invocation_id,
         run.id,
-        %{"ok" => true, "output" => result.output, "error" => nil}
+        result
       )
   end
 
@@ -147,7 +147,7 @@ defmodule ReyCode.AgentLoop do
         state.engine,
         state.invocation_id,
         run.id,
-        %{"ok" => false, "error" => result.error}
+        result
       )
   end
 
