@@ -22,6 +22,8 @@ defmodule ReyCode.TUI.Components.Modals do
   attr :directive, :map, required: true
   attr :gate_review, :map, required: true
   attr :gate_review_options, :list, required: true
+  attr :tool_review, :map, required: true
+  attr :tool_review_options, :list, required: true
 
   def modals(assigns) do
     ~H"""
@@ -44,6 +46,11 @@ defmodule ReyCode.TUI.Components.Modals do
       gate_review={@gate_review}
       gate_review_options={@gate_review_options}
       notice={@notice}
+    />
+    <.tool_review_modal
+      modal={@modal}
+      tool_review={@tool_review}
+      tool_review_options={@tool_review_options}
     />
     """
   end
@@ -312,6 +319,33 @@ defmodule ReyCode.TUI.Components.Modals do
     """
   end
 
+  attr :modal, :any, required: true
+  attr :tool_review, :map, required: true
+  attr :tool_review_options, :list, required: true
+
+  defp tool_review_modal(assigns) do
+    ~H"""
+    <box :if={@modal == :tool_review} class="w-screen h-screen bg px-4 pt-2">
+      <box class="w-full border-b border-muted pb-1">
+        <box class="font-bold text-primary">Tool approval</box>
+        <box class="text-muted">This request is waiting for owner approval.</box>
+      </box>
+      <box class="pt-2 text-muted">TOOL</box>
+      <box class="pt-1 font-bold text-warning">{@tool_review.review.tool}</box>
+      <box class="pt-2 text-muted">WORKSPACE</box>
+      <box class="pt-1 text-muted w-full overflow-hidden">{@tool_review.review.workspace}</box>
+      <box class="pt-3 text-muted">OWNER DECISION</box>
+      <box
+        :for={{decision, index} <- Enum.with_index(@tool_review_options)}
+        class={tool_review_option_class(index, @tool_review.index)}
+      >
+        {settings_marker(index, @tool_review.index)} {decision}
+      </box>
+      <box class="pt-3 text-muted">A approve   D deny   Enter confirm   Esc close</box>
+    </box>
+    """
+  end
+
   defp settings_header_controls(:providers), do: "Esc back   R recheck"
   defp settings_header_controls(_step), do: "Esc back"
 
@@ -333,4 +367,7 @@ defmodule ReyCode.TUI.Components.Modals do
 
   defp gate_review_option_class(index, index), do: "w-full px-1 bg-panel font-bold text-primary"
   defp gate_review_option_class(_index, _selected), do: "w-full px-1 text-muted"
+
+  defp tool_review_option_class(index, index), do: "w-full px-1 bg-panel font-bold text-primary"
+  defp tool_review_option_class(_index, _selected), do: "w-full px-1 text-muted"
 end

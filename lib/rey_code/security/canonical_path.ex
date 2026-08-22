@@ -27,7 +27,7 @@ defmodule ReyCode.Security.CanonicalPath do
 
     case resolve(path) do
       {:ok, _canonical_path} = result -> result
-      {:error, :enoent} = error -> resolve_missing_leaf(path, error)
+      {:error, :enoent} -> resolve_missing_leaf(path)
       error -> error
     end
   rescue
@@ -36,7 +36,7 @@ defmodule ReyCode.Security.CanonicalPath do
 
   def resolve_identity(_path), do: {:error, :invalid_path}
 
-  defp resolve_missing_leaf(path, error) do
+  defp resolve_missing_leaf(path) do
     case File.lstat(path) do
       {:error, :enoent} ->
         with {:ok, canonical_parent} <- resolve(Path.dirname(path)) do
@@ -44,7 +44,10 @@ defmodule ReyCode.Security.CanonicalPath do
         end
 
       {:ok, _stat} ->
-        error
+        # The leaf appeared between resolve and this lstat (for example a
+        # concurrent writer created it). Resolve once more over the now-real
+        # path instead of returning the stale miss.
+        resolve(path)
 
       {:error, reason} ->
         {:error, reason}

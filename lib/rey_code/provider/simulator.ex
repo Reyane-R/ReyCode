@@ -1,10 +1,17 @@
 defmodule ReyCode.Provider.Simulator do
-  @moduledoc "Seeded provider simulator with bounded jitter and injectable failures."
+  @moduledoc """
+  Seeded provider simulator with bounded jitter and injectable failures.
+
+  The simulator performs exactly one round per `stream/3` call. When the
+  scenario defines tool requests, each round returns the next tool call until
+  one result per call has been supplied in the conversation; the following
+  round returns the final text. The simulator never executes tools.
+  """
 
   @behaviour ReyCode.Provider
 
   alias ReyCode.Orchestration.Squad
-  alias ReyCode.Provider.Frame
+  alias ReyCode.Provider.{Frame, Response, ToolCall}
   alias ReyCode.Provider.Simulator.Scenario
 
   @impl true
@@ -26,29 +33,87 @@ defmodule ReyCode.Provider.Simulator do
       :crash ->
         exit(:simulated_provider_crash)
 
-      :invalid_output ->
-        emit_result("not valid squad output", %{}, emit, sample.delay_ms, scenario.emit_process)
+      :invalid_output when request.mode == :squad ->
+        emit_result(
+          "not valid squad output",
+          Response.new(text: "not valid squad output", usage: %{"output_frames" => 1}),
+          emit,
+          sample.delay_ms,
+          scenario.emit_process,
+          request.resume_from + 1
+        )
 
       :after_frame ->
         fail_after_frame(request, emit)
 
-      nil ->
+      _no_failure ->
         success(request, scenario, sample.delay_ms, emit)
     end
   end
 
-  defp success(%{mode: :squad} = request, scenario, delay, emit) do
-    output = squad_output(request, scenario)
-    text = Jason.encode!(output)
-    emit_result(text, %{"squad_output" => output}, emit, delay, scenario.emit_process)
-  end
-
   defp success(request, scenario, delay, emit) do
-    emit_result(regular_response(request), %{}, emit, delay, scenario.emit_process)
+    case next_tool_call(request, scenario) do
+      %ToolCall{} = call ->
+        text = "Simulated tool round for #{call.tool}."
+        response = Response.new(text: text, tool_calls: [call], usage: %{"tool_rounds" => true})
+
+        emit_result(text, response, emit, delay, scenario.emit_process, request.resume_from + 1)
+
+      nil ->
+        {text, usage} = final_round(request, scenario)
+
+        emit_result(
+          text,
+          Response.new(text: text, usage: usage),
+          emit,
+          delay,
+          scenario.emit_process,
+          request.resume_from + 1
+        )
+    end
   end
 
-  defp emit_result(text, metadata, emit, delay, emit_process) do
-    frames = text |> chunks(80) |> Enum.with_index(1)
+  defp final_round(%{mode: :squad} = request, scenario) do
+    output = squad_output(request, scenario)
+    {Jason.encode!(output), %{"squad_output" => output}}
+  end
+
+  defp final_round(request, scenario) do
+    text = final_text(request, scenario)
+    {text, %{"tool_results" => tool_result_count(request)}}
+  end
+
+  defp next_tool_call(request, scenario) do
+    consumed = tool_result_count(request)
+    index = consumed + 1
+
+    scenario.tool_requests
+    |> Enum.at(index - 1)
+    |> case do
+      nil ->
+        nil
+
+      spec ->
+        tool = spec |> Map.get(:tool, Map.get(spec, "tool")) |> to_string()
+        arguments = Map.get(spec, :arguments, Map.get(spec, "arguments", %{}))
+        ToolCall.new("simulated-tool-#{index}", tool, arguments)
+    end
+  end
+
+  defp tool_result_count(request) do
+    Enum.count(request.messages, &match?(%{role: :tool}, &1))
+  end
+
+  defp final_text(request, scenario) do
+    if scenario.tool_requests == [] do
+      regular_response(request)
+    else
+      "#{regular_response(request)} (after #{tool_result_count(request)} tool results)"
+    end
+  end
+
+  defp emit_result(text, %Response{} = response, emit, delay, emit_process, sequence_start) do
+    frames = text |> chunks(80) |> Enum.with_index(sequence_start)
     runner = fn -> emit_each(frames, emit, delay) end
 
     case emit_process do
@@ -59,7 +124,7 @@ defmodule ReyCode.Provider.Simulator do
         runner.()
     end
 
-    {:ok, Map.put(metadata, "usage", %{"output_frames" => length(frames)})}
+    {:ok, response}
   end
 
   defp emit_each(frames, emit, delay) do

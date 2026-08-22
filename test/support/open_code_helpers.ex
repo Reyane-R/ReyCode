@@ -19,7 +19,8 @@ defmodule ReyCode.Test.OpenCodeHelpers do
       system_prompt: "Respond concisely",
       messages: [%{role: :user, content: "Hello", author: %{name: "You"}}],
       workspace: System.tmp_dir!(),
-      resume_from: 0
+      resume_from: 0,
+      round_index: 0
     }
   end
 

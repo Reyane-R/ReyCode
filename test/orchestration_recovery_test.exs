@@ -41,12 +41,14 @@ defmodule ReyCode.Orchestration.RecoveryTest do
   defmodule BlockingProvider do
     @behaviour ReyCode.Provider
 
+    alias ReyCode.Provider.Response
+
     @impl true
     def stream(%Runtime{executable: test_pid}, request, _emit) do
       send(test_pid, {:provider_waiting, request.invocation_id, self()})
 
       receive do
-        :complete -> {:ok, %{}}
+        :complete -> {:ok, Response.new(text: "")}
       after
         10_000 ->
           {:error,

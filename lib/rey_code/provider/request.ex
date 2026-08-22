@@ -1,5 +1,7 @@
 defmodule ReyCode.Provider.Request do
-  @moduledoc "Normalized input for one provider invocation."
+  @moduledoc "Normalized input for one provider round."
+
+  alias ReyCode.Provider.Message
 
   @enforce_keys [
     :invocation_id,
@@ -10,7 +12,8 @@ defmodule ReyCode.Provider.Request do
     :system_prompt,
     :messages,
     :workspace,
-    :resume_from
+    :resume_from,
+    :round_index
   ]
   defstruct [
     :invocation_id,
@@ -22,6 +25,7 @@ defmodule ReyCode.Provider.Request do
     :messages,
     :workspace,
     :resume_from,
+    :round_index,
     :attempt,
     :label,
     :phase,
@@ -38,11 +42,6 @@ defmodule ReyCode.Provider.Request do
           required(:provider) => atom() | String.t(),
           required(:model) => String.t() | nil
         }
-  @type message :: %{
-          required(:role) => :user | :assistant,
-          required(:content) => String.t(),
-          required(:author) => map()
-        }
   @type t :: %__MODULE__{
           invocation_id: String.t(),
           turn_id: String.t(),
@@ -50,9 +49,10 @@ defmodule ReyCode.Provider.Request do
           mode: atom(),
           participant: participant(),
           system_prompt: String.t(),
-          messages: [message()],
+          messages: [Message.t()],
           workspace: String.t(),
           resume_from: non_neg_integer(),
+          round_index: non_neg_integer(),
           attempt: pos_integer() | nil,
           label: String.t() | nil,
           phase: String.t() | nil,

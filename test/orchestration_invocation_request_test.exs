@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Orchestration.InvocationRequest
-  alias ReyCode.Provider.Request
+  alias ReyCode.Provider.{Message, Request, ToolCall}
 
   test "builds the complete provider request from durable projection state" do
     participant = %{
@@ -25,7 +25,30 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
       phase: "implementation",
       cycle: 1,
       logical_work_id: "work-1",
-      dependencies: ["inv-0"]
+      dependencies: ["inv-0"],
+      rounds: [
+        %{
+          index: 0,
+          text: "Reading first.",
+          tool_calls: [
+            %{"id" => "call-1", "tool" => "read", "arguments" => %{"path" => "hello.txt"}}
+          ],
+          usage: nil
+        }
+      ],
+      tool_runs: %{
+        "toolrun-1" => %{
+          id: "toolrun-1",
+          tool_call_id: "call-1",
+          round_index: 0,
+          tool: "read",
+          arguments: %{"path" => "hello.txt"},
+          status: :completed,
+          result: %{"ok" => true, "output" => "contents", "error" => nil},
+          error: nil
+        }
+      },
+      tool_run_order: ["toolrun-1"]
     }
 
     projection = %{
@@ -62,10 +85,24 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
              participant: participant,
              system_prompt: "Build the smallest change",
              messages: [
-               %{role: :user, content: "Please revise it", author: %{name: "You"}}
+               Message.new(role: :user, content: "Please revise it", author: %{name: "You"}),
+               Message.new(
+                 role: :assistant,
+                 content: "Reading first.",
+                 tool_calls: [
+                   ToolCall.new("call-1", "read", %{"path" => "hello.txt"})
+                 ]
+               ),
+               Message.new(
+                 role: :tool,
+                 content: Jason.encode!(%{"ok" => true, "output" => "contents", "error" => nil}),
+                 tool_call_id: "call-1",
+                 name: "read"
+               )
              ],
              workspace: "/workspace",
              resume_from: 3,
+             round_index: 1,
              attempt: 2,
              label: "revision",
              phase: "implementation",

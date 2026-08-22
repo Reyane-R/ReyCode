@@ -10,6 +10,7 @@ defmodule ReyCode.Orchestration.Engine do
     InvocationRequest,
     Projector,
     Squad,
+    ToolRuns,
     Validation
   }
 
@@ -22,7 +23,8 @@ defmodule ReyCode.Orchestration.Engine do
   }
 
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
-  alias ReyCode.Provider.{Catalog, Frame}
+  alias ReyCode.Provider.{Catalog, Frame, Response}
+  alias ReyCode.ToolRegistry
 
   @modes [:compare, :debate, :fan_out, :squad]
 
@@ -106,6 +108,12 @@ defmodule ReyCode.Orchestration.Engine do
         server \\ __MODULE__
       ) do
     GenServer.call(server, {:resolve_gate, turn_id, decision, target_phase, reasons})
+  end
+
+  @doc "Records the human decision for a pending tool approval."
+  @spec resolve_tool_ask(term(), term(), GenServer.server()) :: :ok | {:error, atom()}
+  def resolve_tool_ask(invocation_id, decision, server \\ __MODULE__) do
+    GenServer.call(server, {:resolve_tool_ask, invocation_id, decision})
   end
 
   @impl true
@@ -207,6 +215,28 @@ defmodule ReyCode.Orchestration.Engine do
     |> apply_configuration(state)
   end
 
+  def handle_call({:resolve_tool_ask, invocation_id, raw_decision}, _from, state) do
+    invocation = state.projection.invocations[invocation_id]
+
+    with {:ok, review, decision} <- Validation.tool_ask_resolution(invocation, raw_decision),
+         {:ok, run} <- resumable_run(invocation, review) do
+      entry = EventEntries.tool_run_approval_resolved(invocation, run, decision)
+      next = Persistence.append_and_apply!(state, [entry])
+
+      next =
+        if decision == :approve do
+          next |> Admission.enqueue(invocation_id) |> pump_admission()
+        else
+          finalize_invocation(next, invocation_id, {:failed, tool_denied_error()})
+        end
+
+      {:reply, :ok, next}
+    else
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
   def handle_call({:configure_squad_roles, room_id, role_ids, provider, model}, _from, state) do
     state.projection
     |> Configuration.squad_roles(room_id, role_ids, provider, model, state.provider_catalog)
@@ -220,6 +250,8 @@ defmodule ReyCode.Orchestration.Engine do
       cond do
         invocation == nil -> {:terminal, :missing}
         invocation.status in [:completed, :failed, :cancelled] -> {:terminal, invocation.status}
+        ToolRuns.awaiting?(invocation) -> {:waiting, :tool_approval}
+        invocation.status == :waiting_tool_approval -> {:waiting, :tool_approval}
         true -> {:ok, InvocationRequest.build(invocation, state.projection, state.agent_delay_ms)}
       end
 
@@ -263,6 +295,71 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:record_frame, invocation_id, frame}, from, state) do
     handle_call({:record_frames, invocation_id, [frame]}, from, state)
+  end
+
+  def handle_call({:record_round, invocation_id, round_index, response_wire}, _from, state) do
+    invocation = state.projection.invocations[invocation_id]
+
+    cond do
+      invocation == nil ->
+        {:reply, {:error, :invocation_not_found}, state}
+
+      invocation.status in [:completed, :failed, :cancelled] ->
+        {:reply, {:error, :invocation_terminal}, state}
+
+      true ->
+        record_round(state, invocation, round_index, response_wire)
+    end
+  end
+
+  def handle_call({:take_tool_run, invocation_id}, _from, state) do
+    invocation = state.projection.invocations[invocation_id]
+
+    cond do
+      invocation == nil ->
+        {:reply, {:error, :invocation_not_found}, state}
+
+      invocation.status in [:completed, :failed, :cancelled] ->
+        {:reply, {:error, :invocation_terminal}, state}
+
+      true ->
+        take_tool_run(state, invocation)
+    end
+  end
+
+  def handle_call({:tool_run_started, invocation_id, run_id}, _from, state) do
+    with {:ok, invocation} <- fetch_invocation(state, invocation_id),
+         {:ok, run} <- fetch_run(invocation, run_id),
+         :ok <- ensure_status(run, :ready) do
+      entry = EventEntries.tool_run_started(invocation, run)
+      {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:tool_run_completed, invocation_id, run_id, result}, _from, state) do
+    with {:ok, invocation} <- fetch_invocation(state, invocation_id),
+         {:ok, run} <- fetch_run(invocation, run_id),
+         :ok <- ensure_status(run, :running),
+         :ok <- ensure_wire_map(result) do
+      entry = EventEntries.tool_run_completed(invocation, run, result)
+      {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:tool_run_failed, invocation_id, run_id, error}, _from, state) do
+    with {:ok, invocation} <- fetch_invocation(state, invocation_id),
+         {:ok, run} <- fetch_run(invocation, run_id),
+         :ok <- ensure_status(run, :running),
+         :ok <- ensure_wire_map(error) do
+      entry = EventEntries.tool_run_failed(invocation, run, error)
+      {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:complete_invocation, invocation_id, metadata}, _from, state) do
@@ -322,21 +419,52 @@ defmodule ReyCode.Orchestration.Engine do
         state = %{state | agent_monitors: monitors}
         invocation = state.projection.invocations[invocation_id]
 
-        if invocation == nil or invocation.status in [:completed, :failed, :cancelled] do
-          {:noreply, state}
-        else
-          error = %{
-            "category" => "worker_exit",
-            "message" => "Provider worker exited before recording a result: #{inspect(reason)}",
-            "retryable" => replayable?(invocation.participant.provider)
-          }
+        cond do
+          invocation == nil or invocation.status in [:completed, :failed, :cancelled] ->
+            {:noreply, state}
 
-          {:noreply, finalize_invocation(state, invocation.id, {:failed, error})}
+          ToolRuns.awaiting?(invocation) or invocation.status == :waiting_tool_approval ->
+            # A paused approval is durable: release the execution slot without
+            # failing so the resolution can resume the loop.
+            state |> release_execution(invocation_id) |> pump_admission() |> noreply()
+
+          reason == :normal ->
+            # The loop stopped for a mid-flight handoff (for example an
+            # approval that raced this exit and could not enqueue while the
+            # worker still held its slot): re-arm scheduling instead of
+            # failing the invocation.
+            state
+            |> release_execution(invocation_id)
+            |> Admission.enqueue(invocation_id)
+            |> pump_admission()
+            |> noreply()
+
+          true ->
+            error = %{
+              "category" => "worker_exit",
+              "message" => "Provider worker exited before recording a result: #{inspect(reason)}",
+              "retryable" => replayable?(invocation.participant.provider)
+            }
+
+            state = interrupt_started_runs(state, invocation)
+            {:noreply, finalize_invocation(state, invocation.id, {:failed, error})}
         end
     end
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp noreply(state), do: {:noreply, state}
+
+  defp interrupt_started_runs(state, invocation) do
+    invocation.tool_run_order
+    |> Enum.map(&Map.get(invocation.tool_runs, &1))
+    |> Enum.filter(&(&1 && &1.status == :running))
+    |> Enum.reduce(state, fn run, acc ->
+      entry = EventEntries.tool_run_interrupted(invocation, run, "worker_exit")
+      Persistence.append_and_apply!(acc, [entry])
+    end)
+  end
 
   defp append_pending_frames(state, invocation, pending_frames) do
     if invocation.status in [:completed, :failed, :cancelled] do
@@ -345,6 +473,153 @@ defmodule ReyCode.Orchestration.Engine do
       entries = Enum.map(pending_frames, &EventEntries.provider_frame(invocation, &1))
       {:reply, :ok, Persistence.append_and_apply!(state, entries)}
     end
+  end
+
+  defp record_round(state, invocation, round_index, response_wire) do
+    with {:ok, response} <- Response.from_wire(response_wire),
+         :ok <- round_contiguous?(invocation, round_index) do
+      entry = EventEntries.provider_round(invocation, round_index, response_wire)
+      state = Persistence.append_and_apply!(state, [entry])
+
+      if response.tool_calls == [] do
+        {:reply, {:ok, :final}, state}
+      else
+        {:reply, {:ok, :continue}, state}
+      end
+    else
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp round_contiguous?(invocation, round_index) do
+    if round_index == length(invocation.rounds),
+      do: :ok,
+      else: {:error, :invalid_round_index}
+  end
+
+  defp take_tool_run(state, invocation) do
+    case next_actionable_call(invocation) do
+      {:none, _calls} ->
+        {:reply, {:ok, :none}, state}
+
+      {:new, call} ->
+        claim_new_run(state, invocation, call)
+
+      {:existing, action, run} ->
+        {:reply, {:ok, {action, run}}, state}
+    end
+  end
+
+  defp claim_new_run(state, invocation, call) do
+    run = %{
+      id: Identity.new_id("toolrun"),
+      tool_call_id: call.id,
+      round_index: length(invocation.rounds) - 1,
+      tool: call.tool,
+      arguments: call.arguments,
+      workspace: Path.expand(state.projection.rooms[invocation.room_id].workspace)
+    }
+
+    authorization =
+      if ToolRegistry.requires_approval?(call.tool) do
+        :ask
+      else
+        if call.tool in ToolRegistry.tool_names(), do: :allow, else: :denied
+      end
+
+    run = Map.put(run, :authorization, authorization)
+
+    entries =
+      case authorization do
+        :denied ->
+          [
+            EventEntries.tool_run_requested(invocation, run),
+            EventEntries.tool_run_failed(invocation, run, %{
+              "ok" => false,
+              "error" => "unknown_tool"
+            })
+          ]
+
+        _other ->
+          [EventEntries.tool_run_requested(invocation, run)]
+      end
+
+    next = Persistence.append_and_apply!(state, entries)
+    run = next.projection.invocations[invocation.id].tool_runs[run.id]
+
+    action = if authorization == :denied, do: :denied, else: authorization_action(authorization)
+    {:reply, {:ok, {action, run}}, next}
+  end
+
+  defp authorization_action(:allow), do: :execute
+  defp authorization_action(:ask), do: :await
+  defp authorization_action(:denied), do: :denied
+
+  defp next_actionable_call(invocation) do
+    case List.last(invocation.rounds) do
+      nil ->
+        {:none, []}
+
+      round ->
+        calls = Enum.map(round.tool_calls || [], &call_from_wire/1)
+        Enum.find_value(calls, {:none, calls}, &actionable(invocation, &1))
+    end
+  end
+
+  defp actionable(invocation, call) do
+    case ToolRuns.run_for_call(invocation, call.id) do
+      nil -> {:new, call}
+      %{status: :ready} = run -> {:existing, :execute, run}
+      %{status: :awaiting_approval} = run -> {:existing, :await, run}
+      %{status: :running} = run -> {:existing, :busy, run}
+      _terminal -> nil
+    end
+  end
+
+  defp call_from_wire(%{"id" => id, "tool" => tool, "arguments" => arguments}) do
+    %ReyCode.Provider.ToolCall{id: id, tool: tool, arguments: arguments}
+  end
+
+  defp fetch_invocation(state, invocation_id) do
+    case state.projection.invocations[invocation_id] do
+      nil -> {:error, :invocation_not_found}
+      invocation -> {:ok, invocation}
+    end
+  end
+
+  defp fetch_run(invocation, run_id) do
+    case Map.get(invocation.tool_runs, run_id) do
+      nil -> {:error, :tool_run_not_found}
+      run -> {:ok, run}
+    end
+  end
+
+  defp ensure_status(run, status) do
+    if run.status == status,
+      do: :ok,
+      else: {:error, :invalid_tool_run_transition}
+  end
+
+  defp ensure_wire_map(value) when is_map(value), do: :ok
+  defp ensure_wire_map(_value), do: {:error, :invalid_tool_run_payload}
+
+  defp resumable_run(invocation, review) do
+    case Map.get(invocation.tool_runs, review.request_id) do
+      %{status: :awaiting_approval} = run ->
+        {:ok, run}
+
+      _other ->
+        {:error, :legacy_tool_approval_unresumable}
+    end
+  end
+
+  defp tool_denied_error do
+    %{
+      "category" => "tool_denied",
+      "message" => "Tool request denied",
+      "retryable" => false
+    }
   end
 
   defp collect_provider_frames(invocation, frames) do
@@ -431,7 +706,7 @@ defmodule ReyCode.Orchestration.Engine do
   defp cancellable_turn_invocations(state, turn) do
     turn.invocation_order
     |> Enum.map(&state.projection.invocations[&1])
-    |> Enum.filter(&(&1.status in [:queued, :running]))
+    |> Enum.filter(&(&1.status in [:queued, :running, :waiting_tool_approval]))
   end
 
   defp persist_turn_cancellation(state, turn, invocations, reason) do
@@ -532,19 +807,29 @@ defmodule ReyCode.Orchestration.Engine do
     |> pump_admission()
   end
 
+  # A waiting approval is dormant: it holds no worker or admission slot and is
+  # resumed only by the owner's resolution.
+  defp recover_invocation(state, %{status: :waiting_tool_approval}), do: state
+
   defp recover_invocation(state, %{status: status}) when status not in [:queued, :running],
     do: state
 
   defp recover_invocation(state, %{status: :running} = invocation) do
-    case Registry.lookup(state.agent_registry, invocation.id) do
-      [{pid, _} | _] ->
-        ref = Process.monitor(pid)
-        Process.exit(pid, :kill)
-        receive do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)
-        recover_missing_execution(state, invocation)
+    case ensure_no_started_runs(invocation) do
+      :ok ->
+        case Registry.lookup(state.agent_registry, invocation.id) do
+          [{pid, _} | _] ->
+            ref = Process.monitor(pid)
+            Process.exit(pid, :kill)
+            receive do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)
+            recover_missing_execution(state, invocation)
 
-      [] ->
-        recover_missing_execution(state, invocation)
+          [] ->
+            recover_missing_execution(state, invocation)
+        end
+
+      {:error, :indeterminate_tool_run} ->
+        interrupt_and_fail(state, invocation, "recovered with a running tool run")
     end
   end
 
@@ -559,6 +844,24 @@ defmodule ReyCode.Orchestration.Engine do
       [] ->
         Admission.enqueue(state, invocation.id)
     end
+  end
+
+  defp ensure_no_started_runs(invocation) do
+    if ToolRuns.started?(invocation),
+      do: {:error, :indeterminate_tool_run},
+      else: :ok
+  end
+
+  defp interrupt_and_fail(state, invocation, reason) do
+    state = interrupt_started_runs(state, invocation)
+
+    error = %{
+      "category" => "interrupted",
+      "message" => "The provider invocation was interrupted mid tool run: #{reason}",
+      "retryable" => false
+    }
+
+    finalize_invocation(state, invocation.id, {:failed, error})
   end
 
   defp recover_missing_execution(state, invocation) do

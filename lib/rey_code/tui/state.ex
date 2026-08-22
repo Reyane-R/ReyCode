@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.State do
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Orchestration.Squad.Dashboard
   alias ReyCode.Provider.{Catalog, Presentation}
-  alias ReyCode.TUI.{Directive, GateReview, NewRoom, Settings}
+  alias ReyCode.TUI.{Directive, GateReview, NewRoom, Settings, ToolReview}
 
   @doc "Subscribes the root view and initializes its stable assign shapes."
   @spec mount(keyword(), map()) :: {:ok, map()}
@@ -30,6 +30,7 @@ defmodule ReyCode.TUI.State do
        cancel_turn_id: nil,
        directive: Directive.initial(),
        gate_review: GateReview.initial(),
+       tool_review: ToolReview.initial(),
        slash: nil,
        new_room: NewRoom.initial(),
        settings: Settings.initial(),
@@ -53,7 +54,8 @@ defmodule ReyCode.TUI.State do
       draft: Map.get(assigns.drafts, assigns.selected_room_id, ""),
       message_width: message_width(width, sidebar?),
       timeline_id: timeline_id(room.id),
-      gate_review_options: GateReview.options()
+      gate_review_options: GateReview.options(),
+      tool_review_options: ToolReview.options()
     )
   end
 

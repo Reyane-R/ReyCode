@@ -2,7 +2,16 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.OpenAICompatible.FakeTransport
-  alias ReyCode.Provider.{Frame, OpenAICompatible, OpenAICompatible.Profile, Request, Runtime}
+
+  alias ReyCode.Provider.{
+    Frame,
+    OpenAICompatible,
+    OpenAICompatible.Profile,
+    Request,
+    Response,
+    Runtime,
+    ToolCall
+  }
 
   @key_env "DEEPSEEK_API_KEY"
 
@@ -85,10 +94,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       {result, emitted} = frames
 
-      assert {:ok,
-              %{
-                usage: %{"prompt_tokens" => 2, "completion_tokens" => 2}
-              }} = result
+      assert {:ok, %Response{usage: %{"prompt_tokens" => 2, "completion_tokens" => 2}}} = result
 
       assert [
                %Frame{sequence: 1, kind: :text_delta, data: %{text: "Hello "}},
@@ -115,7 +121,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert Enum.map(emitted, & &1.sequence) == [11, 12]
     end
 
-    test "emits tool call started/completed events from streamed tool calls" do
+    test "assembles streamed tool-call fragments into one normalized response" do
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"type":"function","function":{"name":"bash","arguments":"{\\\"cmd"}}]}}]}\n\n),
         ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"function":{"arguments":"\\\":\\\"date\\\"}"}}]}}]}\n\n),
@@ -127,15 +133,17 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
           OpenAICompatible.stream(runtime(), request(), emit)
         end)
 
-      {_, emitted} = frames
+      {result, emitted} = frames
 
-      assert [
-               %Frame{kind: :tool_started, data: %{tool: "bash", state: started}},
-               %Frame{kind: :tool_completed, data: %{tool: "bash", state: finished}}
-             ] = emitted
+      assert {:ok,
+              %Response{
+                text: "",
+                tool_calls: [
+                  %ToolCall{id: "call-1", tool: "bash", arguments: %{"cmd" => "date"}}
+                ]
+              }} = result
 
-      assert started["arguments"] == ~s({"cmd)
-      assert finished["arguments"] == ~s({"cmd":"date"})
+      assert emitted == []
     end
 
     test "returns a missing credentials error when the key is unset" do
@@ -232,7 +240,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       system_prompt: "You are helpful.",
       messages: [%{role: :user, content: "Hi", author: %{id: "user", name: "You"}}],
       workspace: System.tmp_dir!(),
-      resume_from: 0
+      resume_from: 0,
+      round_index: 0
     }
   end
 

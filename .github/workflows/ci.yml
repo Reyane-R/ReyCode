@@ -60,6 +60,15 @@ jobs:
           key: ${{ runner.os }}-coverage-${{ hashFiles('mix.lock') }}
       - run: mix deps.get
       - run: MIX_ENV=test mix coverage
+      - run: MIX_ENV=test mix quality.crap
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          MIX_ENV=test mix quality.crap
+          --lcov cover/lcov.info
+          --baseline quality/crap-baseline.json
+          --base "$BASE_SHA"
       - if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

@@ -67,4 +67,26 @@ defmodule ReyCode.Security.Workspace do
   defp allowed?(path, roots) do
     Enum.any?(roots, fn root -> path == root or String.starts_with?(path, root <> "/") end)
   end
+
+  @doc "Returns the resolved, canonical trusted roots currently in effect."
+  @spec roots() :: [String.t()]
+  def roots, do: policy_roots([])
+
+  @doc """
+  Resolves `path`'s real identity and confirms it lies within the trusted roots.
+
+  Returns `{:ok, canonical}` when contained, or `{:error, reason}` otherwise
+  (`:workspace_outside_policy` when the path resolves but is not within policy,
+  or the underlying `CanonicalPath` error such as `:enoent` / `:invalid_path`).
+  """
+  @spec contained?(term(), keyword()) :: {:ok, String.t()} | {:error, reason() | term()}
+  def contained?(path, opts \\ []) do
+    with {:ok, canonical} <- CanonicalPath.resolve_identity(path),
+         true <- allowed?(canonical, policy_roots(opts)) do
+      {:ok, canonical}
+    else
+      {:error, reason} -> {:error, reason}
+      false -> {:error, :workspace_outside_policy}
+    end
+  end
 end

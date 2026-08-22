@@ -24,3 +24,6 @@ rey_code-*.tar
 
 # Local orchestration event logs.
 /.rey_code/
+
+# macOS cruft
+.DS_Store

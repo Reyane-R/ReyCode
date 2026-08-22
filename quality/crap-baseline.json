@@ -1,0 +1,9 @@
+{
+  "functions": {
+    "Mix.Tasks.ReyCode.Squad.wait/3": 56.0,
+    "ReyCode.Logging.install!/0": 33.0,
+    "ReyCode.Orchestration.Engine.handle_call/3": 33.7,
+    "ReyCode.TUI.handle_event/3": 31.6
+  },
+  "threshold": 30
+}

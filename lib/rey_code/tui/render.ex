@@ -43,6 +43,8 @@ defmodule ReyCode.TUI.Render do
       directive={@directive}
       gate_review={@gate_review}
       gate_review_options={@gate_review_options}
+      tool_review={@tool_review}
+      tool_review_options={@tool_review_options}
     />
     """
   end

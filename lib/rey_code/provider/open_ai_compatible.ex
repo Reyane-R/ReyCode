@@ -5,12 +5,17 @@ defmodule ReyCode.Provider.OpenAICompatible do
   Each profile (DeepSeek by default) is described by a base URL and an
   environment variable that holds the API key. The key is read from the
   environment at invocation time and is never persisted in events or in the
-  catalog snapshot. OpenAI-compatible providers support streaming text, usage and
-  tool-call lifecycle frames while keeping prompt/workspace handling separate.
+  catalog snapshot.
+
+  Each `stream/3` call performs exactly one model round: it emits streaming
+  text frames and returns the round's normalized response, including any tool
+  calls. Follow-up rounds are driven by ReyCode's agent loop, which supplies
+  the accumulated tool results through the request conversation.
   """
 
-  alias ReyCode.Provider.{Frame, Request, Runtime, TextBuffer}
+  alias ReyCode.Provider.{Frame, Request, Response, Runtime, TextBuffer, ToolCall}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, SSE}
+  alias ReyCode.ToolRegistry
 
   @behaviour ReyCode.Provider
 
@@ -40,10 +45,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
-  @doc "Streams a chat completion from the runtime's OpenAI-compatible provider."
+  @doc "Streams one chat-completion round from the runtime's OpenAI-compatible provider."
   @impl true
-  @spec stream(Runtime.t(), Request.t(), ReyCode.Provider.emit()) ::
-          {:ok, map()} | {:error, map()}
+  @spec stream(Runtime.t(), Request.t(), (Frame.t() -> :ok)) ::
+          {:ok, Response.t()} | {:error, map()}
   def stream(%Runtime{provider_id: provider_id}, request, emit) do
     transport = transport()
 
@@ -68,8 +73,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
     case Task.yield(task, timeout) do
       {:ok, {:ok, state}} ->
-        flush_pending(state, emit)
-        {:ok, %{usage: state.usage}}
+        state = flush_pending(state, emit)
+        {:ok, response(state)}
 
       {:ok, {:error, _} = error} ->
         error
@@ -86,7 +91,11 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
-  defp stream_task(%StreamContext{request: request} = context) do
+  defp stream_task(%StreamContext{} = context) do
+    stream_task(context, initial_state(context.profile, context.request))
+  end
+
+  defp stream_task(%StreamContext{} = context, state) do
     %{transport: transport, profile: profile, key: key, body: body} = context
     url = base_url(profile) <> "/chat/completions"
     headers = authorization(key) ++ [{"Accept", "text/event-stream"}]
@@ -97,7 +106,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
            transport.collect(
              ref,
              &handle_event(&1, &2, context),
-             initial_state(profile, request)
+             state
            ) do
       {:ok, state}
     end
@@ -123,20 +132,67 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp apply_event({:text, text}, state, emit), do: buffer_text(state, text, emit)
 
-  defp apply_event({kind, tool, tool_state}, state_acc, emit)
-       when kind in [:tool_started, :tool_completed] do
-    emit_tool_event(state_acc, emit, kind, tool, tool_state)
+  defp apply_event({:tool_started, tool, tool_state}, state, _emit),
+    do: put_in(state.tool_calls[tool_call_id(tool_state)], unfinished_call(tool, tool_state))
+
+  defp apply_event({:tool_completed, tool, tool_state}, state, _emit) do
+    id = tool_call_id(tool_state)
+
+    call = %{
+      id: id,
+      tool: tool,
+      arguments_json: arguments_json(tool_state)
+    }
+
+    put_in(state.tool_calls[id], call)
   end
 
   defp apply_event({:usage, usage}, state, _emit), do: %{state | usage: usage}
   defp apply_event(:done, state, _emit), do: state
   defp apply_event(:ignore, state, _emit), do: state
 
-  defp emit_tool_event(state, emit, kind, tool, tool_state) do
-    sequence = state.sequence + 1
-    :ok = emit.(%Frame{sequence: sequence, kind: kind, data: %{tool: tool, state: tool_state}})
-    %{state | sequence: sequence}
+  defp tool_call_id(tool_state) do
+    id = tool_state["id"]
+
+    if is_binary(id) and id != "" do
+      id
+    else
+      "provider-tool-#{System.unique_integer([:positive])}"
+    end
   end
+
+  defp unfinished_call(tool, _tool_state), do: %{id: nil, tool: tool, arguments_json: nil}
+
+  defp arguments_json(tool_state) do
+    case tool_state["arguments"] do
+      arguments when is_binary(arguments) -> arguments
+      _other -> nil
+    end
+  end
+
+  defp response(state) do
+    tool_calls =
+      state.tool_calls
+      |> Enum.map(fn {_id, call} -> normalize_call(call) end)
+      |> Enum.reject(&is_nil(&1.id))
+
+    Response.new(text: state.text, tool_calls: tool_calls, usage: state.usage)
+  end
+
+  defp normalize_call(%{id: id, tool: tool, arguments_json: arguments_json})
+       when is_binary(id) do
+    arguments = decode_arguments(arguments_json)
+    ToolCall.new(id, tool, arguments)
+  end
+
+  defp decode_arguments(arguments_json) when is_binary(arguments_json) do
+    case Jason.decode(arguments_json) do
+      {:ok, decoded} when is_map(decoded) -> decoded
+      _other -> %{}
+    end
+  end
+
+  defp decode_arguments(_other), do: %{}
 
   defp buffer_text(state, "", _emit), do: state
 
@@ -155,8 +211,11 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp emit_text_chunk(state, emit, text) do
     sequence = state.sequence + 1
-    :ok = emit.(%Frame{sequence: sequence, kind: :text_delta, data: %{text: text}})
-    %{state | sequence: sequence, protocol_activity?: true}
+
+    :ok =
+      emit.(%Frame{sequence: sequence, kind: :text_delta, data: %{text: text}})
+
+    %{state | sequence: sequence, text: state.text <> text}
   end
 
   defp initial_state(profile, request) do
@@ -178,7 +237,9 @@ defmodule ReyCode.Provider.OpenAICompatible do
       bytes: 0,
       max_bytes: profile.max_output_bytes,
       usage: nil,
-      protocol_activity?: false
+      protocol_activity?: false,
+      text: "",
+      tool_calls: %{}
     }
   end
 
@@ -222,22 +283,27 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp build_body(request, profile) do
+    request_body(profile, request.participant.model, chat_messages(request))
+  end
+
+  defp request_body(profile, model, messages) do
     body =
       %{
-        "model" => request.participant.model,
+        "model" => model,
         "stream" => true,
-        "messages" => chat_messages(request),
+        "messages" => messages,
+        "tools" => tool_definitions(),
         "stream_options" => %{"include_usage" => true}
       }
       |> Jason.encode!()
 
     if byte_size(body) > profile.max_prompt_bytes do
-      {:error,
-       HTTP.error(
-         "prompt_too_large",
-         "Provider prompt is #{byte_size(body)} bytes; maximum is #{profile.max_prompt_bytes} bytes",
-         false
-       )}
+      HTTP.error(
+        "prompt_too_large",
+        "Provider prompt is #{byte_size(body)} bytes; maximum is #{profile.max_prompt_bytes} bytes",
+        false
+      )
+      |> then(&{:error, &1})
     else
       {:ok, body}
     end
@@ -254,10 +320,54 @@ defmodule ReyCode.Provider.OpenAICompatible do
       |> Enum.join("\n\n")
 
     [%{"role" => "system", "content" => system}] ++
-      Enum.map(request.messages, fn
-        %{role: :user, content: content} -> %{"role" => "user", "content" => content}
-        %{role: :assistant, content: content} -> %{"role" => "assistant", "content" => content}
-      end)
+      Enum.map(request.messages, &wire_message/1)
+  end
+
+  defp wire_message(%{role: :user, content: content}),
+    do: %{"role" => "user", "content" => content}
+
+  defp wire_message(%{role: :assistant, tool_calls: [_ | _]} = message) do
+    %{
+      "role" => "assistant",
+      "content" => message.content,
+      "tool_calls" => Enum.map(message.tool_calls, &wire_tool_call/1)
+    }
+  end
+
+  defp wire_message(%{role: :assistant, content: content}),
+    do: %{"role" => "assistant", "content" => content}
+
+  defp wire_message(%{role: :tool} = message) do
+    %{
+      "role" => "tool",
+      "tool_call_id" => message.tool_call_id,
+      "content" => message.content
+    }
+  end
+
+  defp wire_tool_call(call) do
+    %{
+      "id" => call.id,
+      "type" => "function",
+      "function" => %{"name" => call.tool, "arguments" => Jason.encode!(call.arguments || %{})}
+    }
+  end
+
+  defp tool_definitions do
+    Enum.map(ToolRegistry.tool_names(), fn name ->
+      %{
+        "type" => "function",
+        "function" => %{
+          "name" => name,
+          "description" => "ReyCode workspace tool #{name}",
+          "parameters" => %{
+            "type" => "object",
+            "additionalProperties" => true,
+            "properties" => %{}
+          }
+        }
+      }
+    end)
   end
 
   defp fetch_key(profile) do

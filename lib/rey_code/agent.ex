@@ -1,10 +1,16 @@
 defmodule ReyCode.Agent do
-  @moduledoc "A supervised execution bridge for one provider invocation."
+  @moduledoc """
+  A supervised execution bridge for one provider invocation.
+
+  The process owns buffering, lifecycle, and error containment around
+  `ReyCode.AgentLoop`, which performs the durable round/tool-run steps.
+  """
 
   use GenServer, restart: :temporary
 
+  alias ReyCode.AgentLoop
   alias ReyCode.Orchestration.Engine.Client
-  alias ReyCode.Provider.Catalog
+  alias ReyCode.Provider.{Response, Runtime}
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -17,57 +23,39 @@ defmodule ReyCode.Agent do
   @frame_batch_size 16
   @buffer_key :frames
 
+  @type state :: %{
+          required(:engine) => term(),
+          required(:invocation_id) => String.t(),
+          required(:provider) => atom() | String.t(),
+          required(:provider_catalog) => term(),
+          optional(atom()) => term()
+        }
+
+  @type step :: {:noreply, state()} | {:stop, :normal, state()}
+
   @impl true
   def init(opts) do
-    {:ok, Map.new(opts), {:continue, :stream}}
+    {:ok, Map.new(opts), {:continue, :run}}
   end
 
   @impl true
-  def handle_continue(:stream, state) do
-    case Client.invocation_request(state.engine, state.invocation_id) do
-      {:terminal, _status} ->
-        {:stop, :normal, state}
-
-      {:ok, request} ->
-        start_request(state, request)
+  def handle_continue(:run, state) do
+    case AgentLoop.run(state) do
+      {:noreply, state} -> {:noreply, state}
+      {:stop, state} -> {:stop, :normal, state}
     end
   end
 
-  defp start_request(state, request) do
-    case Catalog.resolve_when_ready(
-           state.provider,
-           request.participant.model,
-           state.provider_catalog
-         ) do
-      {:ok, runtime} ->
-        :ok = Client.invocation_started(state.engine, state.invocation_id)
-
-        execute(state, request, runtime)
-
-      {:error, reason} ->
-        fail_unavailable_provider(state, reason)
-    end
-  end
-
-  defp fail_unavailable_provider(state, reason) do
-    error = %{
-      "category" => "provider_unavailable",
-      "message" => provider_error(reason),
-      "retryable" => reason in [:provider_checking, :provider_check_timeout, :error]
-    }
-
-    :ok = Client.fail_invocation(state.engine, state.invocation_id, error)
-
-    {:stop, :normal, state}
-  end
-
-  defp execute(state, request, runtime) do
+  @doc "Streams one provider round with frame buffering and error containment."
+  @spec stream(state(), map(), Runtime.t()) :: {:ok, Response.t()} | {:error, map()}
+  def stream(state, request, runtime) do
     buffer = :ets.new(__MODULE__, [:set, :public])
+
     emit = fn frame -> enqueue_frame(state.engine, buffer, state.invocation_id, frame) end
 
     result =
       try do
-        stream(runtime, request, emit)
+        runtime.module.stream(runtime, request, emit)
       rescue
         error ->
           {:error, internal_error(Exception.message(error))}
@@ -79,23 +67,40 @@ defmodule ReyCode.Agent do
     flush = flush_frame_buffer(state.engine, buffer, state.invocation_id)
     :ets.delete(buffer)
 
-    cond do
-      match?({:error, _}, result) ->
-        {:error, error} = result
-        Client.fail_invocation(state.engine, state.invocation_id, error)
+    case {result, flush} do
+      {{:error, _error} = result, _flush} ->
+        result
 
-      flush != :ok ->
-        {:error, reason} = flush
-        error = internal_error("frame flush rejected: " <> inspect(reason))
-        Client.fail_invocation(state.engine, state.invocation_id, error)
+      {_result, {:error, reason}} ->
+        {:error, internal_error("frame flush rejected: " <> inspect(reason))}
 
-      true ->
-        {:ok, metadata} = result
-        Client.complete_invocation(state.engine, state.invocation_id, metadata)
+      {result, :ok} ->
+        result
     end
-
-    {:stop, :normal, state}
   end
+
+  @doc "Executes one ready tool run through the registry and records its outcome."
+  @spec execute_tool_run(state(), map()) :: :ok
+  def execute_tool_run(state, run), do: AgentLoop.execute_tool_run(state, run)
+
+  @doc "Fails the invocation with a provider-shaped error."
+  @spec fail(state(), map()) :: :ok
+  def fail(state, error) do
+    :ok = Client.fail_invocation(state.engine, state.invocation_id, error)
+  end
+
+  @spec provider_error(atom()) :: String.t()
+  def provider_error(:missing), do: "Provider executable is not installed"
+  def provider_error(:available), do: "Provider needs credentials or an available model"
+  def provider_error(:unchecked), do: "Provider discovery is disabled"
+  def provider_error(:model_required), do: "Select a model before running this agent"
+  def provider_error(:model_unavailable), do: "The selected model is no longer available"
+  def provider_error(:unknown_provider), do: "Unknown provider runtime"
+  def provider_error(:provider_check_timeout), do: "Provider discovery timed out"
+  def provider_error(reason), do: "Provider is unavailable: #{inspect(reason)}"
+
+  @impl true
+  def handle_info(_message, state), do: {:noreply, state}
 
   defp enqueue_frame(engine, buffer, invocation_id, frame) do
     frames = [frame | buffered_frames(buffer)]
@@ -136,18 +141,4 @@ defmodule ReyCode.Agent do
   defp internal_error(message) do
     %{"category" => "internal", "message" => message, "retryable" => false}
   end
-
-  defp stream(runtime, request, emit) do
-    runtime.module.stream(runtime, request, emit)
-  end
-
-  @spec provider_error(atom()) :: String.t()
-  defp provider_error(:missing), do: "Provider executable is not installed"
-  defp provider_error(:available), do: "Provider needs credentials or an available model"
-  defp provider_error(:unchecked), do: "Provider discovery is disabled"
-  defp provider_error(:model_required), do: "Select a model before running this agent"
-  defp provider_error(:model_unavailable), do: "The selected model is no longer available"
-  defp provider_error(:unknown_provider), do: "Unknown provider runtime"
-  defp provider_error(:provider_check_timeout), do: "Provider discovery timed out"
-  defp provider_error(reason), do: "Provider is unavailable: #{reason}"
 end

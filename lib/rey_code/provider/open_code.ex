@@ -3,8 +3,8 @@ defmodule ReyCode.Provider.OpenCode do
 
   @behaviour ReyCode.Provider
 
+  alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenCode.{Discovery, Process, Prompt, Protocol}
-  alias ReyCode.Provider.{Request, Runtime}
   alias ReyCode.Security.Workspace
 
   @default_prompt_bytes 128_000
@@ -13,10 +13,10 @@ defmodule ReyCode.Provider.OpenCode do
   @spec discover(keyword()) :: {:ok, map()} | {:error, term()}
   def discover(opts \\ []), do: Discovery.discover(opts)
 
-  @doc "Streams an OpenCode response as provider frames."
+  @doc "Streams an OpenCode response as provider frames and one text round."
   @impl true
-  @spec stream(Runtime.t(), Request.t(), ReyCode.Provider.emit()) ::
-          {:ok, map()} | {:error, map()}
+  @spec stream(Runtime.t(), Request.t(), (Frame.t() -> :ok)) ::
+          {:ok, Response.t()} | {:error, map()}
   def stream(%Runtime{module: __MODULE__, executable: executable} = runtime, request, emit)
       when is_binary(executable) do
     with {:ok, runtime} <- Runtime.revalidate_executable(runtime),
@@ -62,8 +62,14 @@ defmodule ReyCode.Provider.OpenCode do
     stream = Process.open_stream(executable, args, request.workspace, prompt)
 
     case Process.collect(stream, &Protocol.fold(&1, &2, emit), state, timeout) do
-      {:ok, final_state} -> Protocol.finish(final_state)
-      {:error, _reason} = error -> error
+      {:ok, final_state} ->
+        case Protocol.finish(final_state) do
+          {:ok, _metadata} -> {:ok, Response.new([])}
+          {:error, _reason} = error -> error
+        end
+
+      {:error, _reason} = error ->
+        error
     end
   end
 

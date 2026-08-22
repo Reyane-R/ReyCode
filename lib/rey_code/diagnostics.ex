@@ -12,6 +12,7 @@ defmodule ReyCode.Diagnostics do
   """
 
   alias ReyCode.Provider.{Catalog, Registry}
+  alias ReyCode.Security.Workspace
 
   @default_catalog_wait_ms 15_000
   @default_limits %{
@@ -42,7 +43,8 @@ defmodule ReyCode.Diagnostics do
           paths: map(),
           opencode: map(),
           api_providers: [map()],
-          limits: map()
+          limits: map(),
+          security: map()
         }
 
   @doc "Builds a diagnostics snapshot without exposing application data or secrets."
@@ -66,7 +68,8 @@ defmodule ReyCode.Diagnostics do
       },
       opencode: opencode_report(catalog_snapshot(opts)),
       api_providers: api_providers_report(),
-      limits: limits(config)
+      limits: limits(config),
+      security: %{workspace_roots: Workspace.roots()}
     }
   end
 

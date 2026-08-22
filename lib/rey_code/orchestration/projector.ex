@@ -168,6 +168,10 @@ defmodule ReyCode.Orchestration.Projector do
       attempt: data["attempt"] || 1,
       usage: nil,
       tool_events: [],
+      rounds: [],
+      tool_runs: %{},
+      tool_run_order: [],
+      pending_tool_review: nil,
       completion_metadata: nil,
       last_frame_sequence: 0,
       error: nil
@@ -189,9 +193,145 @@ defmodule ReyCode.Orchestration.Projector do
     |> put_sequence(event.sequence)
   end
 
+  def apply(%Event{type: :tool_ask_requested, data: data} = event, state) do
+    review = %{
+      request_id: data["request_id"],
+      tool: data["tool"],
+      arguments: data["arguments"],
+      workspace: data["workspace"],
+      requested_at: event.recorded_at
+    }
+
+    state
+    |> update_invocation(
+      data["invocation_id"],
+      &%{&1 | status: :waiting_tool_approval, pending_tool_review: review}
+    )
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :tool_ask_resolved, data: data} = event, state) do
+    status = if data["decision"] == "approve", do: :running, else: :failed
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      error =
+        if status == :failed,
+          do: %{
+            "category" => "tool_denied",
+            "message" => "Tool request denied",
+            "retryable" => false
+          },
+          else: invocation.error
+
+      %{invocation | status: status, pending_tool_review: nil, error: error}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
   def apply(%Event{type: :provider_frame_recorded, data: data} = event, state) do
     state
     |> apply_provider_frame(data["invocation_id"], data)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :provider_round_recorded, data: data} = event, state) do
+    round = %{
+      index: data["round_index"],
+      text: data["text"],
+      tool_calls: data["tool_calls"],
+      usage: data["usage"]
+    }
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      %{
+        invocation
+        | rounds: invocation.rounds ++ [round],
+          usage: data["usage"] || invocation.usage
+      }
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :tool_run_requested, data: data} = event, state) do
+    run = %{
+      id: data["tool_run_id"],
+      tool_call_id: data["tool_call_id"],
+      round_index: data["round_index"],
+      tool: data["tool"],
+      arguments: data["arguments"],
+      workspace: data["workspace"],
+      authorization: authorization(data["authorization"]),
+      status: requested_status(data["authorization"]),
+      resolution: nil,
+      result: nil,
+      error: nil,
+      requested_at: event.recorded_at,
+      started_at: nil,
+      completed_at: nil
+    }
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      invocation
+      |> Map.update!(:tool_runs, &Map.put(&1, run.id, run))
+      |> Map.update!(:tool_run_order, &(&1 ++ [run.id]))
+      |> awaiting_review(run)
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :tool_run_approval_resolved, data: data} = event, state) do
+    decision = decision(data["decision"])
+    status = if decision == :approve, do: :ready, else: :denied
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      invocation
+      |> update_run(data["tool_run_id"], &resolve_run(&1, status, decision))
+      |> clear_review(data["tool_run_id"], decision)
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :tool_run_started, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      update_run(invocation, data["tool_run_id"], fn run ->
+        %{run | status: :running, started_at: event.recorded_at}
+      end)
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :tool_run_completed, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      update_run(invocation, data["tool_run_id"], fn run ->
+        %{run | status: :completed, result: data["result"], completed_at: event.recorded_at}
+      end)
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :tool_run_failed, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      update_run(invocation, data["tool_run_id"], fn run ->
+        %{run | status: :failed, error: data["error"], completed_at: event.recorded_at}
+      end)
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :tool_run_interrupted, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      update_run(invocation, data["tool_run_id"], fn run ->
+        %{run | status: :interrupted, completed_at: event.recorded_at}
+      end)
+    end)
     |> put_sequence(event.sequence)
   end
 
@@ -222,7 +362,9 @@ defmodule ReyCode.Orchestration.Projector do
     reason = %{"category" => "cancelled", "message" => data["reason"], "retryable" => false}
 
     state
-    |> update_invocation(data["invocation_id"], &%{&1 | status: :cancelled, error: reason})
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      %{invocation | status: :cancelled, error: reason, pending_tool_review: nil}
+    end)
     |> update_message(data["message_id"], &%{&1 | status: :cancelled, error: reason})
     |> put_sequence(event.sequence)
   end
@@ -427,6 +569,22 @@ defmodule ReyCode.Orchestration.Projector do
     |> :erlang.binary_to_term([:safe])
     |> Map.drop([:last_snapshot_sequence])
     |> Map.put(:sequence, event.sequence)
+    |> normalize_snapshot()
+  end
+
+  # Snapshots written before durable tool runs lack the rounds/tool-run
+  # invocation fields; backfill them so recovery code can rely on the shape.
+  defp normalize_snapshot(state) do
+    Map.update!(state, :invocations, fn invocations ->
+      Map.new(invocations, fn {id, invocation} ->
+        {id,
+         invocation
+         |> Map.put_new(:rounds, [])
+         |> Map.put_new(:tool_runs, %{})
+         |> Map.put_new(:tool_run_order, [])
+         |> Map.put_new(:pending_tool_review, nil)}
+      end)
+    end)
   end
 
   @doc "Applies a provider frame payload to the projection without advancing the sequence."
@@ -460,6 +618,68 @@ defmodule ReyCode.Orchestration.Projector do
     end)
     |> Map.update!(:messages, &Map.put(&1, message.id, message))
   end
+
+  defp update_run(invocation, run_id, update) do
+    Map.update!(invocation, :tool_runs, fn runs ->
+      Map.update!(runs, run_id, update)
+    end)
+  end
+
+  defp resolve_run(run, status, decision),
+    do: %{run | status: status, resolution: decision}
+
+  defp awaiting_review(invocation, %{status: :awaiting_approval} = run) do
+    if invocation.pending_tool_review do
+      invocation
+    else
+      %{
+        invocation
+        | status: :waiting_tool_approval,
+          pending_tool_review: %{
+            request_id: run.id,
+            tool: run.tool,
+            arguments: run.arguments,
+            workspace: run.workspace,
+            requested_at: run.requested_at
+          }
+      }
+    end
+  end
+
+  defp awaiting_review(invocation, _run), do: invocation
+
+  defp clear_review(invocation, run_id, decision) do
+    invocation
+    |> Map.update(
+      :pending_tool_review,
+      nil,
+      fn
+        %{request_id: ^run_id} -> nil
+        review -> review
+      end
+    )
+    |> reset_waiting_status(decision)
+  end
+
+  # Approving the last pending review returns the invocation to the loop;
+  # denial keeps it stopped (the terminal failure event follows immediately).
+  defp reset_waiting_status(%{status: :waiting_tool_approval} = invocation, :approve),
+    do: %{invocation | status: :running}
+
+  defp reset_waiting_status(invocation, _decision), do: invocation
+
+  defp authorization("allow"), do: :allow
+  defp authorization("ask"), do: :ask
+  defp authorization("denied"), do: :denied
+  defp authorization(value) when is_atom(value), do: value
+
+  defp requested_status("ask"), do: :awaiting_approval
+  defp requested_status("denied"), do: :denied
+  defp requested_status(_authorization), do: :ready
+
+  defp decision("approve"), do: :approve
+  defp decision("deny"), do: :deny
+  defp decision(value) when is_atom(value), do: value
 
   defp update_room(state, room_id, update) do
     %{state | rooms: Map.update!(state.rooms, room_id, update)}
@@ -501,7 +721,9 @@ defmodule ReyCode.Orchestration.Projector do
     %{invocation | tool_events: [Map.put(data, "kind", kind) | invocation.tool_events]}
   end
 
-  defp apply_invocation_frame(invocation, _kind, _data), do: %{invocation | status: :running}
+  # Display frames never drive invocation lifecycle status: a waiting approval
+  # stays waiting even while buffered frames are recorded.
+  defp apply_invocation_frame(invocation, _kind, _data), do: invocation
 
   defp participant(data) do
     %{

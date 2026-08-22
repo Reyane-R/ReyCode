@@ -16,6 +16,7 @@ defmodule ReyCode.TUI do
     SlashPalette,
     SquadStatus,
     State,
+    ToolReview,
     Workspace
   }
 
@@ -58,6 +59,7 @@ defmodule ReyCode.TUI do
     do: {:noreply, Directive.focus(term)}
 
   def switch_focus(_event, %{assigns: %{modal: :gate_review}} = term), do: {:noreply, term}
+  def switch_focus(_event, %{assigns: %{modal: :tool_review}} = term), do: {:noreply, term}
 
   def switch_focus(_event, %{assigns: %{modal: :slash}} = term),
     do: {:noreply, SlashPalette.complete(term)}
@@ -127,6 +129,7 @@ defmodule ReyCode.TUI do
   def submit(_event, %{assigns: %{modal: :directive}} = term), do: Directive.submit(term)
 
   def submit(_event, %{assigns: %{modal: :gate_review}} = term), do: GateReview.submit(term)
+  def submit(_event, %{assigns: %{modal: :tool_review}} = term), do: ToolReview.submit(term)
 
   def submit(_event, %{assigns: %{modal: :slash}} = term), do: execute_palette_command(term)
 
@@ -380,6 +383,25 @@ defmodule ReyCode.TUI do
     {:noreply, GateReview.cancel(term)}
   end
 
+  def handle_event(:input, %{"key" => key}, %{assigns: %{modal: :tool_review}} = term)
+      when key in ["ArrowUp", "ArrowDown", "j", "k"] do
+    offset = if key in ["ArrowUp", "k"], do: -1, else: 1
+    {:noreply, ToolReview.move(term, offset)}
+  end
+
+  def handle_event(:input, %{"key" => key}, %{assigns: %{modal: :tool_review}} = term)
+      when key in ["a", "A", "d", "D"] do
+    ToolReview.choose(term, key)
+  end
+
+  def handle_event(:input, %{"key" => "Enter"}, %{assigns: %{modal: :tool_review}} = term) do
+    submit(nil, term)
+  end
+
+  def handle_event(:input, %{"key" => "Escape"}, %{assigns: %{modal: :tool_review}} = term) do
+    {:noreply, ToolReview.cancel(term)}
+  end
+
   def handle_event(:input, %{"key" => key}, %{focused: "rooms"} = term)
       when key in ["ArrowUp", "ArrowDown", "j", "k"] do
     offset = if key in ["ArrowUp", "k"], do: -1, else: 1
@@ -441,4 +463,5 @@ defmodule ReyCode.TUI do
   defp run_palette_action(term, :quit), do: quit(nil, SlashPalette.clear(term))
 
   defp run_palette_action(term, :gate_review), do: {:noreply, GateReview.open(term)}
+  defp run_palette_action(term, :tool_review), do: {:noreply, ToolReview.open(term)}
 end

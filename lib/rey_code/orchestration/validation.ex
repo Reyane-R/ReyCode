@@ -76,6 +76,15 @@ defmodule ReyCode.Orchestration.Validation do
     end
   end
 
+  @doc "Checks invocation preconditions and normalizes a human tool decision."
+  @spec tool_ask_resolution(map() | nil, term()) :: {:ok, map(), atom()} | {:error, atom()}
+  def tool_ask_resolution(invocation, raw_decision) do
+    with {:ok, review} <- pending_tool_review(invocation),
+         {:ok, decision} <- normalize_tool_decision(raw_decision) do
+      {:ok, review, decision}
+    end
+  end
+
   defp directive_turn_ready(nil), do: {:error, :turn_not_found}
 
   defp directive_turn_ready(%{mode: :squad, status: :running, squad: squad})
@@ -96,6 +105,21 @@ defmodule ReyCode.Orchestration.Validation do
 
   defp pending_gate_review(%{mode: :squad}), do: {:error, :squad_not_running}
   defp pending_gate_review(_turn), do: {:error, :not_a_squad_turn}
+
+  defp pending_tool_review(nil), do: {:error, :invocation_not_found}
+
+  defp pending_tool_review(%{pending_tool_review: nil}), do: {:error, :tool_review_not_pending}
+
+  defp pending_tool_review(%{status: status, pending_tool_review: review})
+       when status in [:running, :waiting_tool_approval],
+       do: {:ok, review}
+
+  defp pending_tool_review(_invocation), do: {:error, :invocation_not_running}
+
+  defp normalize_tool_decision(decision) when decision in [:approve, :deny], do: {:ok, decision}
+  defp normalize_tool_decision("approve"), do: {:ok, :approve}
+  defp normalize_tool_decision("deny"), do: {:ok, :deny}
+  defp normalize_tool_decision(_decision), do: {:error, :invalid_tool_decision}
 
   defp normalize_gate_decision(decision) when decision in [:approve, :rework, :abort],
     do: {:ok, decision}

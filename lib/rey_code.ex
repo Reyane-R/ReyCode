@@ -35,6 +35,12 @@ defmodule ReyCode do
     Engine.resolve_gate(turn_id, decision, target_phase, reasons)
   end
 
+  @doc "Resolves a pending owner approval for a tool request."
+  @spec resolve_tool_ask(String.t(), atom() | String.t()) :: :ok | {:error, atom()}
+  def resolve_tool_ask(invocation_id, decision) do
+    Engine.resolve_tool_ask(invocation_id, decision)
+  end
+
   @doc "Assigns a provider runtime and model to room participants."
   @spec configure_participants(String.t(), [String.t()], atom(), String.t() | nil) ::
           :ok | {:error, atom()}

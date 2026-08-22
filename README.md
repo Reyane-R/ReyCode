@@ -152,8 +152,9 @@ into ReyCode's append-only event log.
 ## API providers
 
 When OpenCode is not installed, ReyCode can also drive any OpenAI-compatible
-chat completion API directly. These providers are chat-only: they stream text
-and usage and never run tools or touch the workspace.
+chat completion API directly. These providers stream text and usage and can
+request workspace tools; ReyCode executes those requests through its trusted
+tool registry and feeds results back into the provider conversation.
 
 DeepSeek ships as a built-in profile. Set its API key in your environment and it
 appears alongside OpenCode in `Ctrl+G`:
@@ -192,6 +193,10 @@ export REYCODE_DEEPSEEK_BASE_URL=https://your-proxy.example
 There is no live Demo runtime or automatic simulator fallback. New rooms begin
 unconfigured, and sending is blocked until the required runtime assignments are
 ready. Historical Demo events remain readable but cannot schedule new work.
+
+OpenCode remains a provider during the transition. Its CLI still owns tool
+execution over the current stdio adapter; the ReyCode-owned tool loop is active
+for OpenAI-compatible providers and the simulator.
 
 ## Diagnostics
 
@@ -271,4 +276,15 @@ the base branch:
 
 ```sh
 mix quality.changed_coverage --base "$BASE_SHA" --lcov cover/lcov.info --threshold 90
+```
+
+CI also enforces per-function CRAP scores (`CC^2 x (1 - coverage)^3 + CC`),
+which keeps clean-code complexity from drifting: functions scoring above 30
+must shrink or gain tests, existing offenders may never worsen, and new
+offenders fail the build. Legacy offenders are pinned in a committed ratchet
+baseline (`quality/crap-baseline.json`):
+
+```sh
+MIX_ENV=test mix quality.crap --lcov cover/lcov.info --baseline quality/crap-baseline.json
+MIX_ENV=test mix quality.crap --write-baseline   # regenerate after improvements only
 ```

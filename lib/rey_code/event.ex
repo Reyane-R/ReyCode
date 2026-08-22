@@ -48,7 +48,9 @@ defmodule ReyCode.Event do
     invocation_started provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
     turn_completed snapshot_recorded squad_configured squad_stage_entered squad_decision_recorded
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
-    gate_review_requested gate_resolved squad_budget_extended
+    gate_review_requested gate_resolved squad_budget_extended tool_ask_requested tool_ask_resolved
+    provider_round_recorded tool_run_requested tool_run_approval_resolved tool_run_started
+    tool_run_completed tool_run_failed tool_run_interrupted
   )a
   @type type ::
           unquote(
@@ -82,7 +84,20 @@ defmodule ReyCode.Event do
     squad_directive_added: ~w(turn_id room_id text phase cycle),
     gate_review_requested: ~w(turn_id room_id seat_id decision phase cycle),
     gate_resolved: ~w(turn_id room_id seat_id decision phase cycle),
-    squad_budget_extended: ~w(turn_id room_id budget)
+    squad_budget_extended: ~w(turn_id room_id budget),
+    tool_ask_requested:
+      ~w(invocation_id message_id turn_id room_id request_id tool arguments workspace),
+    tool_ask_resolved: ~w(invocation_id message_id turn_id room_id request_id tool decision),
+    provider_round_recorded:
+      ~w(invocation_id message_id turn_id room_id round_index text tool_calls usage),
+    tool_run_requested:
+      ~w(invocation_id message_id turn_id room_id tool_run_id tool_call_id round_index tool arguments workspace authorization),
+    tool_run_approval_resolved:
+      ~w(invocation_id message_id turn_id room_id tool_run_id tool decision),
+    tool_run_started: ~w(invocation_id message_id turn_id room_id tool_run_id tool),
+    tool_run_completed: ~w(invocation_id message_id turn_id room_id tool_run_id tool result),
+    tool_run_failed: ~w(invocation_id message_id turn_id room_id tool_run_id tool error),
+    tool_run_interrupted: ~w(invocation_id message_id turn_id room_id tool_run_id tool reason)
   }
 
   @doc "Returns the event schema version accepted by this module."

@@ -84,7 +84,7 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
     end
   end
 
-  @spec fold(term(), State.t(), ReyCode.Provider.emit()) ::
+  @spec fold(term(), State.t(), (Frame.t() -> :ok)) ::
           {:cont, State.t()} | {:halt, State.t()}
   def fold({:exit, {:status, status}}, state, emit) do
     state = flush_buffers(state, emit)

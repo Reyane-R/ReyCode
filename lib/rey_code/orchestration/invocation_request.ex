@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.InvocationRequest do
-  @moduledoc "Builds the provider request for a durable invocation."
+  @moduledoc "Builds the provider request for one durable invocation round."
 
   alias ReyCode.Orchestration.Context
   alias ReyCode.Provider.Request
@@ -19,6 +19,7 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       messages: Context.messages(room, turn, invocation, projection),
       workspace: room.workspace,
       resume_from: invocation.last_frame_sequence,
+      round_index: length(Map.get(invocation, :rounds, [])),
       attempt: invocation.attempt,
       label: invocation.label,
       phase: invocation.phase,

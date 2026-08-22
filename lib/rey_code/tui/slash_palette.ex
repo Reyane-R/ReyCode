@@ -17,6 +17,7 @@ defmodule ReyCode.TUI.SlashPalette do
     %{command: "/squad", description: "Select the leader-supervised squad", action: :squad},
     %{command: "/status", description: "Open the squad status dashboard", action: :squad_status},
     %{command: "/theme", description: "Change theme", action: :theme},
+    %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
     %{command: "/workspace", description: "Show the full workspace path", action: :workspace}
   ]
 

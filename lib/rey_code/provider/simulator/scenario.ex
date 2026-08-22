@@ -10,7 +10,8 @@ defmodule ReyCode.Provider.Simulator.Scenario do
             failure_plan: %{},
             leader_rework_rounds: 0,
             rework_phase: "release_gate",
-            emit_process: :caller
+            emit_process: :caller,
+            tool_requests: []
 
   @type failure_kind ::
           :retryable | :permanent | :crash | :timeout | :invalid_output | :after_frame
@@ -23,7 +24,8 @@ defmodule ReyCode.Provider.Simulator.Scenario do
           failure_plan: map(),
           leader_rework_rounds: non_neg_integer(),
           rework_phase: String.t(),
-          emit_process: :caller | :task
+          emit_process: :caller | :task,
+          tool_requests: [map()]
         }
 
   @spec new(keyword() | map()) :: t()
@@ -38,7 +40,8 @@ defmodule ReyCode.Provider.Simulator.Scenario do
       failure_plan: Map.get(opts, :failure_plan, %{}),
       leader_rework_rounds: max(Map.get(opts, :leader_rework_rounds, 0), 0),
       rework_phase: Map.get(opts, :rework_phase, "release_gate"),
-      emit_process: Map.get(opts, :emit_process, :caller)
+      emit_process: Map.get(opts, :emit_process, :caller),
+      tool_requests: Map.get(opts, :tool_requests, [])
     }
   end
 

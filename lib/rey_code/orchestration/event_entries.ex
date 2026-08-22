@@ -235,6 +235,136 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  @doc "Builds the durable event for one normalized provider round."
+  @spec provider_round(map(), non_neg_integer(), map()) :: event_entry()
+  def provider_round(invocation, round_index, round_data) do
+    invocation_event(
+      :provider_round_recorded,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "round_index" => round_index,
+        "text" => round_data["text"],
+        "tool_calls" => round_data["tool_calls"],
+        "usage" => round_data["usage"]
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the durable event requesting one tool run under an authorization decision."
+  @spec tool_run_requested(map(), map()) :: event_entry()
+  def tool_run_requested(invocation, run) do
+    invocation_event(
+      :tool_run_requested,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "tool_run_id" => run.id,
+        "tool_call_id" => run.tool_call_id,
+        "round_index" => run.round_index,
+        "tool" => run.tool,
+        "arguments" => run.arguments,
+        "workspace" => run.workspace,
+        "authorization" => Atom.to_string(run.authorization)
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the durable event recording the owner decision for a tool run."
+  @spec tool_run_approval_resolved(map(), map(), atom()) :: event_entry()
+  def tool_run_approval_resolved(invocation, run, decision) do
+    invocation_event(
+      :tool_run_approval_resolved,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "tool_run_id" => run.id,
+        "tool" => run.tool,
+        "decision" => Atom.to_string(decision)
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the durable event marking a tool run as executing."
+  @spec tool_run_started(map(), map()) :: event_entry()
+  def tool_run_started(invocation, run) do
+    invocation_event(
+      :tool_run_started,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "tool_run_id" => run.id,
+        "tool" => run.tool
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the durable event recording a successful tool run result."
+  @spec tool_run_completed(map(), map(), map()) :: event_entry()
+  def tool_run_completed(invocation, run, result) do
+    invocation_event(
+      :tool_run_completed,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "tool_run_id" => run.id,
+        "tool" => run.tool,
+        "result" => result
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the durable event recording a tool run failure outcome."
+  @spec tool_run_failed(map(), map(), map()) :: event_entry()
+  def tool_run_failed(invocation, run, error) do
+    invocation_event(
+      :tool_run_failed,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "tool_run_id" => run.id,
+        "tool" => run.tool,
+        "error" => error
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the durable event recording an interrupted (indeterminate) tool run."
+  @spec tool_run_interrupted(map(), map(), String.t()) :: event_entry()
+  def tool_run_interrupted(invocation, run, reason) do
+    invocation_event(
+      :tool_run_interrupted,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "tool_run_id" => run.id,
+        "tool" => run.tool,
+        "reason" => reason
+      },
+      invocation
+    )
+  end
+
   @doc "Builds the event durably extending a squad turn's rework budget."
   @spec squad_budget_extended(map(), pos_integer()) :: event_entry()
   def squad_budget_extended(turn, budget) do
