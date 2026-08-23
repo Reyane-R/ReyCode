@@ -7,7 +7,8 @@ defmodule ReyCode.Application do
 
   @impl true
   def start(_type, _args) do
-    :ok = ReyCode.RuntimeConfig.validate!()
+    runtime_config = ReyCode.RuntimeConfig.load!()
+    _ = runtime_config
     :ok = ReyCode.Logging.install!()
     event_store_options = event_store_options()
     :ok = event_store_options |> Keyword.fetch!(:path) |> Path.dirname() |> File.mkdir_p()
@@ -15,7 +16,7 @@ defmodule ReyCode.Application do
     children = [
       {Registry, keys: :unique, name: ReyCode.AgentRegistry},
       {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
-      {ReyCode.EventStore, event_store_options},
+      {ReyCode.EventStore, [config: runtime_config] ++ event_store_options()},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
       {ReyCode.Provider.Catalog, []},
       {ReyCode.Orchestration.Supervisor, []}

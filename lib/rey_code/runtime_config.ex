@@ -101,11 +101,7 @@ defmodule ReyCode.RuntimeConfig do
       {:openai_compatible_transport, fn -> nil end, {:module_or_nil, nil}},
       # Squad workflow policy
       {:squad_release_gate_human, fn -> true end, :boolean},
-      {
-        :squad_rework_budget,
-        fn -> ReyCode.Orchestration.Squad.max_rework() end,
-        {:integer, 1}
-      },
+      {:squad_rework_budget, fn -> Squad.max_rework() end, {:integer, 1}},
       {:squad_simulator, fn -> [] end, :keyword_list},
       # Event store / persistence policy
       {:projection_checkpoint_interval, fn -> 500 end, {:integer, 1}},
@@ -158,6 +154,16 @@ defmodule ReyCode.RuntimeConfig do
     _ = load!()
     :ok
   end
+
+  @doc """
+  Reads one setting from an injected config struct.
+
+  A nil injected value falls back to the application environment so
+  components can run un-injected (tests, scripts) during migration.
+  """
+  @spec policy(t() | nil, atom(), term()) :: term()
+  def policy(nil, key, default), do: Application.get_env(:rey_code, key, default)
+  def policy(config, key, _default) when is_map(config), do: Map.fetch!(config, key)
 
   ## Validation
 

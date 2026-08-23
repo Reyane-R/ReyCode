@@ -11,7 +11,7 @@ defmodule ReyCode.EventStore do
   use GenServer
 
   alias ReyCode.Event
-  alias ReyCode.EventStore.{LegacyNDJSON, SQLite}
+  alias ReyCode.{EventStore.LegacyNDJSON, EventStore.SQLite, RuntimeConfig}
   alias ReyCode.Security.CanonicalPath
 
   @type option ::
@@ -104,13 +104,16 @@ defmodule ReyCode.EventStore do
   def handle_call(:load, _from, state), do: {:reply, SQLite.load(state), state}
 
   def handle_call(:load_projection, _from, state) do
-    limit = Application.get_env(:rey_code, :max_replay_events, 2_000)
-    max_checkpoint_bytes = Application.get_env(:rey_code, :max_checkpoint_bytes, 67_108_864)
+    limit = RuntimeConfig.policy(state.config, :max_replay_events, 2_000)
+
+    max_checkpoint_bytes =
+      RuntimeConfig.policy(state.config, :max_checkpoint_bytes, 67_108_864)
+
     {:reply, SQLite.load_projection(state, limit, max_checkpoint_bytes), state}
   end
 
   def handle_call({:checkpoint, projection}, _from, state) do
-    max_bytes = Application.get_env(:rey_code, :max_checkpoint_bytes, 67_108_864)
+    max_bytes = RuntimeConfig.policy(state.config, :max_checkpoint_bytes, 67_108_864)
     {:reply, SQLite.checkpoint(state, projection, max_bytes), state}
   end
 
@@ -172,7 +175,10 @@ defmodule ReyCode.EventStore do
       {:ok, state} ->
         case maybe_import_legacy(state, opts[:legacy_path]) do
           {:ok, state} ->
-            {:ok, Map.put(state, :ownership_key, ownership_key)}
+            {:ok,
+             state
+             |> Map.put(:ownership_key, ownership_key)
+             |> Map.put(:config, Keyword.get(opts, :config))}
 
           {:error, reason} ->
             _ = SQLite.close(state)

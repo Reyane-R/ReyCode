@@ -70,13 +70,15 @@ defmodule ReyCode.Orchestration.Engine.Persistence do
 
   defp apply_and_broadcast(state, event) do
     projection = Projector.apply(event, state.projection)
-    maybe_checkpoint(projection, state.event_store)
+    maybe_checkpoint(projection, state)
     broadcast_snapshot(projection, state.event_registry)
     %{state | projection: projection}
   end
 
-  defp maybe_checkpoint(projection, event_store) do
-    interval = Application.get_env(:rey_code, :projection_checkpoint_interval, 500)
+  defp maybe_checkpoint(projection, state) do
+    event_store = state.event_store
+
+    interval = ReyCode.RuntimeConfig.policy(state.config, :projection_checkpoint_interval, 500)
 
     if projection.sequence > 0 and rem(projection.sequence, interval) == 0 do
       case EventStore.checkpoint(projection, event_store) do

@@ -5,6 +5,7 @@ defmodule ReyCode.Provider.Catalog do
 
   alias ReyCode.Provider.Registry, as: ProviderRegistry
   alias ReyCode.Provider.Runtime
+  alias ReyCode.RuntimeConfig
 
   @refresh_interval :timer.minutes(5)
   @retry_interval :timer.seconds(15)
@@ -59,8 +60,11 @@ defmodule ReyCode.Provider.Catalog do
       profiles: profiles,
       registry: Keyword.get(opts, :registry, ReyCode.EventRegistry),
       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
+      config: Keyword.get(opts, :config),
       discovery?:
-        Keyword.get(opts, :discovery?, Application.get_env(:rey_code, :provider_discovery, true)),
+        Keyword.get_lazy(opts, :discovery?, fn ->
+          RuntimeConfig.policy(Keyword.get(opts, :config), :provider_discovery, true)
+        end),
       discover: Keyword.get(opts, :discover, fn -> opencode_module.discover() end),
       api_discover: Keyword.get(opts, :api_discover, fn -> discover_api_profiles(profiles) end),
       refresh_interval: Keyword.get(opts, :refresh_interval, @refresh_interval),
@@ -386,11 +390,9 @@ defmodule ReyCode.Provider.Catalog do
 
   defp maybe_add_simulator(providers, opts) do
     allowed? =
-      Keyword.get(
-        opts,
-        :allow_simulator?,
-        Application.get_env(:rey_code, :allow_simulator_provider, false)
-      )
+      Keyword.get_lazy(opts, :allow_simulator?, fn ->
+        RuntimeConfig.policy(Keyword.get(opts, :config), :allow_simulator_provider, false)
+      end)
 
     if allowed? do
       Map.put(providers, :simulator, %{

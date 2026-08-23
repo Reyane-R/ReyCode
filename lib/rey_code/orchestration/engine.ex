@@ -24,6 +24,7 @@ defmodule ReyCode.Orchestration.Engine do
 
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
   alias ReyCode.Provider.{Catalog, Frame, Response}
+  alias ReyCode.RuntimeConfig
   alias ReyCode.ToolRegistry
 
   @modes [:compare, :debate, :fan_out, :squad]
@@ -138,6 +139,7 @@ defmodule ReyCode.Orchestration.Engine do
       active_executions: %{},
       limits: Options.execution_limits(opts),
       agent_delay_ms: Keyword.get(opts, :agent_delay_ms),
+      config: Keyword.get(opts, :config),
       name: Keyword.get(opts, :name, __MODULE__)
     }
 
@@ -896,9 +898,10 @@ defmodule ReyCode.Orchestration.Engine do
     state =
       if turn.mode == :squad do
         squad_config = [
-          rework_budget: Application.get_env(:rey_code, :squad_rework_budget, Squad.max_rework()),
+          rework_budget:
+            RuntimeConfig.policy(state.config, :squad_rework_budget, Squad.max_rework()),
           release_authority:
-            if(Application.get_env(:rey_code, :squad_release_gate_human, true),
+            if(RuntimeConfig.policy(state.config, :squad_release_gate_human, true),
               do: "human",
               else: "leader"
             )
