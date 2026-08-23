@@ -65,7 +65,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     path =
       Path.join(
         System.tmp_dir!(),
-        "rey_code_midstream_#{System.pid()}_#{System.unique_integer([:positive])}.ndjson"
+        "rey_code_midstream_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
       )
 
     store = start_supervised!({EventStore, name: nil, path: path})
@@ -179,7 +179,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     path =
       Path.join(
         System.tmp_dir!(),
-        "rey_code_ghost_#{System.pid()}_#{System.unique_integer([:positive])}.ndjson"
+        "rey_code_ghost_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
       )
 
     store = start_supervised!({EventStore, name: nil, path: path})
@@ -245,7 +245,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     path =
       Path.join(
         System.tmp_dir!(),
-        "rey_code_non_replayable_#{System.pid()}_#{System.unique_integer([:positive])}.ndjson"
+        "rey_code_non_replayable_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
       )
 
     store = start_supervised!({EventStore, name: nil, path: path})

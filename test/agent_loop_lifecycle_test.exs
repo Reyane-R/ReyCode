@@ -62,7 +62,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     path =
       Path.join(
         System.tmp_dir!(),
-        "rey_code_tool_loop_#{System.pid()}_#{System.unique_integer([:positive])}.ndjson"
+        "rey_code_tool_loop_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
       )
 
     store = start_supervised!({EventStore, name: nil, path: path})

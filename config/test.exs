@@ -10,6 +10,6 @@ config :rey_code,
   event_path:
     Path.join(
       System.tmp_dir!(),
-      "rey_code_test_#{System.pid()}_#{System.unique_integer([:positive, :monotonic])}.ndjson"
+      "rey_code_test_#{System.pid()}_#{System.unique_integer([:positive, :monotonic])}.sqlite3"
     ),
   start_tui: false
