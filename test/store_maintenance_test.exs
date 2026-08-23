@@ -94,6 +94,50 @@ defmodule ReyCode.StoreMaintenanceTest do
     assert {:error, :source_not_a_store} = StoreMaintenance.checkpoint(directory)
   end
 
+  test "failed backup publication removes partial files so a retry can succeed" do
+    source = tmp_path("retry-source.sqlite3")
+    backup = tmp_path("retry-backup.sqlite3")
+    {store, _id} = start_store(source)
+
+    assert {:ok, _event} = EventStore.append(:room_created, room_data(), store, metadata())
+    File.mkdir_p!(backup <> ".manifest.json")
+
+    assert {:error, :destination_exists} = EventStore.backup(backup, store)
+    refute File.exists?(backup)
+
+    File.rmdir!(backup <> ".manifest.json")
+    assert {:ok, _manifest} = EventStore.backup(backup, store)
+  end
+
+  test "competing backup publishers cannot overwrite each other's artifacts" do
+    source_a = tmp_path("concurrent-source-a.sqlite3")
+    source_b = tmp_path("concurrent-source-b.sqlite3")
+    backup = tmp_path("concurrent-backup.sqlite3")
+    {store_a, _id_a} = start_store(source_a)
+    {store_b, _id_b} = start_store(source_b)
+
+    assert {:ok, _event} = EventStore.append(:room_created, room_data(), store_a, metadata())
+
+    assert {:ok, _event} =
+             EventStore.append(
+               :room_created,
+               Map.put(room_data(), "title", "Competing source"),
+               store_b,
+               metadata()
+             )
+
+    tasks =
+      Enum.map([store_a, store_b], fn store ->
+        Task.async(fn -> EventStore.backup(backup, store) end)
+      end)
+
+    results = Enum.map(tasks, &Task.await(&1, 10_000))
+
+    assert Enum.count(results, &match?({:ok, _manifest}, &1)) == 1
+    assert Enum.count(results, &(&1 == {:error, :destination_exists})) == 1
+    assert {:ok, _report} = StoreMaintenance.verify(backup)
+  end
+
   defp start_store(path) do
     File.mkdir_p!(Path.dirname(path))
     id = {EventStore, System.unique_integer([:positive])}

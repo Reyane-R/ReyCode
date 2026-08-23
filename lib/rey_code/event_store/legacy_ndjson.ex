@@ -1,12 +1,12 @@
 defmodule ReyCode.EventStore.LegacyNDJSON do
   @moduledoc """
-  Read-only compatibility reader for schema-v2 NDJSON event logs.
+  Compatibility reader for schema-v2 NDJSON event logs.
 
   The active event store is SQLite-only. This module exists solely to read
   legacy `events-v2.ndjson` logs during one-time imports: it understands
-  one-event records, transaction envelopes, and snapshot trimming, repairs an
-  unterminated final newline, truncates a torn final record, and validates
-  global sequence contiguity.
+  one-event records, transaction envelopes, snapshot trimming, and global
+  sequence validation. Reading never modifies the source; torn-tail repair is
+  available through the explicitly destructive `repair_torn_tail!/1` command.
   """
 
   require Logger
@@ -31,7 +31,10 @@ defmodule ReyCode.EventStore.LegacyNDJSON do
                 events ++ Record.decode_value!(value)
 
               {_tail, {:error, _reason}} ->
-                truncate_torn_tail!(path, tail_offset, byte_size(tail))
+                Logger.warning(
+                  "ignored incomplete event log tail path=#{path} offset=#{tail_offset} bytes=#{byte_size(tail)}"
+                )
+
                 events
             end
 
@@ -46,6 +49,31 @@ defmodule ReyCode.EventStore.LegacyNDJSON do
 
       {:error, reason} ->
         raise File.Error, reason: reason, action: "read event log", path: path
+    end
+  end
+
+  @doc "Truncates an incomplete final record, returning whether the source changed."
+  @spec repair_torn_tail!(Path.t()) :: :ok
+  def repair_torn_tail!(path) do
+    case File.open(path, [:read, :binary]) do
+      {:ok, file} ->
+        try do
+          {_events, tail, tail_offset} = read_records(file)
+
+          if tail != "" and match?({:error, _reason}, Jason.decode(tail)) do
+            truncate_torn_tail!(path, tail_offset, byte_size(tail))
+          end
+
+          :ok
+        after
+          File.close(file)
+        end
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        raise File.Error, reason: reason, action: "repair event log", path: path
     end
   end
 

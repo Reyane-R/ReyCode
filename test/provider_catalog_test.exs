@@ -2,6 +2,7 @@ defmodule ReyCode.Provider.CatalogTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Provider.{Catalog, Runtime}
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Test.Wait
 
   @registry __MODULE__.Registry
@@ -191,6 +192,49 @@ defmodule ReyCode.Provider.CatalogTest do
             }} = Catalog.resolve(:deepseek, "deepseek-chat", @catalog)
 
     assert {:error, :model_unavailable} = Catalog.resolve(:deepseek, "deepseek-missing", @catalog)
+  end
+
+  test "preserves configured API profiles through discovery and resolution" do
+    start_supervised!({Registry, keys: :duplicate, name: @registry})
+    start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+    config =
+      RuntimeConfig.fresh(
+        openai_compatible_providers: [
+          %{
+            id: :local_api,
+            name: "Local API",
+            base_url: "https://local.example.test",
+            key_env: "LOCAL_API_KEY"
+          }
+        ]
+      )
+
+    api_discover = fn ->
+      %{
+        local_api:
+          {:ok, %{status: :configured, models: ["local-model"], credential_count: 1, error: nil}}
+      }
+    end
+
+    start_supervised!(
+      {Catalog,
+       name: @catalog,
+       registry: @registry,
+       task_supervisor: @task_supervisor,
+       config: config,
+       discover: fn -> {:error, :missing_executable} end,
+       api_discover: api_discover,
+       discovery?: true}
+    )
+
+    assert {:ok,
+            %Runtime{
+              provider_id: :local_api,
+              module: ReyCode.Provider.OpenAICompatible,
+              models: ["local-model"],
+              config: ^config
+            }} = Catalog.resolve_when_ready(:local_api, "local-model", @catalog)
   end
 
   test "an API provider without a key resolves to available and refuses to run" do

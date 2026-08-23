@@ -309,11 +309,17 @@ defmodule ReyCode.Diagnostics do
   end
 
   defp workspace_roots(%RuntimeConfig{} = config), do: Workspace.roots(config)
-  defp workspace_roots(config), do: config_get(config, :workspace_roots) || [File.cwd!()]
 
   defp normalize_config(%RuntimeConfig{} = config), do: config
-  defp normalize_config(config) when is_list(config), do: RuntimeConfig.fresh(config)
-  defp normalize_config(config) when is_map(config), do: RuntimeConfig.fresh(config)
+
+  defp normalize_config(config) when is_list(config),
+    do: config |> Map.new() |> normalize_config()
+
+  defp normalize_config(config) when is_map(config) do
+    declared = RuntimeConfig.declared_defaults() |> Map.keys() |> MapSet.new()
+    known = Map.filter(config, fn {key, _value} -> MapSet.member?(declared, key) end)
+    RuntimeConfig.fresh(known)
+  end
 
   defp config_get(config, key, default \\ nil)
 

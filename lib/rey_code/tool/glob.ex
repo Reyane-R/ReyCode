@@ -44,29 +44,126 @@ defmodule ReyCode.Tool.Glob do
   end
 
   defp expand(canonical, pattern, request, max_results) do
-    canonical
-    |> Path.join(pattern)
-    |> Path.wildcard()
-    |> Enum.sort()
-    |> Enum.filter(&contained?(&1, request))
-    |> split_at_cap(max_results)
-    |> respond(max_results)
+    state = collect_matches([{canonical, Path.split(pattern)}], request, max_results + 1)
+    paths = state.paths |> Enum.reverse() |> Enum.sort()
+    {paths, overflow} = Enum.split(paths, max_results)
+    respond(paths, overflow != [] or state.halted, max_results)
   end
+
+  defp collect_matches(_pending, _request, limit, %{count: count} = state)
+       when count >= limit,
+       do: %{state | halted: true}
+
+  defp collect_matches(
+         _pending,
+         _request,
+         _limit,
+         %{visited: visited, visit_limit: limit} = state
+       )
+       when visited >= limit,
+       do: %{state | halted: true}
+
+  defp collect_matches([], _request, _limit, state), do: state
+
+  defp collect_matches([{path, []} | pending], request, limit, state) do
+    state = %{state | visited: state.visited + 1}
+    state = add_match(path, request, state)
+    collect_matches(pending, request, limit, state)
+  end
+
+  defp collect_matches([{path, ["**" | rest]} | pending], request, limit, state) do
+    state = %{state | visited: state.visited + 1}
+    children = children(path, state.visit_limit - state.visited)
+
+    recursive =
+      Enum.flat_map(children, fn child ->
+        cond do
+          directory?(child) -> [{child, ["**" | rest]}]
+          rest == [] -> [{child, []}]
+          true -> []
+        end
+      end)
+
+    collect_matches([{path, rest} | recursive] ++ pending, request, limit, state)
+  end
+
+  defp collect_matches([{path, [component | rest]} | pending], request, limit, state) do
+    state = %{state | visited: state.visited + 1}
+
+    matches =
+      path
+      |> Path.join(component)
+      |> Path.wildcard()
+      |> reject_hidden_matches(component)
+      |> Enum.take(state.visit_limit - state.visited)
+      |> Enum.filter(&traversable?(&1, rest))
+      |> Enum.map(&{&1, rest})
+
+    collect_matches(matches ++ pending, request, limit, state)
+  end
+
+  defp collect_matches(pending, request, limit) do
+    state = %{
+      paths: [],
+      seen: %{},
+      count: 0,
+      visited: 0,
+      visit_limit: max(limit * 10, 100),
+      halted: false
+    }
+
+    collect_matches(pending, request, limit, state)
+  end
+
+  defp add_match(path, request, state) do
+    if Map.has_key?(state.seen, path) or not contained?(path, request) do
+      state
+    else
+      %{
+        state
+        | paths: [path | state.paths],
+          seen: Map.put(state.seen, path, true),
+          count: state.count + 1
+      }
+    end
+  end
+
+  defp children(path, limit) do
+    case File.ls(path) do
+      {:ok, entries} ->
+        entries
+        |> Enum.reject(&String.starts_with?(&1, "."))
+        |> Enum.sort()
+        |> Enum.take(limit)
+        |> Enum.map(&Path.join(path, &1))
+
+      {:error, _reason} ->
+        []
+    end
+  end
+
+  defp hidden_name?(path), do: path |> Path.basename() |> String.starts_with?(".")
+
+  defp reject_hidden_matches(paths, "." <> _explicit_hidden), do: paths
+  defp reject_hidden_matches(paths, _component), do: Enum.reject(paths, &hidden_name?/1)
+
+  defp traversable?(_path, []), do: true
+  defp traversable?(path, _rest), do: directory?(path)
+
+  defp directory?(path), do: match?({:ok, %File.Stat{type: :directory}}, File.lstat(path))
 
   defp contained?(path, request) do
     match?({:ok, _canonical}, Workspace.contained?(path, roots: Request.roots(request)))
   end
 
-  defp split_at_cap(paths, max_results), do: Enum.split(paths, max_results)
-
-  defp respond({paths, []}, _max_results) do
+  defp respond(paths, false, _max_results) do
     Result.ok(Enum.join(paths, "\n"), metadata: %{"matches" => length(paths)})
   end
 
-  defp respond({paths, _overflow}, max_results) do
+  defp respond(paths, true, max_results) do
     Result.ok(Enum.join(paths, "\n"),
       truncated: true,
-      metadata: %{"matches" => max_results}
+      metadata: %{"matches" => min(length(paths), max_results)}
     )
   end
 end

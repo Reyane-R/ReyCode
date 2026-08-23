@@ -4,34 +4,19 @@ defmodule ReyCode.Orchestration.Projector do
   import Kernel, except: [apply: 2]
 
   alias ReyCode.Event
+  alias ReyCode.Orchestration.Projection
   alias ReyCode.Provider.Registry
 
-  @type state :: %{
-          sequence: non_neg_integer(),
-          rooms: map(),
-          room_order: [String.t()],
-          messages: map(),
-          turns: map(),
-          invocations: map()
-        }
+  @type state :: Projection.t()
 
   @spec initial() :: state()
-  def initial do
-    %{
-      sequence: 0,
-      rooms: %{},
-      room_order: [],
-      messages: %{},
-      turns: %{},
-      invocations: %{}
-    }
-  end
+  def initial, do: %Projection{}
 
   @spec replay([Event.t()]) :: state()
   def replay(events), do: Enum.reduce(events, initial(), &apply/2)
 
   @spec replay([Event.t()], state()) :: state()
-  def replay(events, state), do: Enum.reduce(events, state, &apply/2)
+  def replay(events, state), do: Enum.reduce(events, Projection.from_map(state), &apply/2)
 
   @spec apply(Event.t(), state()) :: state()
   def apply(%Event{type: :room_created, data: data} = event, state) do
@@ -581,7 +566,8 @@ defmodule ReyCode.Orchestration.Projector do
   # Snapshots written before durable tool runs lack the rounds/tool-run
   # invocation fields; backfill them so recovery code can rely on the shape.
   defp normalize_snapshot(state) do
-    Map.update!(state, :invocations, fn invocations ->
+    state
+    |> Map.update!(:invocations, fn invocations ->
       Map.new(invocations, fn {id, invocation} ->
         {id,
          invocation
@@ -591,6 +577,7 @@ defmodule ReyCode.Orchestration.Projector do
          |> Map.put_new(:pending_tool_review, nil)}
       end)
     end)
+    |> Projection.from_map()
   end
 
   @doc "Applies a provider frame payload to the projection without advancing the sequence."

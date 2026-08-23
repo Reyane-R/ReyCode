@@ -22,5 +22,28 @@ defmodule ReyCode.RuntimeConfigBoundaryTest do
            "runtime modules must use injected RuntimeConfig; violations: #{inspect(violations)}"
   end
 
+  test "runtime tests do not mutate frozen application policy" do
+    exempt =
+      MapSet.new([
+        "test/runtime_config_test.exs",
+        "test/squad_mix_task_test.exs",
+        "test/provider/open_code/process_test.exs"
+      ])
+
+    violations =
+      "test/**/*.exs"
+      |> Path.wildcard()
+      |> Enum.reject(&MapSet.member?(exempt, &1))
+      |> Enum.filter(fn path ->
+        Regex.match?(
+          ~r/Application\.(?:put_env|delete_env)\(\s*:rey_code/s,
+          File.read!(path)
+        )
+      end)
+
+    assert violations == [],
+           "tests must inject RuntimeConfig instead of mutating frozen policy: #{inspect(violations)}"
+  end
+
   defp mix_task?(path), do: String.starts_with?(path, "lib/mix/tasks/")
 end

@@ -32,7 +32,10 @@ defmodule ReyCode.Tool.Bash do
         Result.error(:missing_command)
 
       command ->
-        execute(command, cwd(arguments, request), policy, limits(policy))
+        case cwd(arguments, request) do
+          {:ok, cwd} -> execute(command, cwd, policy, limits(policy))
+          {:error, reason} -> Result.error(reason)
+        end
     end
   end
 
@@ -40,8 +43,8 @@ defmodule ReyCode.Tool.Bash do
     requested = Support.arg(arguments, :cwd, workspace)
 
     case Workspace.contained?(requested, roots: Request.roots(request)) do
-      {:ok, canonical} -> canonical
-      {:error, _reason} -> requested
+      {:ok, canonical} -> {:ok, canonical}
+      {:error, reason} -> {:error, reason}
     end
   end
 

@@ -41,13 +41,17 @@ defmodule Mix.Tasks.Quality.ChangedCoverage do
         )
 
       {:error, report} ->
-        details =
+        uncovered =
           Enum.map_join(report.uncovered, "\n", fn {file, line} -> "  #{file}:#{line}" end)
+
+        missing = Enum.map_join(report.missing_sources, "\n", &"  #{&1}")
 
         Mix.raise("""
         Changed-line coverage is #{report.percent}% (#{report.covered}/#{report.total}); required #{threshold}%.
+        Changed source files missing from LCOV:
+        #{missing}
         Uncovered changed executable lines:
-        #{details}
+        #{uncovered}
         """)
     end
   end

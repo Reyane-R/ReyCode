@@ -42,7 +42,7 @@ defmodule ReyCode.EventStore.LegacyNDJSONTest do
     assert Enum.map(events, & &1.sequence) == [3, 4]
   end
 
-  test "truncates and warns about an incomplete unterminated final tail" do
+  test "ignores and warns about an incomplete unterminated final tail without modifying it" do
     path = tmp_path("torn-tail.ndjson")
     complete = Event.encode!(event(1, :room_created)) <> "\n"
     write!(path, complete <> ~s({"record_type":"transaction","first_sequence":2))
@@ -53,7 +53,10 @@ defmodule ReyCode.EventStore.LegacyNDJSONTest do
         assert only.sequence == 1
       end)
 
-    assert log =~ "truncated incomplete event log tail"
+    assert log =~ "ignored incomplete event log tail"
+    assert File.read!(path) == complete <> ~s({"record_type":"transaction","first_sequence":2)
+
+    assert :ok = LegacyNDJSON.repair_torn_tail!(path)
     assert File.read!(path) == complete
   end
 

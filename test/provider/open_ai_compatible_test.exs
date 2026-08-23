@@ -397,6 +397,20 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
     end
 
+    test "contains transport raises, throws, and exits without linking them to the caller" do
+      previous = Process.flag(:trap_exit, true)
+      on_exit(fn -> Process.flag(:trap_exit, previous) end)
+
+      for failure <- [:raise, :throw, :exit] do
+        FakeTransport.set_stream_failure(failure)
+
+        assert {:error, %{"category" => "launch_failed"}} =
+                 OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+        refute_receive {:EXIT, _pid, _reason}, 0
+      end
+    end
+
     test "halts and errors when output exceeds the profile limit" do
       System.put_env("TINY_API_KEY", "tiny-key")
 
@@ -447,8 +461,18 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     test "a base url environment override takes precedence" do
       System.put_env("REYCODE_DEEPSEEK_BASE_URL", "https://proxy.example.test")
 
-      {:ok, profile} = Profile.fetch(:deepseek)
+      {:ok, profile} = Profile.fetch(:deepseek, RuntimeConfig.load!())
       assert profile.base_url == "https://proxy.example.test"
+    after
+      System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
+    end
+
+    test "an injected config freezes the endpoint after startup" do
+      System.put_env("REYCODE_DEEPSEEK_BASE_URL", "https://first.example.test")
+      config = RuntimeConfig.load!()
+      System.put_env("REYCODE_DEEPSEEK_BASE_URL", "https://second.example.test")
+
+      assert {:ok, %{base_url: "https://first.example.test"}} = Profile.fetch(:deepseek, config)
     after
       System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
     end
@@ -525,12 +549,15 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
   alias ReyCode.Provider.OpenAICompatible.HTTP
 
   def clear do
-    [:models, :stream, :models_status, :stream_status, :last_request]
+    [:models, :stream, :models_status, :stream_status, :stream_failure, :last_request]
     |> Enum.each(&:persistent_term.erase({__MODULE__, &1}))
   end
 
   def set_models(body), do: :persistent_term.put({__MODULE__, :models}, body)
   def set_stream(chunks), do: :persistent_term.put({__MODULE__, :stream}, chunks)
+
+  def set_stream_failure(failure),
+    do: :persistent_term.put({__MODULE__, :stream_failure}, failure)
 
   def last_body, do: last_request().body || ""
   def last_request, do: :persistent_term.get({__MODULE__, :last_request}, %{})
@@ -568,12 +595,18 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
   end
 
   def collect(:stream, on_event, acc) do
-    case :persistent_term.get({__MODULE__, :stream_status}, nil) do
-      {status, body} ->
-        {:error, HTTP.status_error(status, body)}
+    case :persistent_term.get({__MODULE__, :stream_failure}, nil) do
+      :raise -> raise "transport raised"
+      :throw -> throw(:transport_threw)
+      :exit -> exit(:transport_exited)
+      nil -> collect_stream_status(on_event, acc)
+    end
+  end
 
-      nil ->
-        reduce_stream(on_event, acc)
+  defp collect_stream_status(on_event, acc) do
+    case :persistent_term.get({__MODULE__, :stream_status}, nil) do
+      {status, body} -> {:error, HTTP.status_error(status, body)}
+      nil -> reduce_stream(on_event, acc)
     end
   end
 

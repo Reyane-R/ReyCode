@@ -27,6 +27,13 @@ defmodule ReyCode.Provider.OpenAICompatible do
     defstruct [:transport, :profile, :key, :request, :body, :emit, :config]
   end
 
+  defmodule StreamTask do
+    @moduledoc false
+
+    @enforce_keys [:pid, :ref]
+    defstruct [:pid, :ref]
+  end
+
   @default_chunk_bytes 8_192
   @default_chunk_latency_ms 50
   @default_model_response_bytes 1_000_000
@@ -76,13 +83,13 @@ defmodule ReyCode.Provider.OpenAICompatible do
     tag = make_ref()
     deadline = monotonic_ms() + timeout
     state = initial_state(profile, context.request, context.config)
-    task = Task.async(fn -> stream_task(context, owner, tag) end)
+    task = start_stream_task(context, owner, tag)
 
     try do
       await_stream(task, tag, context, state, deadline, timeout)
     rescue
       exception ->
-        Task.shutdown(task, :brutal_kill)
+        stop_stream_task(task)
         cancel_relays(tag, cancellation_error())
 
         {:error,
@@ -93,7 +100,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
          )}
     catch
       kind, reason ->
-        Task.shutdown(task, :brutal_kill)
+        stop_stream_task(task)
         cancel_relays(tag, cancellation_error())
 
         {:error,
@@ -123,6 +130,18 @@ defmodule ReyCode.Provider.OpenAICompatible do
            ) do
       {:ok, final}
     end
+  end
+
+  defp start_stream_task(context, owner, tag) do
+    caller = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        result = stream_task(context, owner, tag)
+        send(caller, {tag, :stream_result, self(), result})
+      end)
+
+    %StreamTask{pid: pid, ref: ref}
   end
 
   defp relay_event(owner, transport_owner, tag, event, acc) do
@@ -170,7 +189,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp receive_stream(task, tag, context, state, deadline, timeout, receive_for) do
-    task_ref = task.ref
+    %StreamTask{pid: task_pid, ref: task_ref} = task
 
     receive do
       {^tag, :event, relay, acknowledgement, event} ->
@@ -184,7 +203,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
           {relay, acknowledgement, event}
         )
 
-      {^task_ref, result} ->
+      {^tag, :stream_result, ^task_pid, result} ->
         Process.demonitor(task.ref, [:flush])
         finish_stream(result, state, context.emit, deadline, timeout)
 
@@ -281,7 +300,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp halt_stream(task, tag, error, deadline) do
     remaining = max(deadline - monotonic_ms(), 0)
-    _ = Task.yield(task, remaining) || Task.shutdown(task, :brutal_kill)
+    await_or_stop_stream_task(task, tag, remaining)
     cancel_relays(tag, error)
     {:error, error}
   end
@@ -289,9 +308,32 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp timeout(task, tag, timeout) do
     error = timeout_error(timeout)
     cancel_relays(tag, error)
-    _ = Task.shutdown(task, :brutal_kill)
+    stop_stream_task(task)
     cancel_relays(tag, error)
     {:error, error}
+  end
+
+  defp await_or_stop_stream_task(%StreamTask{} = task, tag, timeout) do
+    receive do
+      {^tag, :stream_result, pid, _result} when pid == task.pid ->
+        Process.demonitor(task.ref, [:flush])
+        :ok
+
+      {:DOWN, ref, :process, pid, _reason} when ref == task.ref and pid == task.pid ->
+        :ok
+    after
+      timeout -> stop_stream_task(task)
+    end
+  end
+
+  defp stop_stream_task(%StreamTask{} = task) do
+    Process.exit(task.pid, :kill)
+
+    receive do
+      {:DOWN, ref, :process, pid, _reason} when ref == task.ref and pid == task.pid -> :ok
+    after
+      100 -> Process.demonitor(task.ref, [:flush])
+    end
   end
 
   defp timeout_error(timeout),

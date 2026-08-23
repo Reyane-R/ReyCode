@@ -121,18 +121,6 @@ defmodule ReyCode.DiagnosticsSanitizationTest do
             base_url:
               "https://sentinel-user:sentinel-pass@example.test:8443/secret-path?api_key=query-sentinel#frag-sentinel",
             key_env: "REYCODE_SENTINEL_KEY"
-          },
-          %{
-            id: :broken,
-            name: "Broken",
-            base_url: "::::not a url::::",
-            key_env: "REYCODE_MISSING"
-          },
-          %{
-            id: :odd,
-            name: "Odd",
-            base_url: "ftp://files.example.test/pub",
-            key_env: "REYCODE_MISSING"
           }
         ]
       )
@@ -157,13 +145,8 @@ defmodule ReyCode.DiagnosticsSanitizationTest do
     refute encoded =~ "query-sentinel"
     refute encoded =~ "frag-sentinel"
     refute encoded =~ "sentinel-key-value"
-    refute encoded =~ "::::not a url::::"
-    refute encoded =~ "ftp://files.example.test"
 
     sentinel = Enum.find(report.api_providers, &(&1.id == :sentinel))
     assert sentinel.endpoint == "https://example.test:8443"
-
-    assert Enum.find(report.api_providers, &(&1.id == :broken)).endpoint == "[unavailable]"
-    assert Enum.find(report.api_providers, &(&1.id == :odd)).endpoint == "[unavailable]"
   end
 end

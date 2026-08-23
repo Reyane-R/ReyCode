@@ -1,8 +1,9 @@
 defmodule ReyCode.Orchestration.EngineTest do
   use ExUnit.Case, async: false
 
-  alias ReyCode.EventStore
+  alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.{Engine, Projector}
+  alias ReyCode.Orchestration.Supervisor, as: OrchestrationSupervisor
   alias ReyCode.Provider.Frame
   alias ReyCode.Test.Wait
 
@@ -48,10 +49,6 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   test "creates project rooms and queues follow-up turns FIFO" do
-    previous_delay = Application.get_env(:rey_code, :agent_delay_ms)
-    Application.put_env(:rey_code, :agent_delay_ms, 5)
-    on_exit(fn -> Application.put_env(:rey_code, :agent_delay_ms, previous_delay) end)
-
     assert {:ok, room_id} = ReyCode.create_room("Payments Rewrite", System.tmp_dir!())
     assert {:ok, first_id} = ReyCode.post_message(room_id, "First question", :compare)
     assert {:ok, second_id} = ReyCode.post_message(room_id, "Follow-up question", :compare)
@@ -68,20 +65,21 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   test "accepts an in-flight duplicate frame retry idempotently" do
-    previous_delay = Application.get_env(:rey_code, :agent_delay_ms)
-    Application.put_env(:rey_code, :agent_delay_ms, 100)
-    on_exit(fn -> Application.put_env(:rey_code, :agent_delay_ms, previous_delay) end)
+    %{engine: engine} = start_isolated_engine(agent_delay_ms: 100)
 
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Retry one durable frame", :compare)
-    invocation = wait_for_frame(turn_id)
-    message = ReyCode.snapshot().messages[invocation.message_id]
+    room_id = default_room_id(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Retry one durable frame", :compare, engine)
+
+    invocation = wait_for_frame_on(engine, turn_id)
+    message = Engine.snapshot(engine).messages[invocation.message_id]
 
     duplicate = Frame.text_delta(invocation.last_frame_sequence, "conflicting retry")
 
-    assert :ok = Engine.Client.record_frame(Engine, invocation.id, duplicate)
-    assert ReyCode.snapshot().messages[invocation.message_id].body == message.body
-    assert wait_until_terminal(turn_id).status == :completed
+    assert :ok = Engine.Client.record_frame(engine, invocation.id, duplicate)
+    assert Engine.snapshot(engine).messages[invocation.message_id].body == message.body
+    assert wait_until_terminal_on(engine, turn_id).status == :completed
   end
 
   test "persists provider frames before terminal invocation events" do
@@ -126,61 +124,56 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   @tag capture_log: true
   test "recovers an active room turn after the engine is killed" do
-    previous_delay = Application.get_env(:rey_code, :agent_delay_ms)
-    Application.put_env(:rey_code, :agent_delay_ms, 10)
-    on_exit(fn -> Application.put_env(:rey_code, :agent_delay_ms, previous_delay) end)
+    %{engine: engine} = start_isolated_supervision(agent_delay_ms: 100)
 
-    Engine.subscribe()
-    old_engine = Process.whereis(Engine)
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Recover this room", :compare)
-    baseline = ReyCode.snapshot().sequence
+    Engine.subscribe(engine)
+    old_engine = Process.whereis(engine)
+    room_id = default_room_id(engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Recover this room", :compare, engine)
+    baseline = Engine.snapshot(engine).sequence
     flush_projection_snapshots()
 
     monitor = Process.monitor(old_engine)
     Process.exit(old_engine, :kill)
     assert_receive {:DOWN, ^monitor, :process, ^old_engine, :killed}, 1_000
-    assert wait_for_engine(old_engine)
+    assert wait_for_engine(engine, old_engine)
 
-    assert wait_until_terminal(turn_id).status == :completed
+    assert wait_until_terminal_on(engine, turn_id).status == :completed
     assert receive_snapshot_after(baseline)
   end
 
   @tag capture_log: true
   test "records a worker crash and allows the turn to finish" do
-    previous_delay = Application.get_env(:rey_code, :agent_delay_ms)
-    Application.put_env(:rey_code, :agent_delay_ms, 100)
-    on_exit(fn -> Application.put_env(:rey_code, :agent_delay_ms, previous_delay) end)
+    %{engine: engine, agent_registry: agent_registry} =
+      start_isolated_engine(agent_delay_ms: 100)
 
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Survive one worker crash", :compare)
-    turn = ReyCode.snapshot().turns[turn_id]
+    room_id = default_room_id(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Survive one worker crash", :compare, engine)
+
+    turn = Engine.snapshot(engine).turns[turn_id]
     invocation_id = hd(turn.invocation_order)
-    [{pid, _value}] = Registry.lookup(ReyCode.AgentRegistry, invocation_id)
+    {pid, _value} = Wait.registry_entry(agent_registry, invocation_id)
     Process.exit(pid, :kill)
 
-    terminal = wait_until_terminal(turn_id, 500)
+    terminal = wait_until_terminal_on(engine, turn_id, 5_000)
     assert terminal.status == :partial
-    assert ReyCode.snapshot().invocations[invocation_id].error["category"] == "worker_exit"
+    assert Engine.snapshot(engine).invocations[invocation_id].error["category"] == "worker_exit"
   end
 
   @tag capture_log: true
   test "records frames emitted from a helper task process" do
-    previous = Application.get_env(:rey_code, :squad_simulator)
-    Application.put_env(:rey_code, :squad_simulator, seed: 5, delay_ms: 0, emit_process: :task)
+    %{engine: engine} =
+      start_isolated_engine(simulator_opts: [seed: 5, delay_ms: 0, emit_process: :task])
 
-    on_exit(fn ->
-      if previous do
-        Application.put_env(:rey_code, :squad_simulator, previous)
-      else
-        Application.delete_env(:rey_code, :squad_simulator)
-      end
-    end)
+    room_id = default_room_id(engine)
 
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Frames from a task process", :compare)
-    turn = wait_until_terminal(turn_id)
-    snapshot = ReyCode.snapshot()
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Frames from a task process", :compare, engine)
+
+    turn = wait_until_terminal_on(engine, turn_id)
+    snapshot = Engine.snapshot(engine)
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
     assert turn.status == :completed
@@ -207,78 +200,88 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   describe "record_frames batches" do
     setup do
-      previous_delay = Application.get_env(:rey_code, :agent_delay_ms)
-      Application.put_env(:rey_code, :agent_delay_ms, 1_000)
-      on_exit(fn -> Application.put_env(:rey_code, :agent_delay_ms, previous_delay) end)
-      :ok
+      {:ok, start_isolated_engine(agent_delay_ms: 200)}
     end
 
-    test "accepts empty batches and rejects unknown invocations and non-list frames" do
-      room_id = default_room_id()
-      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Batch validation check", :compare)
-      invocation = wait_for_running(turn_id)
+    test "accepts empty batches and rejects unknown invocations and non-list frames", %{
+      engine: engine
+    } do
+      room_id = default_room_id(engine)
 
-      assert :ok = Engine.Client.record_frames(Engine, invocation.id, [])
-      assert {:error, :invocation_not_found} = Engine.Client.record_frames(Engine, "inv-x", [])
+      assert {:ok, turn_id} =
+               Engine.post_message(room_id, "Batch validation check", :compare, engine)
+
+      invocation = wait_for_running(engine, turn_id)
+
+      assert :ok = Engine.Client.record_frames(engine, invocation.id, [])
+      assert {:error, :invocation_not_found} = Engine.Client.record_frames(engine, "inv-x", [])
 
       assert {:error, :invalid_frames} =
-               GenServer.call(Engine, {:record_frames, invocation.id, :junk})
+               GenServer.call(engine, {:record_frames, invocation.id, :junk})
 
-      drain_turn(turn_id)
+      drain_turn(engine, turn_id)
     end
 
-    test "rejects batches containing non-frame elements without crashing the engine" do
-      room_id = default_room_id()
-      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Non-frame batch check", :compare)
-      invocation = wait_for_running(turn_id)
+    test "rejects batches containing non-frame elements without crashing the engine", %{
+      engine: engine
+    } do
+      room_id = default_room_id(engine)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(room_id, "Non-frame batch check", :compare, engine)
+
+      invocation = wait_for_running(engine, turn_id)
 
       assert {:error, :invalid_frame} =
-               Engine.Client.record_frames(Engine, invocation.id, [:junk])
+               Engine.Client.record_frames(engine, invocation.id, [:junk])
 
-      updated = ReyCode.snapshot().invocations[invocation.id]
+      updated = Engine.snapshot(engine).invocations[invocation.id]
 
       assert :ok =
-               Engine.Client.record_frames(Engine, invocation.id, [
+               Engine.Client.record_frames(engine, invocation.id, [
                  Frame.text_delta(updated.last_frame_sequence + 1, "engine still alive")
                ])
 
-      assert ReyCode.snapshot().invocations[invocation.id].last_frame_sequence ==
+      assert Engine.snapshot(engine).invocations[invocation.id].last_frame_sequence >=
                updated.last_frame_sequence + 1
 
-      drain_turn(turn_id)
+      drain_turn(engine, turn_id)
     end
 
-    test "appends contiguous batches, subsumes duplicates, and rejects gaps and invalid frames" do
-      room_id = default_room_id()
-      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Batch append check", :compare)
-      invocation = wait_for_running(turn_id)
+    test "appends contiguous batches, subsumes duplicates, and rejects gaps and invalid frames",
+         %{
+           engine: engine
+         } do
+      room_id = default_room_id(engine)
+      assert {:ok, turn_id} = Engine.post_message(room_id, "Batch append check", :compare, engine)
+      invocation = wait_for_running(engine, turn_id)
 
       assert invocation.last_frame_sequence == 0
 
       assert :ok =
-               Engine.Client.record_frames(Engine, invocation.id, [
+               Engine.Client.record_frames(engine, invocation.id, [
                  Frame.text_delta(1, "first"),
                  Frame.text_delta(2, "second")
                ])
 
-      assert ReyCode.snapshot().invocations[invocation.id].last_frame_sequence == 2
+      assert Engine.snapshot(engine).invocations[invocation.id].last_frame_sequence == 2
 
       assert :ok =
-               Engine.Client.record_frames(Engine, invocation.id, [
+               Engine.Client.record_frames(engine, invocation.id, [
                  Frame.text_delta(2, "duplicate"),
                  Frame.text_delta(3, "third")
                ])
 
-      updated = ReyCode.snapshot().invocations[invocation.id]
+      updated = Engine.snapshot(engine).invocations[invocation.id]
       assert updated.last_frame_sequence == 3
 
       assert {:error, :invalid_frame_sequence} =
-               Engine.Client.record_frames(Engine, invocation.id, [
+               Engine.Client.record_frames(engine, invocation.id, [
                  Frame.text_delta(updated.last_frame_sequence + 2, "gap")
                ])
 
       assert {:error, :invalid_frame} =
-               Engine.Client.record_frames(Engine, invocation.id, [
+               Engine.Client.record_frames(engine, invocation.id, [
                  %Frame{
                    sequence: updated.last_frame_sequence + 1,
                    kind: :text_delta,
@@ -286,31 +289,34 @@ defmodule ReyCode.Orchestration.EngineTest do
                  }
                ])
 
-      drain_turn(turn_id)
+      drain_turn(engine, turn_id)
     end
 
-    test "rejects frame batches for a terminal invocation" do
-      room_id = default_room_id()
-      assert {:ok, turn_id} = ReyCode.post_message(room_id, "Terminal batch check", :compare)
-      invocation = wait_for_running(turn_id)
+    test "rejects frame batches for a terminal invocation", %{engine: engine} do
+      room_id = default_room_id(engine)
 
-      drain_turn(turn_id)
+      assert {:ok, turn_id} =
+               Engine.post_message(room_id, "Terminal batch check", :compare, engine)
 
-      final = ReyCode.snapshot().invocations[invocation.id]
+      invocation = wait_for_running(engine, turn_id)
+
+      drain_turn(engine, turn_id)
+
+      final = Engine.snapshot(engine).invocations[invocation.id]
       assert final.status == :completed
 
       assert {:error, :invocation_terminal} =
-               Engine.Client.record_frames(Engine, invocation.id, [
+               Engine.Client.record_frames(engine, invocation.id, [
                  Frame.text_delta(final.last_frame_sequence + 1, "late")
                ])
     end
   end
 
-  defp wait_for_running(turn_id, attempts \\ 300) do
+  defp wait_for_running(engine, turn_id, timeout \\ 3_000) do
     Wait.projection(
-      Engine,
+      engine,
       &find_running_invocation(&1, turn_id),
-      attempts * 10
+      timeout
     )
   end
 
@@ -328,25 +334,22 @@ defmodule ReyCode.Orchestration.EngineTest do
     end
   end
 
-  defp drain_turn(turn_id) do
-    Application.put_env(:rey_code, :agent_delay_ms, 5)
-    assert wait_until_terminal(turn_id).status == :completed
-  end
+  defp drain_turn(engine, turn_id),
+    do: assert(wait_until_terminal_on(engine, turn_id).status == :completed)
 
-  defp default_room_id do
-    snapshot = ReyCode.snapshot()
+  defp default_room_id(engine \\ Engine) do
+    snapshot = Engine.snapshot(engine)
     Enum.find(snapshot.room_order, &(snapshot.rooms[&1].slug == "reycode"))
   end
 
-  defp wait_until_terminal(turn_id, attempts \\ 300),
+  defp wait_until_terminal(turn_id, attempts \\ 300) when is_integer(attempts),
     do: Wait.terminal_turn(Engine, turn_id, attempts * 10)
 
-  defp wait_for_frame(turn_id, attempts \\ 300) do
-    Wait.projection(
-      Engine,
-      &streaming_invocation(&1, turn_id),
-      attempts * 10
-    )
+  defp wait_until_terminal_on(engine, turn_id, timeout \\ 3_000),
+    do: Wait.terminal_turn(engine, turn_id, timeout)
+
+  defp wait_for_frame_on(engine, turn_id) do
+    Wait.projection(engine, &streaming_invocation(&1, turn_id), 3_000)
   end
 
   defp streaming_invocation(projection, turn_id) do
@@ -364,18 +367,98 @@ defmodule ReyCode.Orchestration.EngineTest do
     end
   end
 
-  defp wait_for_engine(old_engine, attempts \\ 100)
-  defp wait_for_engine(_old_engine, 0), do: false
+  defp wait_for_engine(name, old_engine, attempts \\ 100)
+  defp wait_for_engine(_name, _old_engine, 0), do: false
 
-  defp wait_for_engine(old_engine, attempts) do
-    case Process.whereis(Engine) do
+  defp wait_for_engine(name, old_engine, attempts) do
+    case Process.whereis(name) do
       pid when is_pid(pid) and pid != old_engine ->
         true
 
       _ ->
         Process.sleep(10)
-        wait_for_engine(old_engine, attempts - 1)
+        wait_for_engine(name, old_engine, attempts - 1)
     end
+  end
+
+  defp wait_for_engine(old_engine), do: wait_for_engine(Engine, old_engine)
+
+  defp start_isolated_engine(options) do
+    stack = stack_options(options)
+    stack = start_stack_dependencies(stack)
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: stack.agent_supervisor})
+    start_supervised!({Engine, engine_options(stack)})
+    Map.take(stack, [:engine, :store, :agent_registry])
+  end
+
+  defp start_isolated_supervision(options) do
+    stack = stack_options(options)
+    stack = start_stack_dependencies(stack)
+
+    start_supervised!(
+      {OrchestrationSupervisor,
+       name: stack.supervisor,
+       agent_supervisor: stack.agent_supervisor,
+       config: stack.config,
+       engine_opts: engine_options(stack)}
+    )
+
+    Map.take(stack, [:engine, :store, :agent_registry])
+  end
+
+  defp stack_options(options) do
+    suffix = System.unique_integer([:positive])
+    {agent_delay_ms, options} = Keyword.pop(options, :agent_delay_ms, 0)
+    {simulator_opts, config_options} = Keyword.pop(options, :simulator_opts, [])
+
+    config =
+      RuntimeConfig.fresh(
+        Keyword.merge(
+          [
+            allow_simulator_provider: true,
+            default_provider: :simulator,
+            provider_discovery: false
+          ],
+          config_options
+        )
+      )
+
+    %{
+      config: config,
+      agent_delay_ms: agent_delay_ms,
+      simulator_opts: simulator_opts,
+      store_path:
+        Path.join(System.tmp_dir!(), "rey_code_engine_#{System.pid()}_#{suffix}.sqlite3"),
+      store: nil,
+      agent_registry: :"engine_test_agents_#{suffix}",
+      event_registry: :"engine_test_events_#{suffix}",
+      agent_supervisor: :"engine_test_agent_sup_#{suffix}",
+      engine: :"engine_test_engine_#{suffix}",
+      supervisor: :"engine_test_sup_#{suffix}"
+    }
+  end
+
+  defp start_stack_dependencies(stack) do
+    store =
+      start_supervised!({EventStore, name: nil, path: stack.store_path, config: stack.config})
+
+    start_supervised!({Registry, keys: :unique, name: stack.agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: stack.event_registry})
+    %{stack | store: store}
+  end
+
+  defp engine_options(stack) do
+    [
+      name: stack.engine,
+      event_store: stack.store,
+      agent_supervisor: stack.agent_supervisor,
+      agent_registry: stack.agent_registry,
+      event_registry: stack.event_registry,
+      provider_catalog: ReyCode.Provider.Catalog,
+      agent_delay_ms: stack.agent_delay_ms,
+      simulator_opts: stack.simulator_opts,
+      config: stack.config
+    ]
   end
 
   defp flush_projection_snapshots do

@@ -73,6 +73,11 @@ defmodule ReyCode.Tool.Read do
       line_no < offset ->
         collect(device, offset, remaining, line_no + 1, lines, bytes, max_bytes)
 
+      bytes + byte_size(line) > max_bytes ->
+        available = max(max_bytes - bytes, 0)
+        prefix = utf8_prefix(line, available)
+        finish([prefix | lines], offset, true)
+
       true ->
         collect(
           device,
@@ -84,6 +89,13 @@ defmodule ReyCode.Tool.Read do
           max_bytes
         )
     end
+  end
+
+  defp utf8_prefix(_line, 0), do: ""
+
+  defp utf8_prefix(line, size) do
+    prefix = binary_part(line, 0, size)
+    if String.valid?(prefix), do: prefix, else: utf8_prefix(line, size - 1)
   end
 
   defp finish(lines, offset, more?) do

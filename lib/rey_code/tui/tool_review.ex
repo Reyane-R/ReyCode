@@ -7,7 +7,7 @@ defmodule ReyCode.TUI.ToolReview do
   use Breeze.Component
 
   alias Breeze.{Component, View}
-  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.{Engine, Projection}
   alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Environment
   alias ReyCode.TUI.SlashPalette
@@ -90,15 +90,8 @@ defmodule ReyCode.TUI.ToolReview do
     |> View.focus("prompt")
   end
 
-  defp pending_invocation(_projection, nil), do: nil
-
-  defp pending_invocation(projection, turn_id) do
-    projection.invocations
-    |> Map.values()
-    |> Enum.find(fn invocation ->
-      invocation.turn_id == turn_id and not is_nil(invocation.pending_tool_review)
-    end)
-  end
+  defp pending_invocation(projection, turn_id),
+    do: Projection.pending_tool_invocation(projection, turn_id)
 
   defp resolution_notice(:approve), do: "Tool request approved"
   defp resolution_notice(:deny), do: "Tool request denied"
