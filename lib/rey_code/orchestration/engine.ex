@@ -18,13 +18,13 @@ defmodule ReyCode.Orchestration.Engine do
     Admission,
     Configuration,
     Identity,
+    Lifecycle,
     Options,
     Persistence,
     ProviderFrames,
     WorkerExit
   }
 
-  alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
   alias ReyCode.Provider.{Catalog, Response}
   alias ReyCode.RuntimeConfig
   alias ReyCode.ToolRegistry
@@ -155,7 +155,7 @@ defmodule ReyCode.Orchestration.Engine do
       name: Keyword.get(opts, :name, __MODULE__)
     }
 
-    state = ensure_default_room(state)
+    state = Lifecycle.ensure_default_room(state)
     {:ok, state, {:continue, :recover}}
   end
 
@@ -178,11 +178,11 @@ defmodule ReyCode.Orchestration.Engine do
 
   @impl true
   def handle_continue(:recover, state) do
-    state = recover_invocations(state)
+    state = Lifecycle.recover_invocations(state)
 
     state =
       state.projection.room_order
-      |> Enum.reduce(state, fn room_id, acc -> recover_room(acc, room_id) end)
+      |> Enum.reduce(state, fn room_id, acc -> Lifecycle.recover_room(acc, room_id) end)
 
     {:noreply, state}
   end
@@ -228,7 +228,7 @@ defmodule ReyCode.Orchestration.Engine do
         with {:ok, body} <- Validation.message(raw_body),
              :ok <- runtime_preflight(room, mode, state),
              :ok <- Admission.admit_turn(room, state) do
-          queue_message(state, room_id, body, mode)
+          Lifecycle.queue_message(state, room_id, body, mode)
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -408,15 +408,15 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   def handle_call({:complete_invocation, invocation_id, metadata}, _from, state) do
-    {:reply, :ok, finalize_invocation(state, invocation_id, {:completed, metadata})}
+    {:reply, :ok, Lifecycle.finalize_invocation(state, invocation_id, {:completed, metadata})}
   end
 
   def handle_call({:fail_invocation, invocation_id, error}, _from, state) do
-    {:reply, :ok, finalize_invocation(state, invocation_id, {:failed, error})}
+    {:reply, :ok, Lifecycle.finalize_invocation(state, invocation_id, {:failed, error})}
   end
 
   def handle_call({:cancel_turn, turn_id, reason}, _from, state) do
-    case cancel_turn_state(state, turn_id, reason) do
+    case Lifecycle.cancel_turn(state, turn_id, reason) do
       {:ok, next} -> {:reply, :ok, next}
       {:error, error} -> {:reply, {:error, error}, state}
     end
@@ -445,8 +445,8 @@ defmodule ReyCode.Orchestration.Engine do
     case Validation.gate_resolution(turn, review_id, raw_decision, raw_target_phase, raw_reasons) do
       {:ok, review, decision, target_phase, reasons} ->
         entries = [EventEntries.gate_resolved(turn, review, decision, target_phase, reasons)]
-        entries = entries ++ budget_extension_entries(turn, decision)
-        next = state |> Persistence.append_and_apply!(entries) |> advance_turn(turn.id)
+        entries = entries ++ Lifecycle.budget_extension_entries(turn, decision)
+        next = state |> Persistence.append_and_apply!(entries) |> Lifecycle.advance_turn(turn.id)
         {:reply, :ok, next}
 
       {:error, reason} ->
@@ -464,14 +464,17 @@ defmodule ReyCode.Orchestration.Engine do
         state = %{state | agent_monitors: monitors}
         invocation = state.projection.invocations[invocation_id]
 
-        case WorkerExit.classify(invocation, reason, &replayable?/1) do
+        case WorkerExit.classify(invocation, reason, &Lifecycle.replayable?/1) do
           :ignore ->
             {:noreply, state}
 
           :release ->
             # A paused approval is durable: release the execution slot without
             # failing so the resolution can resume the loop.
-            state |> release_execution(invocation_id) |> pump_admission() |> noreply()
+            state
+            |> Lifecycle.release_execution(invocation_id)
+            |> Lifecycle.pump_admission()
+            |> noreply()
 
           :requeue ->
             # The loop stopped for a mid-flight handoff (for example an
@@ -479,14 +482,14 @@ defmodule ReyCode.Orchestration.Engine do
             # worker still held its slot): re-arm scheduling instead of
             # failing the invocation.
             state
-            |> release_execution(invocation_id)
+            |> Lifecycle.release_execution(invocation_id)
             |> Admission.enqueue(invocation_id)
-            |> pump_admission()
+            |> Lifecycle.pump_admission()
             |> noreply()
 
           {:fail, error} ->
-            state = interrupt_started_runs(state, invocation)
-            {:noreply, finalize_invocation(state, invocation.id, {:failed, error})}
+            state = Lifecycle.interrupt_started_runs(state, invocation)
+            {:noreply, Lifecycle.finalize_invocation(state, invocation.id, {:failed, error})}
         end
     end
   end
@@ -494,15 +497,6 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_info(_message, state), do: {:noreply, state}
 
   defp noreply(state), do: {:noreply, state}
-
-  defp interrupt_started_runs(state, invocation) do
-    invocation
-    |> ToolRuns.running()
-    |> Enum.reduce(state, fn run, acc ->
-      entry = EventEntries.tool_run_interrupted(invocation, run, "worker_exit")
-      Persistence.append_and_apply!(acc, [entry])
-    end)
-  end
 
   defp append_pending_frames(state, invocation, pending_frames) do
     if invocation.status in [:completed, :failed, :cancelled] do
@@ -585,7 +579,11 @@ defmodule ReyCode.Orchestration.Engine do
 
     next = Persistence.append_and_apply!(state, entries)
     run = next.projection.invocations[invocation.id].tool_runs[run.id]
-    next = if authorization == :ask, do: advance_turn(next, invocation.turn_id), else: next
+
+    next =
+      if authorization == :ask,
+        do: Lifecycle.advance_turn(next, invocation.turn_id),
+        else: next
 
     action = if authorization == :denied, do: :denied, else: authorization_action(authorization)
     {:reply, {:ok, {action, run}}, next}
@@ -620,7 +618,7 @@ defmodule ReyCode.Orchestration.Engine do
     state
     |> Persistence.append_and_apply!([entry])
     |> Admission.enqueue(invocation.id)
-    |> pump_admission()
+    |> Lifecycle.pump_admission()
   end
 
   # A denial and its terminal failure must share one durable transaction:
@@ -629,7 +627,7 @@ defmodule ReyCode.Orchestration.Engine do
   defp resolve_tool_decision(state, invocation, run, :deny) do
     denial = EventEntries.tool_run_approval_resolved(invocation, run, :deny)
 
-    finalize_invocation(state, invocation.id, {:failed, tool_denied_error()}, [denial])
+    Lifecycle.finalize_invocation(state, invocation.id, {:failed, tool_denied_error()}, [denial])
   end
 
   defp tool_denied_error do
@@ -638,93 +636,6 @@ defmodule ReyCode.Orchestration.Engine do
       "message" => "Tool request denied",
       "retryable" => false
     }
-  end
-
-  defp ensure_default_room(%{projection: %{room_order: []}} = state) do
-    room_id = "room-reycode"
-
-    {type, payload, metadata} =
-      EventEntries.room_created(
-        room_id,
-        "reycode",
-        "ReyCode",
-        File.cwd!(),
-        Options.default_participants(state.config)
-      )
-
-    Persistence.append_and_project!(state, [{type, payload, metadata}])
-  end
-
-  defp ensure_default_room(state), do: state
-
-  defp queue_message(state, room_id, body, mode) do
-    turn_id = Identity.new_id("turn")
-    message_id = Identity.new_id("msg")
-    context_sequence = state.projection.sequence + 1
-
-    entries = EventEntries.queue_turn(room_id, body, mode, turn_id, message_id, context_sequence)
-
-    next = Persistence.append_and_apply!(state, entries)
-    room = next.projection.rooms[room_id]
-    next = if room.active_turn_id == nil, do: start_turn(next, turn_id), else: next
-    {:reply, {:ok, turn_id}, next}
-  end
-
-  defp cancel_turn_state(state, turn_id, reason) do
-    turn = state.projection.turns[turn_id]
-
-    case Validation.cancellation(turn, reason) do
-      {:ok, reason} when is_binary(reason) -> cancel_turn_invocations(state, turn, reason)
-      {:ok, :already_finished} -> {:ok, state}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp cancel_turn_invocations(state, turn, reason) do
-    invocations = cancellable_turn_invocations(state, turn)
-    invocation_ids = Enum.map(invocations, & &1.id)
-
-    next =
-      state
-      |> persist_turn_cancellation(turn, invocations, reason)
-      |> Admission.drop_executions(invocation_ids)
-      |> kill_cancelled_executions(invocation_ids)
-      |> start_next_queued_turn(turn.room_id)
-      |> pump_admission()
-
-    {:ok, next}
-  end
-
-  defp cancellable_turn_invocations(state, turn) do
-    turn.invocation_order
-    |> Enum.map(&state.projection.invocations[&1])
-    |> Enum.filter(&(&1.status in [:queued, :running, :waiting_tool_approval]))
-  end
-
-  defp persist_turn_cancellation(state, turn, invocations, reason) do
-    Persistence.append_and_apply!(state, EventEntries.cancel_turn(turn, invocations, reason))
-  end
-
-  defp kill_execution(state, invocation_id) do
-    case Registry.lookup(state.agent_registry, invocation_id) do
-      [{pid, _value} | _] -> Process.exit(pid, :kill)
-      [] -> :ok
-    end
-  end
-
-  defp kill_cancelled_executions(state, invocation_ids) do
-    Enum.each(invocation_ids, &kill_execution(state, &1))
-    state
-  end
-
-  defp start_next_queued_turn(state, room_id) do
-    room = state.projection.rooms[room_id]
-
-    if room.active_turn_id == nil and room.queued_turn_ids != [] do
-      start_turn(state, hd(room.queued_turn_ids))
-    else
-      state
-    end
   end
 
   defp runtime_preflight(room, :squad, state) do
@@ -764,326 +675,4 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   defp apply_configuration({:error, reason}, state), do: {:reply, {:error, reason}, state}
-
-  defp recover_room(state, room_id) do
-    room = state.projection.rooms[room_id]
-
-    cond do
-      room.active_turn_id != nil -> recover_active_turn(state, room.active_turn_id)
-      room.queued_turn_ids != [] -> start_turn(state, hd(room.queued_turn_ids))
-      true -> state
-    end
-  end
-
-  defp recover_active_turn(state, turn_id) do
-    turn = state.projection.turns[turn_id]
-
-    if turn.invocation_order == [],
-      do: start_initial_invocations(state, turn),
-      else: advance_turn(state, turn_id)
-  end
-
-  defp start_initial_invocations(state, turn) do
-    room = state.projection.rooms[turn.room_id]
-    workflow = WorkflowDispatcher.for_mode(turn.mode)
-    open_invocations(state, turn, workflow.plan(room, turn, state.projection))
-  end
-
-  defp recover_invocations(state) do
-    state.projection.invocations
-    |> Map.values()
-    |> Enum.sort_by(fn invocation ->
-      state.projection.messages[invocation.message_id].created_sequence
-    end)
-    |> Enum.reduce(state, &recover_invocation(&2, &1))
-    |> pump_admission()
-  end
-
-  # A waiting approval is dormant: it holds no worker or admission slot and is
-  # resumed only by the owner's resolution.
-  defp recover_invocation(state, %{status: :waiting_tool_approval}), do: state
-
-  defp recover_invocation(state, %{status: status}) when status not in [:queued, :running],
-    do: state
-
-  defp recover_invocation(state, %{status: :running} = invocation) do
-    case ensure_no_started_runs(invocation) do
-      :ok ->
-        case Registry.lookup(state.agent_registry, invocation.id) do
-          [{pid, _} | _] ->
-            ref = Process.monitor(pid)
-            Process.exit(pid, :kill)
-            receive do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)
-            recover_missing_execution(state, invocation)
-
-          [] ->
-            recover_missing_execution(state, invocation)
-        end
-
-      {:error, :indeterminate_tool_run} ->
-        interrupt_and_fail(state, invocation, "recovered with a running tool run")
-    end
-  end
-
-  defp recover_invocation(state, %{status: :queued} = invocation) do
-    case Registry.lookup(state.agent_registry, invocation.id) do
-      [{pid, _} | _] ->
-        ref = Process.monitor(pid)
-        Process.exit(pid, :kill)
-        receive do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)
-        Admission.enqueue(state, invocation.id)
-
-      [] ->
-        Admission.enqueue(state, invocation.id)
-    end
-  end
-
-  defp ensure_no_started_runs(invocation) do
-    if ToolRuns.started?(invocation),
-      do: {:error, :indeterminate_tool_run},
-      else: :ok
-  end
-
-  defp interrupt_and_fail(state, invocation, reason) do
-    state = interrupt_started_runs(state, invocation)
-
-    error = %{
-      "category" => "interrupted",
-      "message" => "The provider invocation was interrupted mid tool run: #{reason}",
-      "retryable" => false
-    }
-
-    finalize_invocation(state, invocation.id, {:failed, error})
-  end
-
-  defp recover_missing_execution(state, invocation) do
-    if replayable?(invocation.participant.provider) do
-      Admission.enqueue(state, invocation.id)
-    else
-      error = %{
-        "category" => "interrupted",
-        "message" => "The provider invocation was interrupted and cannot be replayed safely",
-        "retryable" => false
-      }
-
-      finalize_invocation(state, invocation.id, {:failed, error})
-    end
-  end
-
-  defp start_turn(state, turn_id) do
-    turn = state.projection.turns[turn_id]
-    room = state.projection.rooms[turn.room_id]
-    specs = WorkflowDispatcher.for_mode(turn.mode).plan(room, turn, state.projection)
-    invocation_entries = build_invocation_entries(room, turn, specs)
-
-    turn_entry = EventEntries.turn_started(turn)
-
-    state =
-      if turn.mode == :squad do
-        squad_config = [
-          rework_budget:
-            RuntimeConfig.policy(state.config, :squad_rework_budget, Squad.max_rework()),
-          release_authority:
-            if(RuntimeConfig.policy(state.config, :squad_release_gate_human, true),
-              do: "human",
-              else: "leader"
-            )
-        ]
-
-        Persistence.append_and_apply!(
-          state,
-          [turn_entry | EventEntries.squad_start(turn, squad_config)] ++ invocation_entries
-        )
-      else
-        Persistence.append_and_apply!(state, [turn_entry | invocation_entries])
-      end
-
-    start_invocation_workers(state, invocation_entries)
-  end
-
-  defp advance_turn(state, turn_id) do
-    turn = state.projection.turns[turn_id]
-    room = state.projection.rooms[turn.room_id]
-
-    case WorkflowDispatcher.for_mode(turn.mode).advance(room, turn, state.projection) do
-      :wait ->
-        state
-
-      {:continue, specs} ->
-        open_invocations(state, turn, specs)
-
-      {:complete, outcome} ->
-        cancellable =
-          if outcome == :failed, do: cancellable_turn_invocations(state, turn), else: []
-
-        invocation_ids = Enum.map(cancellable, & &1.id)
-
-        entries =
-          EventEntries.cancel_invocations(cancellable, "Cancelled because the turn failed") ++
-            [EventEntries.turn_completed(turn, outcome)]
-
-        state =
-          state
-          |> Persistence.append_and_apply!(entries)
-          |> Admission.drop_executions(invocation_ids)
-          |> kill_cancelled_executions(invocation_ids)
-
-        room = state.projection.rooms[turn.room_id]
-
-        if room.queued_turn_ids == [] do
-          state
-        else
-          start_turn(state, hd(room.queued_turn_ids))
-        end
-    end
-  end
-
-  defp open_invocations(state, turn, specs) do
-    room = state.projection.rooms[turn.room_id]
-    entries = build_invocation_entries(room, turn, specs)
-
-    state =
-      if turn.mode == :squad do
-        Persistence.append_and_apply!(state, EventEntries.squad_continue(turn, specs) ++ entries)
-      else
-        Persistence.append_and_apply!(state, entries)
-      end
-
-    start_invocation_workers(state, entries)
-  end
-
-  defp build_invocation_entries(room, turn, specs) do
-    generated_ids =
-      Enum.map(specs, fn _spec -> {Identity.new_id("inv"), Identity.new_id("msg")} end)
-
-    EventEntries.open_invocations(room, turn, specs, generated_ids)
-  end
-
-  defp start_invocation_workers(state, entries) do
-    entries
-    |> Enum.reduce(state, fn {_type, payload, _metadata}, acc ->
-      Admission.enqueue(acc, payload["invocation_id"])
-    end)
-    |> pump_admission()
-  end
-
-  defp pump_admission(state) do
-    case Admission.next_eligible(state) do
-      nil ->
-        state
-
-      {invocation_id, index} ->
-        state = Admission.dequeue(state, {invocation_id, index})
-
-        invocation = state.projection.invocations[invocation_id]
-
-        if invocation == nil or invocation.status in [:completed, :failed, :cancelled] do
-          pump_admission(state)
-        else
-          invocation |> start_execution(state) |> pump_admission()
-        end
-    end
-  end
-
-  defp start_execution(invocation, state) do
-    spec =
-      {ReyCode.Agent,
-       engine: state.name,
-       registry: state.agent_registry,
-       invocation_id: invocation.id,
-       provider: invocation.participant.provider,
-       provider_catalog: state.provider_catalog,
-       config: state.config}
-
-    case DynamicSupervisor.start_child(state.agent_supervisor, spec) do
-      {:ok, pid} ->
-        monitor_execution(state, invocation.id, pid)
-
-      {:error, {:already_started, pid}} ->
-        monitor_execution(state, invocation.id, pid)
-
-      {:error, reason} ->
-        error = %{
-          "category" => "worker_start_failed",
-          "message" => "Could not start provider worker: #{inspect(reason)}",
-          "retryable" => true
-        }
-
-        finalize_invocation(state, invocation.id, {:failed, error})
-    end
-  end
-
-  defp monitor_execution(state, invocation_id, pid) do
-    ref = Process.monitor(pid)
-    workspace = Admission.workspace(state, invocation_id)
-
-    state
-    |> put_in([:agent_monitors, ref], invocation_id)
-    |> put_in([:active_executions, invocation_id], workspace)
-  end
-
-  defp release_execution(state, invocation_id) do
-    %{state | active_executions: Map.delete(state.active_executions, invocation_id)}
-  end
-
-  # Release-gate authority is frozen at turn start (squad_configured carries it);
-  # flipping the runtime env mid-turn does not change an in-flight squad.
-  defp human_release_review?(turn) do
-    turn.squad != nil and Map.get(turn.squad, :release_authority) != "leader"
-  end
-
-  defp budget_extension_entries(%{squad: squad} = turn, :rework)
-       when squad.rework_count >= squad.rework_budget,
-       do: [
-         EventEntries.squad_budget_extended(
-           turn,
-           max(squad.rework_budget, squad.rework_count) + 1
-         )
-       ]
-
-  defp budget_extension_entries(_turn, _decision), do: []
-
-  defp finalize_invocation(state, invocation_id, outcome, prepend \\ []) do
-    state = release_execution(state, invocation_id)
-    invocation = state.projection.invocations[invocation_id]
-
-    next =
-      if invocation == nil or invocation.status in [:completed, :failed, :cancelled] do
-        state
-      else
-        turn = state.projection.turns[invocation.turn_id]
-        message = state.projection.messages[invocation.message_id]
-
-        opts = [
-          human_release_review?:
-            invocation.phase == "release_gate" and human_release_review?(turn)
-        ]
-
-        turn.mode
-        |> WorkflowDispatcher.for_mode()
-        |> then(& &1.finalize(invocation, message, outcome, opts))
-        |> apply_finalization(state, invocation, prepend)
-      end
-
-    pump_admission(next)
-  end
-
-  defp apply_finalization({:advance, entries}, state, invocation, prepend) do
-    state
-    |> Persistence.append_and_apply!(prepend ++ entries)
-    |> advance_turn(invocation.turn_id)
-  end
-
-  defp apply_finalization({:retry, entries, retry_spec}, state, invocation, prepend) do
-    turn = state.projection.turns[invocation.turn_id]
-    room = state.projection.rooms[invocation.room_id]
-    invocation_entries = build_invocation_entries(room, turn, [retry_spec])
-
-    next = Persistence.append_and_apply!(state, prepend ++ entries ++ invocation_entries)
-    start_invocation_workers(next, invocation_entries)
-  end
-
-  defp replayable?(:simulator), do: true
-  defp replayable?("simulator"), do: true
-  defp replayable?(_provider), do: false
 end
