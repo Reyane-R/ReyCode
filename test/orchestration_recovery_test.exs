@@ -241,6 +241,120 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     assert live == replayed
   end
 
+  test "fails a non-replayable interrupted invocation as non-retryable" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_non_replayable_#{System.pid()}_#{System.unique_integer([:positive])}.ndjson"
+      )
+
+    store = start_supervised!({EventStore, name: nil, path: path})
+    start_supervised!({Registry, keys: :unique, name: @agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: @event_registry})
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
+
+    room_id = "room-non-replayable"
+    turn_id = "turn-non-replayable"
+    invocation_id = "inv-non-replayable"
+    message_id = "msg-non-replayable"
+
+    participant = %{
+      "id" => "builder",
+      "name" => "Builder",
+      "perspective" => "build",
+      "provider" => "open_code",
+      "model" => nil
+    }
+
+    assert {:ok, _events} =
+             EventStore.append_many(
+               [
+                 {
+                   :room_created,
+                   %{
+                     "room_id" => room_id,
+                     "slug" => "non-replayable",
+                     "title" => "Non-replayable",
+                     "workspace" => System.tmp_dir!(),
+                     "participants" => [participant]
+                   },
+                   metadata(:room, room_id, room_id, turn_id)
+                 },
+                 {
+                   :message_posted,
+                   %{
+                     "message_id" => "msg-user-non-replayable",
+                     "room_id" => room_id,
+                     "turn_id" => turn_id,
+                     "author_name" => "You",
+                     "body" => "Recover safely"
+                   },
+                   metadata(:room, room_id, room_id, turn_id)
+                 },
+                 {
+                   :turn_queued,
+                   %{
+                     "turn_id" => turn_id,
+                     "room_id" => room_id,
+                     "user_message_id" => "msg-user-non-replayable",
+                     "mode" => "compare",
+                     "context_through_sequence" => 2
+                   },
+                   metadata(:turn, turn_id, room_id, turn_id)
+                 },
+                 {
+                   :turn_started,
+                   %{"turn_id" => turn_id, "room_id" => room_id},
+                   metadata(:turn, turn_id, room_id, turn_id)
+                 },
+                 {
+                   :assistant_message_opened,
+                   %{
+                     "invocation_id" => invocation_id,
+                     "message_id" => message_id,
+                     "turn_id" => turn_id,
+                     "room_id" => room_id,
+                     "participant" => participant,
+                     "stage" => 0,
+                     "label" => "independent response",
+                     "system_prompt" => "Respond independently",
+                     "attempt" => 1
+                   },
+                   metadata(:invocation, invocation_id, room_id, turn_id)
+                 },
+                 {
+                   :invocation_started,
+                   %{
+                     "invocation_id" => invocation_id,
+                     "message_id" => message_id,
+                     "turn_id" => turn_id,
+                     "room_id" => room_id
+                   },
+                   metadata(:invocation, invocation_id, room_id, turn_id)
+                 }
+               ],
+               store
+             )
+
+    start_supervised!(
+      {Engine,
+       name: @engine,
+       event_store: store,
+       agent_supervisor: @agent_supervisor,
+       agent_registry: @agent_registry,
+       event_registry: @event_registry,
+       provider_catalog: ReyCode.Provider.Catalog,
+       agent_delay_ms: 0}
+    )
+
+    assert Wait.terminal_turn(@engine, turn_id).status == :failed
+
+    error = Engine.snapshot(@engine).invocations[invocation_id].error
+    assert error["category"] == "interrupted"
+    assert error["retryable"] == false
+    assert error["message"] =~ "cannot be replayed safely"
+  end
+
   defp participants do
     Enum.map([{"builder", "Builder"}, {"critic", "Critic"}, {"explorer", "Explorer"}], fn {id,
                                                                                            name} ->

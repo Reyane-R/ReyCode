@@ -69,6 +69,51 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                 models: ["deepseek-chat", "deepseek-reasoner"],
                 credential_count: 1
               }} = OpenAICompatible.discover(profile)
+
+      assert FakeTransport.last_request().method == :get
+      assert FakeTransport.last_request().body == nil
+    end
+
+    test "allows a valid empty model list" do
+      FakeTransport.set_models(~s({"data":[]}))
+      {:ok, profile} = Profile.fetch(:deepseek)
+
+      assert {:ok, %{status: :configured, models: [], credential_count: 1, error: nil}} =
+               OpenAICompatible.discover(profile)
+    end
+
+    test "fails closed for every malformed model response" do
+      {:ok, profile} = Profile.fetch(:deepseek)
+
+      malformed = [
+        "not-json",
+        "null",
+        "[]",
+        ~s({}),
+        ~s({"data":null}),
+        ~s({"data":{}}),
+        ~s({"data":[42]}),
+        ~s({"data":[{}]}),
+        ~s({"data":[{"id":null}]}),
+        ~s({"data":[{"id":""}]})
+      ]
+
+      for body <- malformed do
+        FakeTransport.set_models(body)
+
+        assert {:ok, %{status: :error, models: [], credential_count: 1, error: error}} =
+                 OpenAICompatible.discover(profile)
+
+        assert is_binary(error)
+      end
+    end
+
+    test "bounds model response accumulation" do
+      FakeTransport.set_models(~s({"data":[{"id":"too-large"}]}))
+      {:ok, profile} = Profile.fetch(:deepseek)
+
+      assert {:ok, %{status: :error, error: "Model response exceeded 8 bytes"}} =
+               OpenAICompatible.discover(profile, max_response_bytes: 8)
     end
 
     test "folds a discovery failure into an error status" do
@@ -101,6 +146,46 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                %Frame{sequence: 1, kind: :text_delta, data: %{text: "Hello "}},
                %Frame{sequence: 2, kind: :text_delta, data: %{text: "there"}}
              ] = emitted
+    end
+
+    test "flushes a short text delta while the transport remains silent" do
+      previous_bytes = Application.get_env(:rey_code, :openai_compatible_chunk_bytes)
+      Application.put_env(:rey_code, :openai_compatible_chunk_bytes, 1_000)
+      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 50)
+      token = make_ref()
+      test_pid = self()
+
+      on_exit(fn ->
+        if previous_bytes do
+          Application.put_env(:rey_code, :openai_compatible_chunk_bytes, previous_bytes)
+        else
+          Application.delete_env(:rey_code, :openai_compatible_chunk_bytes)
+        end
+      end)
+
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"content":"latency bounded"}}]}\n\n),
+        {:pause, test_pid, token},
+        "data: [DONE]\n\n"
+      ])
+
+      task =
+        Task.async(fn ->
+          OpenAICompatible.stream(runtime(), request(), fn frame ->
+            send(test_pid, {:frame, frame})
+            :ok
+          end)
+        end)
+
+      assert_receive {:transport_paused, ^token, producer}, 500
+
+      assert_receive {:frame, %Frame{kind: :text_delta, data: %{text: "latency bounded"}}},
+                     500
+
+      assert Task.yield(task, 0) == nil
+      send(producer, {token, :resume})
+      assert {:ok, %Response{text: "latency bounded"}} = Task.await(task, 1_000)
+      refute_receive {:frame, %Frame{kind: :text_delta, data: %{text: "latency bounded"}}}
     end
 
     test "starts emitted frame sequence from request.resume_from" do
@@ -232,9 +317,12 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       assert [%{"id" => "call-9", "type" => "function"}] =
                body["messages"] |> Enum.at(2) |> Map.get("tool_calls")
+
+      assert FakeTransport.last_request().method == :post
+      assert is_binary(FakeTransport.last_request().body)
     end
 
-    test "normalizes malformed tool-call arguments to an empty map" do
+    test "rejects malformed tool-call arguments as an incomplete tool response" do
       FakeTransport.set_stream([
         # Truncated JSON…
         ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-a","index":0,"function":{"name":"bash","arguments":"{\\"cmd\\""}}]}}]}\n\n),
@@ -245,14 +333,75 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
       ])
 
-      {:ok, %Response{tool_calls: calls}} =
-        OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+      assert {:error,
+              %{
+                "category" => "protocol_error",
+                "message" => "Provider returned an invalid streaming response"
+              }} = OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+    end
 
-      assert [
-               %ToolCall{id: "call-a", tool: "bash", arguments: %{}},
-               %ToolCall{id: "call-b", tool: "list", arguments: %{}},
-               %ToolCall{id: "call-c", tool: "glob", arguments: %{}}
-             ] = calls
+    test "fails closed for malformed and content-free successful streams" do
+      invalid_streams = [
+        [],
+        [": keepalive\n\n"],
+        ["data: [DONE]\n\n"],
+        [~s(data: {"choices":[],"usage":{"prompt_tokens":1}}\n\n), "data: [DONE]\n\n"],
+        ["data: not-json\n\n"],
+        [~s(data: {"choices":[42]}\n\n)],
+        [
+          ~s(data: {"choices":[{"delta":{"content":"prefix"}}]}\n\n),
+          ~s(data: {"choices":[{"delta":{},"finish_reason":42}]}\n\n)
+        ],
+        [~s(data: {"choices":[{"delta":{"content":42}}]}\n\n)],
+        [~s(data: {"choices":[{"delta":{"tool_calls":{}}}]}\n\n)]
+      ]
+
+      for chunks <- invalid_streams do
+        FakeTransport.set_stream(chunks)
+
+        assert {:error,
+                %{
+                  "category" => "protocol_error",
+                  "message" => "Provider returned an invalid streaming response"
+                }} = OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+      end
+    end
+
+    test "does not expose malformed provider data in protocol errors" do
+      FakeTransport.set_stream(["data: provider-secret-payload\n\n"])
+
+      assert {:error, error} =
+               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+      assert error["category"] == "protocol_error"
+      refute inspect(error) =~ "provider-secret-payload"
+    end
+
+    test "accepts clean EOF after text but rejects malformed or unterminated tails" do
+      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
+      text = ~s(data: {"choices":[{"delta":{"content":"valid"}}]}\n\n)
+
+      FakeTransport.set_stream([text])
+
+      assert {:ok, %Response{text: "valid"}} =
+               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+      for tail <- ["data: not-json\n\n", "data: {\"choices\":"] do
+        FakeTransport.set_stream([text, tail])
+
+        assert {:error, %{"category" => "protocol_error"}} =
+                 OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+      end
+    end
+
+    test "rejects a started tool that never completes" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"function":{"name":"read","arguments":"{}"}}]}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      assert {:error, %{"category" => "protocol_error"}} =
+               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
     end
 
     test "returns a missing credentials error when the key is unset" do
@@ -386,14 +535,15 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
   alias ReyCode.Provider.OpenAICompatible.HTTP
 
   def clear do
-    [:models, :stream, :models_status, :stream_status, :last_body]
+    [:models, :stream, :models_status, :stream_status, :last_request]
     |> Enum.each(&:persistent_term.erase({__MODULE__, &1}))
   end
 
   def set_models(body), do: :persistent_term.put({__MODULE__, :models}, body)
   def set_stream(chunks), do: :persistent_term.put({__MODULE__, :stream}, chunks)
 
-  def last_body, do: :persistent_term.get({__MODULE__, :last_body}, "{}")
+  def last_body, do: last_request().body || ""
+  def last_request, do: :persistent_term.get({__MODULE__, :last_request}, %{})
 
   def set_models_status(status, body),
     do: :persistent_term.put({__MODULE__, :models_status}, {status, body})
@@ -402,17 +552,28 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
     do: :persistent_term.put({__MODULE__, :stream_status}, {status, body})
 
   @impl true
-  def start(url, _headers, body, _opts) do
-    :persistent_term.put({__MODULE__, :last_body}, body)
+  def start(method, url, headers, body, _opts) do
+    :persistent_term.put(
+      {__MODULE__, :last_request},
+      %{method: method, url: url, headers: headers, body: body}
+    )
 
     if String.ends_with?(url, "/models"), do: {:ok, :models}, else: {:ok, :stream}
   end
 
   @impl true
-  def collect(:models, _on_event, acc) do
+  def collect(:models, on_event, acc) do
     case :persistent_term.get({__MODULE__, :models_status}, nil) do
-      {status, body} -> {:error, HTTP.status_error(status, body)}
-      nil -> {:ok, acc, %{status: 200, body: :persistent_term.get({__MODULE__, :models}, "")}}
+      {status, body} ->
+        {:error, HTTP.status_error(status, body)}
+
+      nil ->
+        body = :persistent_term.get({__MODULE__, :models}, "")
+
+        case on_event.({:partial, body}, acc) do
+          {:cont, next} -> {:ok, next, %{status: 200, headers: []}}
+          {:halt, _next, error} -> {:error, error}
+        end
     end
   end
 
@@ -430,15 +591,23 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
     chunks = :persistent_term.get({__MODULE__, :stream}, [])
 
     result =
-      Enum.reduce_while(chunks, {:ok, acc}, fn chunk, {:ok, current} ->
-        case on_event.({:partial, chunk}, current) do
-          {:cont, next} -> {:cont, {:ok, next}}
-          {:halt, _acc, error} -> {:halt, {:error, error}}
-        end
+      Enum.reduce_while(chunks, {:ok, acc}, fn
+        {:pause, test_pid, token}, {:ok, current} ->
+          send(test_pid, {:transport_paused, token, self()})
+
+          receive do
+            {^token, :resume} -> {:cont, {:ok, current}}
+          end
+
+        chunk, {:ok, current} ->
+          case on_event.({:partial, chunk}, current) do
+            {:cont, next} -> {:cont, {:ok, next}}
+            {:halt, _acc, error} -> {:halt, {:error, error}}
+          end
       end)
 
     case result do
-      {:ok, final} -> {:ok, final, %{status: 200, body: ""}}
+      {:ok, final} -> {:ok, final, %{status: 200, headers: []}}
       {:error, error} -> {:error, error}
     end
   end

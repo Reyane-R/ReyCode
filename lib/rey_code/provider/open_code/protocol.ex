@@ -116,6 +116,18 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
     end
   end
 
+  @doc false
+  @spec next_flush_deadline(State.t()) :: integer() | nil
+  def next_flush_deadline(%State{text_buffer: buffer}),
+    do: TextBuffer.next_flush_deadline(buffer)
+
+  @doc false
+  @spec flush_due(State.t(), (Frame.t() -> :ok), integer()) :: State.t()
+  def flush_due(%State{} = state, emit, now) do
+    {chunks, buffer} = TextBuffer.flush_due(state.text_buffer, now)
+    state |> Map.put(:text_buffer, buffer) |> emit_text_chunks(chunks, emit)
+  end
+
   @spec finish(State.t()) :: {:ok, map()} | {:error, map()}
   def finish(%State{output_limit_exceeded?: true} = state) do
     {:error, error("output_too_large", "OpenCode output exceeded #{state.output_limit} bytes")}

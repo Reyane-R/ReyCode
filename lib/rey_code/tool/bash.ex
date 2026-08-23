@@ -101,9 +101,12 @@ defmodule ReyCode.Tool.Bash do
   end
 
   defp own_and_drain(proc) do
-    :ok = Exile.Process.change_pipe_owner(proc, :stdout, self())
-    :ok = Exile.Process.change_pipe_owner(proc, :stderr, self())
-    drain(proc)
+    with :ok <- Exile.Process.change_pipe_owner(proc, :stdout, self()),
+         :ok <- Exile.Process.change_pipe_owner(proc, :stderr, self()) do
+      drain(proc)
+    else
+      {:error, _reason} -> %{new_capture() | broken?: true, truncated?: true}
+    end
   end
 
   defp exit_status({:ok, status}) when is_integer(status), do: status

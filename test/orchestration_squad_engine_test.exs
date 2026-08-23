@@ -101,6 +101,34 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert Enum.uniq_by(analyst_attempts, & &1.logical_work_id) |> length() == 1
   end
 
+  test "permanent worker failure terminates after one attempt without hanging" do
+    Application.put_env(:rey_code, :squad_simulator,
+      delay_ms: 0,
+      seed: 790,
+      failure_plan: %{{"stories", "analyst", 1} => :permanent}
+    )
+
+    room_id = ReyCode.snapshot().room_order |> hd()
+    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Do not retry permanent errors", :squad)
+
+    turn = wait_until_terminal(turn_id)
+    snapshot = ReyCode.snapshot()
+
+    analyst_attempts =
+      turn.invocation_order
+      |> Enum.map(&snapshot.invocations[&1])
+      |> Enum.filter(&(&1.phase == "stories"))
+
+    assert turn.status == :failed
+    assert Enum.map(analyst_attempts, & &1.attempt) == [1]
+    assert hd(analyst_attempts).error["retryable"] == false
+
+    refute Enum.any?(EventStore.load(), fn event ->
+             event.type == :squad_retry_scheduled and event.data["turn_id"] == turn_id and
+               event.data["kind"] == "provider_retry"
+           end)
+  end
+
   test "configures fixed squad role runtimes durably" do
     room_id = ReyCode.snapshot().room_order |> hd()
 

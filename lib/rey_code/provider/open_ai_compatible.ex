@@ -28,6 +28,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   @default_chunk_bytes 8_192
   @default_chunk_latency_ms 50
+  @default_model_response_bytes 1_000_000
+  @protocol_error_message "Provider returned an invalid streaming response"
 
   @doc "Discovers one profile's availability and models without exposing its key."
   @spec discover(Profile.t(), keyword()) :: {:ok, map()}
@@ -66,51 +68,287 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
-  defp run(%StreamContext{profile: profile, emit: emit} = context) do
+  defp run(%StreamContext{profile: profile} = context) do
     timeout = profile.request_timeout_ms
+    owner = Process.alias()
+    tag = make_ref()
+    deadline = monotonic_ms() + timeout
+    state = initial_state(profile, context.request)
+    task = Task.async(fn -> stream_task(context, owner, tag) end)
 
-    task = Task.async(fn -> stream_task(context) end)
-
-    case Task.yield(task, timeout) do
-      {:ok, {:ok, state}} ->
-        state = flush_pending(state, emit)
-        {:ok, response(state)}
-
-      {:ok, {:error, _} = error} ->
-        error
-
-      {:exit, reason} ->
-        _ = Task.shutdown(task, :brutal_kill)
+    try do
+      await_stream(task, tag, context, state, deadline, timeout)
+    rescue
+      exception ->
+        Task.shutdown(task, :brutal_kill)
+        cancel_relays(tag, cancellation_error())
 
         {:error,
-         HTTP.error("launch_failed", "Provider stream crashed: #{inspect(reason)}", false)}
+         HTTP.error(
+           "launch_failed",
+           "Provider stream crashed: #{Exception.message(exception)}",
+           false
+         )}
+    catch
+      kind, reason ->
+        Task.shutdown(task, :brutal_kill)
+        cancel_relays(tag, cancellation_error())
 
-      nil ->
-        _ = Task.shutdown(task, :brutal_kill)
-        {:error, HTTP.error("timeout", "Provider did not finish within #{timeout}ms", true)}
+        {:error,
+         HTTP.error(
+           "launch_failed",
+           "Provider stream crashed: #{Exception.format_banner(kind, reason)}",
+           false
+         )}
+    after
+      Process.unalias(owner)
     end
   end
 
-  defp stream_task(%StreamContext{} = context) do
-    stream_task(context, initial_state(context.profile, context.request))
-  end
-
-  defp stream_task(%StreamContext{} = context, state) do
+  defp stream_task(%StreamContext{} = context, owner, tag) do
     %{transport: transport, profile: profile, key: key, body: body} = context
+    transport_owner = self()
     url = base_url(profile) <> "/chat/completions"
     headers = authorization(key) ++ [{"Accept", "text/event-stream"}]
     opts = [timeout: profile.request_timeout_ms]
 
-    with {:ok, ref} <- transport.start(url, headers, body, opts),
-         {:ok, state, _final} <-
+    with {:ok, ref} <- transport.start(:post, url, headers, body, opts),
+         {:ok, _acc, final} <-
            transport.collect(
              ref,
-             &handle_event(&1, &2, context),
-             state
+             &relay_event(owner, transport_owner, tag, &1, &2),
+             :ok
            ) do
-      {:ok, state}
+      {:ok, final}
     end
   end
+
+  defp relay_event(owner, transport_owner, tag, event, acc) do
+    acknowledgement = make_ref()
+    monitor = Process.monitor(transport_owner)
+    send(owner, {tag, :event, self(), acknowledgement, event})
+
+    receive do
+      {^tag, ^acknowledgement, :cont} ->
+        Process.demonitor(monitor, [:flush])
+        {:cont, acc}
+
+      {^tag, ^acknowledgement, {:halt, error}} ->
+        Process.demonitor(monitor, [:flush])
+        {:halt, acc, error}
+
+      {:DOWN, ^monitor, :process, ^transport_owner, _reason} ->
+        {:halt, acc, cancellation_error()}
+    end
+  end
+
+  defp await_stream(task, tag, context, state, deadline, timeout) do
+    now = monotonic_ms()
+    flush_deadline = TextBuffer.next_flush_deadline(state.text_buffer)
+
+    cond do
+      now >= deadline ->
+        timeout(task, tag, timeout)
+
+      is_integer(flush_deadline) and now >= flush_deadline ->
+        flush_and_continue(task, tag, context, state, deadline, timeout, now)
+
+      true ->
+        receive_for = min_deadline(deadline, flush_deadline) - now
+        receive_stream(task, tag, context, state, deadline, timeout, receive_for)
+    end
+  end
+
+  defp flush_and_continue(task, tag, context, state, deadline, timeout, now) do
+    case call_before(fn -> flush_due(state, context.emit, now) end, deadline) do
+      {:ok, next} -> await_stream(task, tag, context, next, deadline, timeout)
+      {:error, error} -> halt_stream(task, tag, error, deadline)
+      :timeout -> timeout(task, tag, timeout)
+    end
+  end
+
+  defp receive_stream(task, tag, context, state, deadline, timeout, receive_for) do
+    receive do
+      {^tag, :event, relay, acknowledgement, event} ->
+        handle_relay_event(
+          task,
+          tag,
+          context,
+          state,
+          deadline,
+          timeout,
+          {relay, acknowledgement, event}
+        )
+
+      {reference, result} when reference == task.ref ->
+        Process.demonitor(task.ref, [:flush])
+        finish_stream(result, state, context.emit, deadline, timeout)
+
+      {:DOWN, reference, :process, _pid, reason} when reference == task.ref ->
+        {:error,
+         HTTP.error("launch_failed", "Provider stream crashed: #{inspect(reason)}", false)}
+    after
+      max(receive_for, 0) -> await_stream(task, tag, context, state, deadline, timeout)
+    end
+  end
+
+  defp handle_relay_event(
+         task,
+         tag,
+         context,
+         state,
+         deadline,
+         timeout,
+         {relay, acknowledgement, event}
+       ) do
+    result = call_before(fn -> handle_event(event, state, context) end, deadline)
+    handle_relay_result(result, task, tag, context, deadline, timeout, relay, acknowledgement)
+  end
+
+  defp handle_relay_result(
+         {:ok, {:cont, next}},
+         task,
+         tag,
+         context,
+         deadline,
+         timeout,
+         relay,
+         acknowledgement
+       ) do
+    send(relay, {tag, acknowledgement, :cont})
+    await_stream(task, tag, context, next, deadline, timeout)
+  end
+
+  defp handle_relay_result(
+         {:ok, {:halt, _next, error}},
+         task,
+         tag,
+         _context,
+         deadline,
+         _timeout,
+         relay,
+         acknowledgement
+       ),
+       do: halt_relay(task, tag, deadline, relay, acknowledgement, error)
+
+  defp handle_relay_result(
+         {:error, error},
+         task,
+         tag,
+         _context,
+         deadline,
+         _timeout,
+         relay,
+         acknowledgement
+       ),
+       do: halt_relay(task, tag, deadline, relay, acknowledgement, error)
+
+  defp handle_relay_result(
+         :timeout,
+         task,
+         tag,
+         _context,
+         deadline,
+         timeout,
+         relay,
+         acknowledgement
+       ),
+       do: halt_relay(task, tag, deadline, relay, acknowledgement, timeout_error(timeout))
+
+  defp halt_relay(task, tag, deadline, relay, acknowledgement, error) do
+    send(relay, {tag, acknowledgement, {:halt, error}})
+    halt_stream(task, tag, error, deadline)
+  end
+
+  defp finish_stream({:ok, _final}, state, emit, deadline, timeout) do
+    with :ok <- valid_stream?(state),
+         do: finish_valid_stream(state, emit, deadline, timeout)
+  end
+
+  defp finish_stream({:error, error}, _state, _emit, _deadline, _timeout), do: {:error, error}
+
+  defp finish_valid_stream(state, emit, deadline, timeout) do
+    case call_before(fn -> flush_pending(state, emit) end, deadline) do
+      {:ok, state} -> {:ok, response(state)}
+      {:error, error} -> {:error, error}
+      :timeout -> {:error, timeout_error(timeout)}
+    end
+  end
+
+  defp halt_stream(task, tag, error, deadline) do
+    remaining = max(deadline - monotonic_ms(), 0)
+    _ = Task.yield(task, remaining) || Task.shutdown(task, :brutal_kill)
+    cancel_relays(tag, error)
+    {:error, error}
+  end
+
+  defp timeout(task, tag, timeout) do
+    error = timeout_error(timeout)
+    cancel_relays(tag, error)
+    _ = Task.shutdown(task, :brutal_kill)
+    cancel_relays(tag, error)
+    {:error, error}
+  end
+
+  defp timeout_error(timeout),
+    do: HTTP.error("timeout", "Provider did not finish within #{timeout}ms", true)
+
+  defp cancellation_error,
+    do: HTTP.error("request_cancelled", "Provider request was cancelled", false)
+
+  defp min_deadline(deadline, nil), do: deadline
+  defp min_deadline(deadline, flush_deadline), do: min(deadline, flush_deadline)
+
+  defp cancel_relays(tag, error) do
+    receive do
+      {^tag, :event, relay, acknowledgement, _event} ->
+        send(relay, {tag, acknowledgement, {:halt, error}})
+        cancel_relays(tag, error)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp call_before(fun, deadline) do
+    remaining = max(deadline - monotonic_ms(), 0)
+
+    task =
+      Task.async(fn ->
+        try do
+          {:ok, fun.()}
+        rescue
+          exception ->
+            {:error,
+             HTTP.error(
+               "launch_failed",
+               "Provider callback crashed: #{Exception.message(exception)}",
+               false
+             )}
+        catch
+          kind, reason ->
+            {:error,
+             HTTP.error(
+               "launch_failed",
+               "Provider callback crashed: #{Exception.format_banner(kind, reason)}",
+               false
+             )}
+        end
+      end)
+
+    case Task.yield(task, remaining) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} ->
+        result
+
+      {:exit, reason} ->
+        {:error,
+         HTTP.error("launch_failed", "Provider callback exited: #{inspect(reason)}", false)}
+
+      nil ->
+        :timeout
+    end
+  end
+
+  defp monotonic_ms, do: System.monotonic_time(:millisecond)
 
   defp handle_event({:partial, data}, state, %StreamContext{emit: emit}) do
     bytes = state.bytes + byte_size(data)
@@ -126,7 +364,12 @@ defmodule ReyCode.Provider.OpenAICompatible do
           apply_event(event, acc, emit)
         end)
 
-      {:cont, state}
+      if state.protocol_error do
+        {:error, error} = protocol_error()
+        {:halt, state, error}
+      else
+        {:cont, state}
+      end
     end
   end
 
@@ -144,12 +387,16 @@ defmodule ReyCode.Provider.OpenAICompatible do
       arguments_json: arguments_json(tool_state)
     }
 
-    put_in(state.tool_calls[id], call)
+    state
+    |> put_in([:tool_calls, id], call)
+    |> Map.put(:valid_output?, true)
   end
 
   defp apply_event({:usage, usage}, state, _emit), do: %{state | usage: usage}
   defp apply_event(:done, state, _emit), do: state
-  defp apply_event(:ignore, state, _emit), do: state
+
+  defp apply_event({:protocol_error, reason}, state, _emit),
+    do: %{state | protocol_error: reason}
 
   defp tool_call_id(tool_state) do
     id = tool_state["id"]
@@ -198,11 +445,20 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp buffer_text(state, text, emit) do
     {chunks, buffer} = TextBuffer.append(state.text_buffer, text)
-    state |> Map.put(:text_buffer, buffer) |> emit_text_chunks(chunks, emit)
+
+    state
+    |> Map.put(:text_buffer, buffer)
+    |> Map.put(:valid_output?, true)
+    |> emit_text_chunks(chunks, emit)
   end
 
   defp flush_pending(state, emit) do
     {chunks, buffer} = TextBuffer.flush(state.text_buffer)
+    state |> Map.put(:text_buffer, buffer) |> emit_text_chunks(chunks, emit)
+  end
+
+  defp flush_due(state, emit, now) do
+    {chunks, buffer} = TextBuffer.flush_due(state.text_buffer, now)
     state |> Map.put(:text_buffer, buffer) |> emit_text_chunks(chunks, emit)
   end
 
@@ -237,48 +493,85 @@ defmodule ReyCode.Provider.OpenAICompatible do
       bytes: 0,
       max_bytes: profile.max_output_bytes,
       usage: nil,
-      protocol_activity?: false,
+      protocol_error: nil,
+      valid_output?: false,
       text: "",
       tool_calls: %{}
     }
   end
+
+  defp valid_stream?(%{protocol_error: nil, parser: parser, valid_output?: true}) do
+    case SSE.finish(parser) do
+      :ok -> :ok
+      {:error, _reason} -> protocol_error()
+    end
+  end
+
+  defp valid_stream?(_state), do: protocol_error()
+
+  defp protocol_error,
+    do: {:error, HTTP.error("protocol_error", @protocol_error_message, false)}
 
   defp fetch_models(profile, opts) do
     transport = Keyword.get(opts, :transport, transport())
     url = base_url(profile) <> "/models"
     headers = authorization(System.get_env(profile.key_env)) ++ [{"Accept", "application/json"}]
     opts_list = [timeout: Keyword.get(opts, :timeout, profile.request_timeout_ms)]
+    max_bytes = Keyword.get(opts, :max_response_bytes, @default_model_response_bytes)
 
-    with {:ok, ref} <- transport.start(url, headers, "", opts_list),
-         {:ok, _acc, %{status: status, body: body}} when status in 200..299 <-
-           transport.collect(ref, &ignore_event/2, nil) do
-      {:ok, parse_models(body)}
+    with {:ok, ref} <- transport.start(:get, url, headers, nil, opts_list),
+         {:ok, body, %{status: status}} when status in 200..299 <-
+           transport.collect(ref, &collect_model_bytes(&1, &2, max_bytes), ""),
+         {:ok, models} <- parse_models(body) do
+      {:ok, models}
     else
-      {:ok, _acc, %{status: status, body: body}} ->
-        {:error, "model list request failed (HTTP #{status}): #{truncate(body, 200)}"}
+      {:ok, _body, %{status: status}} ->
+        {:error, "model list request returned HTTP status #{inspect(status)}"}
 
       {:error, %{"message" => message}} ->
         {:error, message}
 
       {:error, reason} ->
         {:error, "model list request failed: #{inspect(reason)}"}
+
+      other ->
+        {:error, "model list request returned an invalid result: #{inspect(other)}"}
     end
   end
 
-  defp ignore_event(_event, acc), do: {:cont, acc}
+  defp collect_model_bytes({:partial, data}, body, max_bytes) do
+    if byte_size(body) + byte_size(data) > max_bytes do
+      {:halt, body,
+       HTTP.error("response_too_large", "Model response exceeded #{max_bytes} bytes", false)}
+    else
+      {:cont, body <> data}
+    end
+  end
 
   defp parse_models(body) do
     case Jason.decode(body) do
       {:ok, %{"data" => models}} when is_list(models) ->
-        models
-        |> Enum.map(& &1["id"])
-        |> Enum.filter(&is_binary/1)
-        |> Enum.reject(&(&1 in [nil, ""]))
-        |> Enum.uniq()
-        |> Enum.sort()
+        parse_model_entries(models)
 
-      _ ->
-        []
+      {:ok, _invalid} ->
+        {:error, "model list response has an invalid schema"}
+
+      {:error, _reason} ->
+        {:error, "model list response is not valid JSON"}
+    end
+  end
+
+  defp parse_model_entries(models) do
+    Enum.reduce_while(models, {:ok, []}, fn
+      %{"id" => id}, {:ok, acc} when is_binary(id) and id != "" ->
+        {:cont, {:ok, [id | acc]}}
+
+      _invalid, _acc ->
+        {:halt, {:error, "model list response has an invalid schema"}}
+    end)
+    |> case do
+      {:ok, ids} -> {:ok, ids |> Enum.uniq() |> Enum.sort()}
+      {:error, _message} = error -> error
     end
   end
 
@@ -384,14 +677,15 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp base_url(profile), do: String.trim_trailing(profile.base_url, "/")
 
   defp transport do
-    Application.get_env(:rey_code, :openai_compatible_transport, OpenAICompatible.HTTPC)
+    Application.get_env(
+      :rey_code,
+      :openai_compatible_transport,
+      ReyCode.Provider.OpenAICompatible.HTTPC
+    )
   end
 
   defp blank?(nil), do: true
   defp blank?(""), do: true
   defp blank?(value) when is_binary(value), do: String.trim(value) == ""
   defp blank?(_), do: true
-
-  defp truncate(value, limit) when byte_size(value) <= limit, do: value
-  defp truncate(value, limit), do: TextBuffer.truncate_utf8(value, limit)
 end

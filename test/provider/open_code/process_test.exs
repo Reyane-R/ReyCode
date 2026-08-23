@@ -84,6 +84,59 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     refute_receive {:frame, %{data: %{text: "environment executable"}}}
   end
 
+  test "flushes a short text delta while OpenCode remains silent" do
+    path =
+      fake_opencode("""
+      #{json_line("latency bounded")}
+      sleep 2
+      """)
+
+    previous_timeout = Application.get_env(:rey_code, :provider_timeout_ms)
+    previous_bytes = Application.get_env(:rey_code, :opencode_text_chunk_bytes)
+    previous_latency = Application.get_env(:rey_code, :opencode_text_chunk_latency_ms)
+    Application.put_env(:rey_code, :provider_timeout_ms, 5_000)
+    Application.put_env(:rey_code, :opencode_text_chunk_bytes, 1_000)
+    Application.put_env(:rey_code, :opencode_text_chunk_latency_ms, 50)
+    test_pid = self()
+
+    on_exit(fn ->
+      restore_env(:provider_timeout_ms, previous_timeout)
+      restore_env(:opencode_text_chunk_bytes, previous_bytes)
+      restore_env(:opencode_text_chunk_latency_ms, previous_latency)
+      File.rm(path)
+    end)
+
+    task =
+      Task.async(fn ->
+        OpenCode.stream(runtime(path), request(), fn frame ->
+          send(test_pid, {:frame, frame})
+          :ok
+        end)
+      end)
+
+    assert_receive {:frame, %{kind: :text_delta, data: %{text: "latency bounded"}}}, 1_000
+    assert Task.yield(task, 0) == nil
+    assert {:ok, _response} = Task.await(task, 5_000)
+    refute_receive {:frame, %{kind: :text_delta, data: %{text: "latency bounded"}}}
+  end
+
+  test "total deadline bounds a slow reducer" do
+    started_at = System.monotonic_time(:millisecond)
+
+    assert {:error, %{"category" => "timeout"}} =
+             Process.collect(
+               [:item],
+               fn _item, acc ->
+                 Elixir.Process.sleep(500)
+                 {:cont, acc}
+               end,
+               :ok,
+               50
+             )
+
+    assert System.monotonic_time(:millisecond) - started_at < 300
+  end
+
   test "rejects an executable whose fingerprint changed before launch" do
     marker =
       Path.join(System.tmp_dir!(), "opencode_changed_#{System.unique_integer([:positive])}")
@@ -159,9 +212,11 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       File.rm(child_pid_path)
     end)
 
-    assert {:error, %{"category" => "timeout"}} =
-             OpenCode.stream(runtime(path), request(), fn _frame -> :ok end)
+    task =
+      Task.async(fn -> OpenCode.stream(runtime(path), request(), fn _frame -> :ok end) end)
 
+    assert eventually(fn -> File.exists?(child_pid_path) end)
+    assert {:error, %{"category" => "timeout"}} = Task.await(task, 5_000)
     child_pid = child_pid_path |> File.read!() |> String.trim()
     assert eventually(fn -> not process_alive?(child_pid) end)
   end

@@ -12,7 +12,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.EventStore
-  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.{Engine, Squad}
   alias ReyCode.Test.Wait
 
   @agent_registry __MODULE__.AgentRegistry
@@ -163,6 +163,39 @@ defmodule ReyCode.AgentLoopApprovalTest do
     resolve_all_waiting(turn_id, decision, attempts - 1)
   end
 
+  defp approve_until_phase(turn_id, phase, attempts \\ 200)
+
+  defp approve_until_phase(_turn_id, phase, 0),
+    do: flunk("turn never reached #{phase}")
+
+  defp approve_until_phase(turn_id, phase, attempts) do
+    projection = Engine.snapshot(@engine)
+    turn = projection.turns[turn_id]
+
+    cond do
+      turn && turn.squad.phase == phase ->
+        turn
+
+      turn && turn.status in [:completed, :partial, :failed, :cancelled] ->
+        turn
+
+      waiting = List.first(waiting_invocations(projection, turn_id)) ->
+        assert :ok =
+                 Engine.resolve_tool_run(
+                   waiting.id,
+                   waiting.pending_tool_review.request_id,
+                   :approve,
+                   @engine
+                 )
+
+        approve_until_phase(turn_id, phase, attempts - 1)
+
+      true ->
+        Process.sleep(25)
+        approve_until_phase(turn_id, phase, attempts - 1)
+    end
+  end
+
   test "approve executes the persisted request once and completes the conversation", %{
     workspace_a: workspace
   } do
@@ -192,6 +225,41 @@ defmodule ReyCode.AgentLoopApprovalTest do
 
     assert Enum.all?(snapshot.turns[turn_id].invocation_order, fn id ->
              snapshot.invocations[id].status == :completed
+           end)
+  end
+
+  test "a permanent squad failure cancels an approval-waiting sibling", %{
+    workspace_a: workspace
+  } do
+    Application.put_env(
+      :rey_code,
+      :squad_simulator,
+      seed: 0,
+      delay_ms: 0,
+      failure_plan: %{{"specification", "gherkin_author", 1} => :permanent},
+      tool_requests: [
+        %{tool: "write", arguments: %{"path" => "out.txt", "content" => "approved-content"}}
+      ]
+    )
+
+    store = start_engine()
+    assert {:ok, room_id} = Engine.create_room("Failed Squad Approval", workspace, @engine)
+
+    role_ids = Enum.map(Squad.roles(), & &1.id)
+    assert :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, @engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Fail safely", :squad, @engine)
+
+    _turn = approve_until_phase(turn_id, "specification")
+    turn = Wait.terminal_turn(@engine, turn_id)
+    projection = Engine.snapshot(@engine)
+    invocations = Enum.map(turn.invocation_order, &projection.invocations[&1])
+
+    assert turn.status == :failed
+    refute Enum.any?(invocations, &(&1.status == :waiting_tool_approval))
+    assert Enum.any?(invocations, &(&1.status == :cancelled))
+
+    assert Enum.any?(events_of_type(store, :invocation_cancelled), fn event ->
+             event.data["turn_id"] == turn_id
            end)
   end
 

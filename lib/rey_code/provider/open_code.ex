@@ -61,7 +61,12 @@ defmodule ReyCode.Provider.OpenCode do
     args = Process.launch_args(request)
     stream = Process.open_stream(executable, args, request.workspace, prompt)
 
-    case Process.collect(stream, &Protocol.fold(&1, &2, emit), state, timeout) do
+    collect_opts = [
+      next_deadline: &Protocol.next_flush_deadline/1,
+      on_deadline: &Protocol.flush_due(&1, emit, &2)
+    ]
+
+    case Process.collect(stream, &Protocol.fold(&1, &2, emit), state, timeout, collect_opts) do
       {:ok, final_state} ->
         case Protocol.finish(final_state) do
           {:ok, _metadata} -> {:ok, Response.new([])}

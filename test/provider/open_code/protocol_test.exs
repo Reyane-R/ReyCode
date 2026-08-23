@@ -240,6 +240,31 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
     assert frames == []
   end
 
+  test "flush_due emits pending text at its absolute latency deadline" do
+    previous_bytes = Application.get_env(:rey_code, :opencode_text_chunk_bytes)
+    previous_latency = Application.get_env(:rey_code, :opencode_text_chunk_latency_ms)
+    Application.put_env(:rey_code, :opencode_text_chunk_bytes, 1_000)
+    Application.put_env(:rey_code, :opencode_text_chunk_latency_ms, 50)
+
+    on_exit(fn ->
+      restore_env(:opencode_text_chunk_bytes, previous_bytes)
+      restore_env(:opencode_text_chunk_latency_ms, previous_latency)
+    end)
+
+    emit = emit_frame(self())
+    state = Protocol.new(request())
+    assert {:cont, state} = Protocol.fold({:stdout, text_record("deadline text")}, state, emit)
+    deadline = Protocol.next_flush_deadline(state)
+
+    assert is_integer(deadline)
+    assert Protocol.flush_due(state, emit, deadline - 1) == state
+    refute_receive {:frame, _frame}
+
+    state = Protocol.flush_due(state, emit, deadline)
+    assert_receive {:frame, %{kind: :text_delta, data: %{text: "deadline text"}}}
+    assert Protocol.next_flush_deadline(state) == nil
+  end
+
   test "keeps full diagnostics when under the limit" do
     {result, _frames} =
       run([

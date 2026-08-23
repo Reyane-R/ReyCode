@@ -3,13 +3,14 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTP do
 
   alias ReyCode.Provider.OpenAICompatible.HTTP
 
+  @type method :: :get | :post
   @type url :: binary()
   @type headers :: [{binary(), binary()}]
   @type event :: {:partial, binary()}
   @type on_event :: (event, term() -> {:cont, term()} | {:halt, term(), map()})
-  @type final :: %{status: non_neg_integer(), body: binary()}
+  @type final :: %{status: non_neg_integer(), headers: headers()}
 
-  @callback start(url, headers, body :: binary(), keyword()) ::
+  @callback start(method, url, headers, body :: binary() | nil, keyword()) ::
               {:ok, term()} | {:error, map()}
 
   @callback collect(term(), on_event, term()) :: {:ok, term(), final} | {:error, map()}

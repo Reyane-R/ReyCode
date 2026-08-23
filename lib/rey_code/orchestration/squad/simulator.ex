@@ -3,6 +3,7 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
 
   alias ReyCode.Orchestration.{Squad, SquadFSM}
   alias ReyCode.Provider.Simulator.Scenario
+  alias ReyCode.Retry
 
   @type result :: %{
           outcome: :completed | :failed,
@@ -111,7 +112,8 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
   defp resolve_sample(step, failure) do
     step = record_failure(step, failure)
 
-    if retryable?(failure) and step.attempt < Squad.retry_limit() do
+    if Retry.retryable?(Scenario.failure_error(failure)) and
+         step.attempt < Squad.retry_limit() do
       execute_role(%{step | attempt: step.attempt + 1})
     else
       {:error, step.context}
@@ -140,9 +142,6 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
     result = %{result | failures: [failure_entry | result.failures]}
     %{step | context: %{context | result: result}}
   end
-
-  defp retryable?(failure),
-    do: failure in [:retryable, :timeout, :invalid_output, :after_frame]
 
   defp transition(context, phase, outputs) do
     case phase_transition(context.state, phase, outputs) do

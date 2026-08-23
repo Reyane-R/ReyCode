@@ -62,7 +62,7 @@ defmodule ReyCode.Provider.OpenCode.DiscoveryTest do
     Enum.each(failures, fn {failure, expected} ->
       runner = fn _executable, ["models"], _opts -> failure end
 
-      assert {:error, expected} =
+      assert {:error, ^expected} =
                Discovery.discover(executable: "/tmp/opencode", runner: runner)
     end)
   end

@@ -33,6 +33,35 @@ defmodule ReyCode.Orchestration.Squad.SimulatorTest do
     assert Simulator.run(scenario) == Simulator.run(scenario)
   end
 
+  test "retryable failures stop at the shared attempt limit" do
+    scenario =
+      Scenario.new(
+        seed: 8,
+        failure_plan: %{
+          {"stories", "analyst", 1} => :retryable,
+          {"stories", "analyst", 2} => :retryable
+        }
+      )
+
+    result = Simulator.run(scenario)
+
+    assert result.outcome == :failed
+    assert Enum.map(result.failures, & &1.attempt) == [1, 2]
+  end
+
+  test "retries simulator worker crashes using the shared classification" do
+    scenario =
+      Scenario.new(
+        seed: 9,
+        failure_plan: %{{"stories", "analyst", 1} => :crash}
+      )
+
+    result = Simulator.run(scenario)
+
+    assert result.outcome == :completed
+    assert [%{attempt: 1, kind: :crash}] = result.failures
+  end
+
   property "monte carlo runs always terminate inside the step bound" do
     check all(
             seed <- integer(1..10_000),

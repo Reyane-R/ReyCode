@@ -553,6 +553,7 @@ defmodule ReyCode.Orchestration.Engine do
 
     next = Persistence.append_and_apply!(state, entries)
     run = next.projection.invocations[invocation.id].tool_runs[run.id]
+    next = if authorization == :ask, do: advance_turn(next, invocation.turn_id), else: next
 
     action = if authorization == :denied, do: :denied, else: authorization_action(authorization)
     {:reply, {:ok, {action, run}}, next}
@@ -877,7 +878,7 @@ defmodule ReyCode.Orchestration.Engine do
       error = %{
         "category" => "interrupted",
         "message" => "The provider invocation was interrupted and cannot be replayed safely",
-        "retryable" => true
+        "retryable" => false
       }
 
       finalize_invocation(state, invocation.id, {:failed, error})
@@ -926,9 +927,21 @@ defmodule ReyCode.Orchestration.Engine do
         open_invocations(state, turn, specs)
 
       {:complete, outcome} ->
-        entry = EventEntries.turn_completed(turn, outcome)
+        cancellable =
+          if outcome == :failed, do: cancellable_turn_invocations(state, turn), else: []
 
-        state = Persistence.append_and_apply!(state, [entry])
+        invocation_ids = Enum.map(cancellable, & &1.id)
+
+        entries =
+          EventEntries.cancel_invocations(cancellable, "Cancelled because the turn failed") ++
+            [EventEntries.turn_completed(turn, outcome)]
+
+        state =
+          state
+          |> Persistence.append_and_apply!(entries)
+          |> Admission.drop_executions(invocation_ids)
+          |> kill_cancelled_executions(invocation_ids)
+
         room = state.projection.rooms[turn.room_id]
 
         if room.queued_turn_ids == [] do

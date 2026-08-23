@@ -22,13 +22,13 @@ defmodule ReyCode.Provider.Simulator do
 
     case sample.failure do
       :retryable ->
-        {:error, error("simulated_retryable", true)}
+        {:error, Scenario.failure_error(:retryable)}
 
       :permanent ->
-        {:error, error("simulated_permanent", false)}
+        {:error, Scenario.failure_error(:permanent)}
 
       :timeout ->
-        {:error, error("simulated_timeout", true)}
+        {:error, Scenario.failure_error(:timeout)}
 
       :crash ->
         exit(:simulated_provider_crash)
@@ -54,7 +54,7 @@ defmodule ReyCode.Provider.Simulator do
   defp success(request, scenario, delay, emit) do
     case next_tool_call(request, scenario) do
       %ToolCall{} = call ->
-        text = "Simulated tool round for #{call.tool}."
+        text = if request.mode == :squad, do: "", else: "Simulated tool round for #{call.tool}."
         response = Response.new(text: text, tool_calls: [call], usage: %{"tool_rounds" => true})
 
         emit_result(text, response, emit, delay, scenario.emit_process, request.resume_from + 1)
@@ -142,7 +142,7 @@ defmodule ReyCode.Provider.Simulator do
         data: %{text: "partial simulated output"}
       })
 
-    {:error, error("simulated_after_frame", true)}
+    {:error, Scenario.failure_error(:after_frame)}
   end
 
   defp squad_output(request, scenario) do
@@ -218,14 +218,6 @@ defmodule ReyCode.Provider.Simulator do
       {_mode, _label, _id} ->
         "Another route for \"#{prompt}\" is to prototype contrasting approaches and compare the evidence."
     end
-  end
-
-  defp error(category, retryable) do
-    %{
-      "category" => category,
-      "message" => "Injected simulator failure",
-      "retryable" => retryable
-    }
   end
 
   defp maybe_sleep(0), do: :ok

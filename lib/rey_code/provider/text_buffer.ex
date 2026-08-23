@@ -63,6 +63,23 @@ defmodule ReyCode.Provider.TextBuffer do
     drain(buffer, true, now)
   end
 
+  @doc "Returns the absolute monotonic deadline for pending text, or nil when empty."
+  @spec next_flush_deadline(t()) :: integer() | nil
+  def next_flush_deadline(%__MODULE__{pending: ""}), do: nil
+
+  def next_flush_deadline(%__MODULE__{started_at: started_at, chunk_latency_ms: latency})
+      when is_integer(started_at),
+      do: started_at + latency
+
+  @doc "Flushes pending text only when its latency deadline has been reached."
+  @spec flush_due(t(), integer()) :: {[binary()], t()}
+  def flush_due(buffer, now \\ System.monotonic_time(:millisecond)) do
+    case next_flush_deadline(buffer) do
+      deadline when is_integer(deadline) and now >= deadline -> flush(buffer, now)
+      _deadline -> {[], buffer}
+    end
+  end
+
   @doc "Truncates a binary to a byte limit without returning a partial UTF-8 codepoint."
   @spec truncate_utf8(binary(), non_neg_integer()) :: binary()
   def truncate_utf8(_value, 0), do: ""

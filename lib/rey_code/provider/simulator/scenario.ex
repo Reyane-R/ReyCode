@@ -68,6 +68,15 @@ defmodule ReyCode.Provider.Simulator.Scenario do
     %{delay_ms: delay, failure: normalize_failure(failure)}
   end
 
+  @doc false
+  @spec failure_error(failure_kind()) :: map()
+  def failure_error(:retryable), do: error("simulated_retryable", true)
+  def failure_error(:permanent), do: error("simulated_permanent", false)
+  def failure_error(:timeout), do: error("simulated_timeout", true)
+  def failure_error(:invalid_output), do: error("invalid_squad_output", true)
+  def failure_error(:after_frame), do: error("simulated_after_frame", true)
+  def failure_error(:crash), do: error("worker_exit", true)
+
   defp random_failure(rate, _value) when rate <= 0.0, do: nil
 
   defp random_failure(rate, value) do
@@ -86,4 +95,12 @@ defmodule ReyCode.Provider.Simulator.Scenario do
        do: value
 
   defp normalize_failure(_value), do: nil
+
+  defp error(category, retryable) do
+    %{
+      "category" => category,
+      "message" => "Injected simulator failure",
+      "retryable" => retryable
+    }
+  end
 end

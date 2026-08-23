@@ -137,21 +137,6 @@ defmodule ReyCode.Orchestration.EventEntries do
   @doc "Builds the invocation and turn events required to cancel a turn."
   @spec cancel_turn(map(), [map()], String.t()) :: [event_entry()]
   def cancel_turn(turn, invocations, reason) do
-    cancellation_entries =
-      Enum.map(invocations, fn invocation ->
-        invocation_event(
-          :invocation_cancelled,
-          %{
-            "invocation_id" => invocation.id,
-            "message_id" => invocation.message_id,
-            "turn_id" => invocation.turn_id,
-            "room_id" => invocation.room_id,
-            "reason" => reason
-          },
-          invocation
-        )
-      end)
-
     turn_entry =
       event(
         :turn_completed,
@@ -162,7 +147,25 @@ defmodule ReyCode.Orchestration.EventEntries do
         turn.id
       )
 
-    cancellation_entries ++ [turn_entry]
+    cancel_invocations(invocations, reason) ++ [turn_entry]
+  end
+
+  @doc "Builds cancellation events for active invocations without completing their turn."
+  @spec cancel_invocations([map()], String.t()) :: [event_entry()]
+  def cancel_invocations(invocations, reason) do
+    Enum.map(invocations, fn invocation ->
+      invocation_event(
+        :invocation_cancelled,
+        %{
+          "invocation_id" => invocation.id,
+          "message_id" => invocation.message_id,
+          "turn_id" => invocation.turn_id,
+          "room_id" => invocation.room_id,
+          "reason" => reason
+        },
+        invocation
+      )
+    end)
   end
 
   @doc "Builds the event that marks a queued invocation as running."

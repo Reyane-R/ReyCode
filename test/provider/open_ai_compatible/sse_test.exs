@@ -52,9 +52,11 @@ defmodule ReyCode.Provider.OpenAICompatible.SSETest do
     assert second_started["index"] == 1
   end
 
-  test "ignores malformed payloads without raising" do
-    {events, _parser} = SSE.feed(SSE.new(), "data: not-json\n\n")
-    assert events == [:ignore]
+  test "reports malformed payloads without raising or retaining their data" do
+    {events, parser} = SSE.feed(SSE.new(), "data: secret-not-json\n\n")
+    assert events == [{:protocol_error, :invalid_json}]
+    assert SSE.finish(parser) == {:error, :invalid_json}
+    refute inspect(events) =~ "secret"
   end
 
   test "ignores empty content deltas" do
@@ -116,11 +118,15 @@ defmodule ReyCode.Provider.OpenAICompatible.SSETest do
     assert [{:tool_started, "glob", _}] = SSE.feed(SSE.new(), by_string_index) |> elem(0)
 
     keyless = tool_calls_payload([%{"function" => %{"name" => "anon"}}])
-    assert {[], _parser} = SSE.feed(SSE.new(), keyless)
+
+    assert {[{:protocol_error, :invalid_tool_call}], _parser} =
+             SSE.feed(SSE.new(), keyless)
   end
 
   test "defers tool start until a name arrives and completes with accumulated arguments" do
-    unnamed = tool_calls_payload([%{"id" => "call-9", "function" => %{"arguments" => "{\"a\""}}])
+    unnamed =
+      tool_calls_payload([%{"id" => "call-9", "function" => %{"arguments" => "{\"a\":1}"}}])
+
     {[], parser} = SSE.feed(SSE.new(), unnamed)
 
     empty_arguments =
@@ -132,16 +138,16 @@ defmodule ReyCode.Provider.OpenAICompatible.SSETest do
 
     finish = ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
     assert [{:tool_completed, "edit", finished}] = SSE.feed(parser, finish) |> elem(0)
-    assert finished["arguments"] == ~s({"a")
+    assert finished["arguments"] == ~s({"a":1})
   end
 
   test "sorts started and completed calls across string indexes and id-only keys" do
     payload =
       tool_calls_payload([
         %{"id" => "call-z", "function" => %{"name" => "by_id"}},
-        %{"index" => "abc", "function" => %{"name" => "unparseable"}},
-        %{"index" => "10", "function" => %{"name" => "ten"}},
-        %{"index" => "2", "function" => %{"name" => "two"}}
+        %{"id" => "call-abc", "index" => "abc", "function" => %{"name" => "unparseable"}},
+        %{"id" => "call-10", "index" => "10", "function" => %{"name" => "ten"}},
+        %{"id" => "call-2", "index" => "2", "function" => %{"name" => "two"}}
       ])
 
     assert [
@@ -164,6 +170,138 @@ defmodule ReyCode.Provider.OpenAICompatible.SSETest do
   test "names tools from the top-level tool field" do
     payload = tool_calls_payload([%{"id" => "call-t", "tool" => "read"}])
     assert [{:tool_started, "read", _}] = SSE.feed(SSE.new(), payload) |> elem(0)
+  end
+
+  test "is total over malformed choice, content, usage, and tool shapes" do
+    malformed = [
+      ~s(data: null\n\n),
+      ~s(data: {}\n\n),
+      ~s(data: {"choices":{}}\n\n),
+      ~s(data: {"choices":[null]}\n\n),
+      ~s(data: {"choices":[{}]}\n\n),
+      ~s(data: {"choices":[{"delta":42}]}\n\n),
+      ~s(data: {"choices":[{"delta":{},"finish_reason":42}]}\n\n),
+      ~s(data: {"choices":[{"delta":{"content":42}}]}\n\n),
+      ~s(data: {"choices":[{"delta":{"tool_calls":{}}}]}\n\n),
+      ~s(data: {"choices":[],"usage":42}\n\n)
+    ]
+
+    for payload <- malformed do
+      assert {[{:protocol_error, _reason}], %SSE{}} = SSE.feed(SSE.new(), payload)
+    end
+  end
+
+  test "preserves UTF-8 bytes split between transport chunks" do
+    payload = ~s(data: {"choices":[{"delta":{"content":"café"}}]}\n\n)
+    split_at = :binary.match(payload, <<0xC3, 0xA9>>) |> elem(0) |> Kernel.+(1)
+    <<first::binary-size(split_at), second::binary>> = payload
+
+    assert {[], parser} = SSE.feed(SSE.new(), first)
+    assert {[{:text, "café"}], parser} = SSE.feed(parser, second)
+    assert SSE.finish(parser) == :ok
+  end
+
+  test "rejects unterminated tails and incomplete tools at EOF" do
+    {[], parser} = SSE.feed(SSE.new(), "data: {\"choices\":[]}")
+    assert SSE.finish(parser) == {:error, :unterminated_event}
+
+    payload =
+      tool_calls_payload([
+        %{"id" => "call-1", "index" => 0, "function" => %{"name" => "read", "arguments" => "{}"}}
+      ])
+
+    {_events, parser} = SSE.feed(SSE.new(), payload)
+    assert SSE.finish(parser) == {:error, :incomplete_tool_call}
+  end
+
+  test "treats DONE as terminal while allowing trailing comments" do
+    assert {[:done], parser} = SSE.feed(SSE.new(), "data: [DONE]\n\n")
+    assert {[], parser} = SSE.feed(parser, ": heartbeat\n\n")
+
+    assert {[{:protocol_error, :data_after_done}], parser} =
+             SSE.feed(parser, ~s(data: {"choices":[{"delta":{"content":"late"}}]}\n\n))
+
+    assert SSE.finish(parser) == {:error, :data_after_done}
+
+    {[_text], parser} =
+      SSE.feed(SSE.new(), ~s(data: {"choices":[{"delta":{"content":"ok"}}]}\n\n))
+
+    assert SSE.finish(%{parser | buffer: ": trailing heartbeat\n"}) == :ok
+
+    assert {[{:protocol_error, :data_after_done}], _parser} =
+             SSE.feed(
+               elem(SSE.feed(SSE.new(), "data: [DONE]\n\n"), 1),
+               ~s(data: {"choices":[]}\n\n)
+             )
+  end
+
+  test "rejects conflicting identity and tool fields across fragments" do
+    first =
+      tool_calls_payload([
+        %{
+          "id" => "call-1",
+          "index" => 0,
+          "type" => "function",
+          "function" => %{"name" => "read", "arguments" => "{"}
+        }
+      ])
+
+    {[_started], parser} = SSE.feed(SSE.new(), first)
+
+    conflicts = [
+      %{"id" => "call-2", "index" => 0, "function" => %{"arguments" => "}"}},
+      %{"id" => "call-1", "index" => 0, "type" => "other", "function" => %{}},
+      %{"id" => "call-1", "index" => 0, "function" => %{"name" => "bash"}}
+    ]
+
+    for conflict <- conflicts do
+      assert {[{:protocol_error, :invalid_tool_call}], _parser} =
+               SSE.feed(parser, tool_calls_payload([conflict]))
+    end
+
+    id_only =
+      tool_calls_payload([
+        %{"id" => "call-id", "function" => %{"name" => "read", "arguments" => "{"}}
+      ])
+
+    {[_started], parser} = SSE.feed(SSE.new(), id_only)
+
+    changed_key =
+      tool_calls_payload([
+        %{
+          "id" => "call-id",
+          "index" => 0,
+          "function" => %{"name" => "bash", "arguments" => "}"}
+        }
+      ])
+
+    assert {[{:protocol_error, :invalid_tool_call}], _parser} = SSE.feed(parser, changed_key)
+
+    invalid_type =
+      tool_calls_payload([
+        %{
+          "id" => "call-type",
+          "index" => 0,
+          "type" => "other",
+          "function" => %{"name" => "read", "arguments" => "{}"}
+        }
+      ])
+
+    assert {[{:protocol_error, :invalid_tool_call}], _parser} =
+             SSE.feed(SSE.new(), invalid_type)
+
+    conflicting_names =
+      tool_calls_payload([
+        %{
+          "id" => "call-names",
+          "index" => 0,
+          "tool" => "read",
+          "function" => %{"name" => "bash", "arguments" => "{}"}
+        }
+      ])
+
+    assert {[{:protocol_error, :invalid_tool_call}], _parser} =
+             SSE.feed(SSE.new(), conflicting_names)
   end
 
   defp tool_calls_payload(calls) do

@@ -29,12 +29,32 @@ defmodule ReyCode.Provider.TextBufferTest do
     assert buffer.started_at == nil
   end
 
-  test "latency-triggered flush emits the entire pending value" do
+  test "append observes an already-expired latency deadline" do
     buffer = TextBuffer.new(chunk_bytes: 8, chunk_latency_ms: 50)
     {[], buffer} = TextBuffer.append(buffer, "hello", 100)
 
     assert {["hello!"], buffer} = TextBuffer.append(buffer, "!", 150)
     assert buffer.pending == ""
+  end
+
+  test "pending text exposes one absolute deadline that later appends do not move" do
+    buffer = TextBuffer.new(chunk_bytes: 32, chunk_latency_ms: 50)
+    {[], buffer} = TextBuffer.append(buffer, "hello", 100)
+
+    assert TextBuffer.next_flush_deadline(buffer) == 150
+
+    {[], buffer} = TextBuffer.append(buffer, " world", 125)
+    assert TextBuffer.next_flush_deadline(buffer) == 150
+  end
+
+  test "flush_due enforces the deadline without another append" do
+    buffer = TextBuffer.new(chunk_bytes: 32, chunk_latency_ms: 50)
+    {[], buffer} = TextBuffer.append(buffer, "hello", 100)
+
+    assert {[], ^buffer} = TextBuffer.flush_due(buffer, 149)
+    assert {["hello"], buffer} = TextBuffer.flush_due(buffer, 150)
+    assert buffer.pending == ""
+    assert TextBuffer.next_flush_deadline(buffer) == nil
   end
 
   test "flush emits a pending short tail" do

@@ -20,7 +20,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
       invocations == [] or Enum.any?(invocations, &(&1.status in [:queued, :running])) ->
         :wait
 
-      failed_exhausted?(invocations) ->
+      newest_failed?(invocations) ->
         {:complete, :failed}
 
       not phase_outputs_complete?(turn.squad, phase, cycle) ->
@@ -75,9 +75,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
     |> Enum.map(fn {_logical_work_id, attempts} -> Enum.max_by(attempts, & &1.attempt) end)
   end
 
-  defp failed_exhausted?(invocations) do
-    Enum.any?(invocations, &(&1.status == :failed and &1.attempt >= Squad.retry_limit()))
-  end
+  defp newest_failed?(invocations), do: Enum.any?(invocations, &(&1.status == :failed))
 
   defp phase_outputs_complete?(squad, phase_index, cycle) do
     phase = Squad.phase(phase_index)

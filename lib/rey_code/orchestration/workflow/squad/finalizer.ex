@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Workflow.Squad.Finalizer do
   @moduledoc false
 
-  alias ReyCode.{Hashing, JSON}
+  alias ReyCode.{Hashing, JSON, Retry}
   alias ReyCode.Orchestration.{EventEntries, Squad}
   alias ReyCode.Orchestration.Squad.Output
 
@@ -35,7 +35,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad.Finalizer do
   defp failure_action(invocation, error) do
     failed_entry = EventEntries.invocation_terminal(invocation, {:failed, error})
 
-    if invocation.attempt < Squad.retry_limit() do
+    if Retry.retryable?(error) and invocation.attempt < Squad.retry_limit() do
       entries = [failed_entry, EventEntries.squad_provider_retry(invocation, error)]
       {:retry, entries, retry_spec(invocation)}
     else

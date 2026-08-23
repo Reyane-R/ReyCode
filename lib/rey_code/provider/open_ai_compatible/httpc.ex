@@ -7,103 +7,216 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
 
   @default_timeout 60_000
   @default_max_redirects 5
-  @default_chunk_bytes 8_192
 
   @type request_context :: %{
+          :method => HTTP.method(),
           :url => String.t(),
           :headers => [{String.t(), String.t()}],
-          :body => String.t(),
-          :timeout => non_neg_integer(),
+          :body => String.t() | nil,
+          :deadline => integer(),
           :max_redirects => non_neg_integer(),
-          :chunk_bytes => pos_integer()
+          :ssl => keyword()
         }
 
   @impl true
-  def start(url, headers, body, opts) do
+  def start(method, url, headers, body, opts)
+      when method in [:get, :post] and (is_binary(body) or is_nil(body)) do
     with :ok <- start_inets(),
-         :ok <- start_ssl() do
+         :ok <- start_ssl(),
+         :ok <- valid_body?(method, body) do
       timeout = Keyword.get(opts, :timeout, @default_timeout)
 
       {:ok,
        %{
+         method: method,
          url: to_string(url),
          headers: normalize_headers(headers),
-         body: to_string(body),
-         timeout: timeout,
+         body: body,
+         deadline: monotonic_ms() + timeout,
          max_redirects: Keyword.get(opts, :max_redirects, @default_max_redirects),
-         chunk_bytes: Keyword.get(opts, :chunk_bytes, @default_chunk_bytes)
+         ssl: Keyword.get(opts, :ssl, tls_options())
        }}
     else
       {:error, reason} -> {:error, HTTP.error("launch_failed", inspect(reason), false)}
     end
   end
 
+  def start(_method, _url, _headers, _body, _opts) do
+    {:error, HTTP.error("launch_failed", "Invalid HTTP request", false)}
+  end
+
   @impl true
   def collect(%{} = context, on_event, acc) do
-    collect(context, context.url, context.headers, context.body, on_event, acc, 0)
+    owner = self()
+    result_tag = make_ref()
+
+    {collector, monitor} =
+      spawn_monitor(fn ->
+        owner_monitor = Process.monitor(owner)
+
+        case collect(
+               context,
+               context.url,
+               context.headers,
+               context.body,
+               on_event,
+               acc,
+               0,
+               owner_monitor
+             ) do
+          :owner_down -> :ok
+          result -> send(owner, {result_tag, result})
+        end
+      end)
+
+    receive do
+      {^result_tag, result} ->
+        Process.demonitor(monitor, [:flush])
+        result
+
+      {:DOWN, ^monitor, :process, ^collector, reason} ->
+        {:error,
+         HTTP.error("request_failed", "Transport collector exited: #{inspect(reason)}", false)}
+    end
   end
 
   def collect(_invalid, _on_event, _acc) do
     {:error, HTTP.error("request_failed", "Invalid transport context", false)}
   end
 
-  defp collect(context, url, headers, body, on_event, acc, redirects) when redirects >= 0 do
-    request = {to_charlist(url), headers, ~c"application/json", body}
-    http_opts = [timeout: context.timeout, autoredirect: false, ssl: ssl_opts()]
+  defp collect(context, url, headers, body, on_event, acc, redirects, owner_monitor)
+       when redirects >= 0 do
+    with {:ok, timeout} <- remaining_timeout(context.deadline),
+         {:ok, request_id} <-
+           request(context.method, url, headers, body, timeout, context.ssl) do
+      await_response(request_id, context, on_event, acc, %{
+        url: url,
+        headers: headers,
+        body: body,
+        redirects: redirects,
+        owner_monitor: owner_monitor
+      })
+    else
+      {:error, %{} = error} -> {:error, error}
+      {:error, reason} -> {:error, HTTP.error("request_failed", inspect(reason), false)}
+    end
+  end
 
-    case :httpc.request(:post, request, http_opts, []) do
-      {:ok, {{_version, status, _reason}, response_headers, response_body}} ->
-        response_body_binary = to_string(response_body)
+  defp request(method, url, headers, body, timeout, ssl) do
+    request = request_tuple(method, url, headers, body)
+    http_opts = [timeout: timeout, connect_timeout: timeout, autoredirect: false, ssl: ssl]
+    request_opts = [sync: false, stream: :self, body_format: :binary]
 
-        case status do
-          status when status in 200..299 ->
-            emit_chunks(response_body_binary, context.chunk_bytes, on_event, acc)
-            |> finalize_collect(status, response_body_binary)
+    :httpc.request(method, request, http_opts, request_opts)
+  end
 
-          status when status in 300..399 ->
-            maybe_follow_redirect(
-              status,
-              response_headers,
-              %{
-                url: url,
-                headers: headers,
-                body: body,
-                context: context,
-                on_event: on_event,
-                acc: acc,
-                redirects: redirects
-              }
-            )
+  defp request_tuple(:get, url, headers, nil), do: {to_charlist(url), headers}
 
-          status ->
-            {:error, HTTP.status_error(status, response_body_binary)}
+  defp request_tuple(:post, url, headers, body),
+    do: {to_charlist(url), headers, ~c"application/json", body}
+
+  defp await_response(request_id, context, on_event, acc, request) do
+    case remaining_timeout(context.deadline) do
+      {:ok, timeout} -> receive_response(request_id, context, on_event, acc, request, timeout)
+      {:error, error} -> cancel_and_error(request_id, error)
+    end
+  end
+
+  defp receive_response(request_id, context, on_event, acc, request, timeout) do
+    receive do
+      {:http, {^request_id, :stream_start, response_headers}} ->
+        await_stream(request_id, context, on_event, acc, request, response_headers)
+
+      {:http, {^request_id, {{_version, status, _reason}, response_headers, body}}} ->
+        handle_complete_response(status, response_headers, body, context, on_event, acc, request)
+
+      {:http, {^request_id, {:error, reason}}} ->
+        {:error, request_error(reason)}
+
+      {:DOWN, owner_monitor, :process, _owner, _reason}
+      when owner_monitor == request.owner_monitor ->
+        cancel_and_drain(request_id)
+        :owner_down
+    after
+      timeout ->
+        cancel_and_error(request_id, timeout_error())
+    end
+  end
+
+  defp await_stream(request_id, context, on_event, acc, request, response_headers) do
+    case remaining_timeout(context.deadline) do
+      {:ok, timeout} ->
+        receive do
+          {:http, {^request_id, :stream, data}} when is_binary(data) ->
+            case call_before(on_event, {:partial, data}, acc, context.deadline) do
+              {:ok, {:cont, next}} ->
+                await_stream(
+                  request_id,
+                  context,
+                  on_event,
+                  next,
+                  request,
+                  response_headers
+                )
+
+              {:ok, {:halt, _next, error}} ->
+                cancel_and_error(request_id, error)
+
+              {:error, error} ->
+                cancel_and_error(request_id, error)
+            end
+
+          {:http, {^request_id, :stream_end, end_headers}} ->
+            headers = normalize_response_headers(end_headers || response_headers)
+            {:ok, acc, %{status: 200, headers: headers}}
+
+          {:http, {^request_id, {:error, reason}}} ->
+            {:error, request_error(reason)}
+
+          {:DOWN, owner_monitor, :process, _owner, _reason}
+          when owner_monitor == request.owner_monitor ->
+            cancel_and_drain(request_id)
+            :owner_down
+        after
+          timeout ->
+            cancel_and_error(request_id, timeout_error())
         end
 
-      {:error, reason} ->
-        {:error, HTTP.error("request_failed", inspect(reason), false)}
+      {:error, error} ->
+        cancel_and_error(request_id, error)
     end
   end
 
-  defp emit_chunks(body, chunk_bytes, on_event, acc) do
-    chunks = split_chunks(to_string(body), chunk_bytes)
+  defp handle_complete_response(status, response_headers, body, context, on_event, acc, _request)
+       when status in 200..299 do
+    case call_before(on_event, {:partial, IO.iodata_to_binary(body)}, acc, context.deadline) do
+      {:ok, {:cont, next}} ->
+        {:ok, next, %{status: status, headers: normalize_response_headers(response_headers)}}
 
-    Enum.reduce_while(chunks, {:cont, acc}, fn chunk, {:cont, current} ->
-      case on_event.({:partial, chunk}, current) do
-        {:cont, next} -> {:cont, {:cont, next}}
-        {:halt, next, error} -> {:halt, {:error, error, next}}
-      end
-    end)
-    |> case do
-      {:cont, final} -> {:ok, final}
-      {:error, error, _next} -> {:error, error}
+      {:ok, {:halt, _next, error}} ->
+        {:error, error}
+
+      {:error, error} ->
+        {:error, error}
     end
   end
 
-  defp finalize_collect(result, status, body) do
-    case result do
-      {:ok, final} -> {:ok, final, %{status: status, body: body}}
-      {:error, error} -> {:error, error}
-    end
+  defp handle_complete_response(status, response_headers, _body, context, on_event, acc, request)
+       when status in 300..399 do
+    maybe_follow_redirect(status, response_headers, %{
+      url: request.url,
+      headers: request.headers,
+      body: request.body,
+      context: context,
+      on_event: on_event,
+      acc: acc,
+      redirects: request.redirects,
+      owner_monitor: request.owner_monitor
+    })
+  end
+
+  defp handle_complete_response(status, _headers, body, _context, _on_event, _acc, _request) do
+    {:error, HTTP.status_error(status, IO.iodata_to_binary(body))}
   end
 
   defp maybe_follow_redirect(status, response_headers, request) do
@@ -135,7 +248,8 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
           request.body,
           request.on_event,
           request.acc,
-          request.redirects + 1
+          request.redirects + 1,
+          request.owner_monitor
         )
     end
   end
@@ -212,21 +326,86 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     end)
   end
 
-  defp split_chunks(data, chunk_size) do
-    chunk_size = max(1, chunk_size)
-    split_chunks(to_string(data), chunk_size, [])
+  defp normalize_response_headers(headers) do
+    Enum.map(headers, fn {name, value} -> {to_string(name), to_string(value)} end)
   end
 
-  defp split_chunks("", _chunk_size, _chunks), do: []
+  defp valid_body?(:get, nil), do: :ok
+  defp valid_body?(:post, body) when is_binary(body), do: :ok
+  defp valid_body?(_method, _body), do: {:error, :invalid_request_body}
 
-  defp split_chunks(data, chunk_size, chunks) when byte_size(data) <= chunk_size do
-    Enum.reverse([data | chunks])
+  defp remaining_timeout(deadline) do
+    case deadline - monotonic_ms() do
+      remaining when remaining > 0 -> {:ok, remaining}
+      _expired -> {:error, timeout_error()}
+    end
   end
 
-  defp split_chunks(data, chunk_size, chunks) do
-    <<chunk::binary-size(chunk_size), rest::binary>> = data
-    split_chunks(rest, chunk_size, [chunk | chunks])
+  defp timeout_error,
+    do: HTTP.error("timeout", "HTTP request exceeded its deadline", true)
+
+  defp request_error(:timeout), do: timeout_error()
+  defp request_error(reason), do: HTTP.error("request_failed", inspect(reason), false)
+
+  defp cancel_and_error(request_id, error) do
+    cancel_and_drain(request_id)
+    {:error, error}
   end
+
+  defp cancel_and_drain(request_id) do
+    _ = :httpc.cancel_request(request_id)
+    drain_request_messages(request_id)
+  end
+
+  defp call_before(on_event, event, acc, deadline) do
+    with {:ok, timeout} <- remaining_timeout(deadline) do
+      task =
+        Task.async(fn ->
+          try do
+            {:ok, on_event.(event, acc)}
+          rescue
+            exception ->
+              {:error,
+               HTTP.error(
+                 "request_failed",
+                 "Transport callback crashed: #{Exception.message(exception)}",
+                 false
+               )}
+          catch
+            kind, reason ->
+              {:error,
+               HTTP.error(
+                 "request_failed",
+                 "Transport callback crashed: #{Exception.format_banner(kind, reason)}",
+                 false
+               )}
+          end
+        end)
+
+      case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+        {:ok, result} ->
+          result
+
+        {:exit, reason} ->
+          {:error,
+           HTTP.error("request_failed", "Transport callback exited: #{inspect(reason)}", false)}
+
+        nil ->
+          {:error, timeout_error()}
+      end
+    end
+  end
+
+  defp drain_request_messages(request_id) do
+    receive do
+      {:http, {^request_id, _message}} -> drain_request_messages(request_id)
+      {:http, {^request_id, _kind, _message}} -> drain_request_messages(request_id)
+    after
+      0 -> :ok
+    end
+  end
+
+  defp monotonic_ms, do: System.monotonic_time(:millisecond)
 
   defp start_inets do
     case :inets.start() do
@@ -244,12 +423,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     end
   end
 
-  defp ssl_opts do
-    [verify: :verify_peer, depth: 3, cacerts: cacerts()]
-  end
-
-  defp cacerts do
-    _ = :public_key.cacerts_load()
-    :public_key.cacerts_get()
-  end
+  @doc false
+  @spec tls_options() :: keyword()
+  def tls_options, do: [depth: 3] ++ :httpc.ssl_verify_host_options(true)
 end
