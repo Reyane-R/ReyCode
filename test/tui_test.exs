@@ -118,7 +118,7 @@ defmodule ReyCode.TUITest do
 
   test "adds a directive to the running squad and shows it in status" do
     previous = Application.get_env(:rey_code, :squad_simulator)
-    Application.put_env(:rey_code, :squad_simulator, delay_ms: 1_000, seed: 654)
+    Application.put_env(:rey_code, :squad_simulator, delay_ms: 60_000, seed: 654)
 
     room_id = default_room_id()
     role_ids = Enum.map(Squad.roles(), & &1.id)
