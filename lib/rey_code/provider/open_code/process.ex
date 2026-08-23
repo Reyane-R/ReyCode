@@ -2,7 +2,12 @@ defmodule ReyCode.Provider.OpenCode.Process do
   @moduledoc "Launches the OpenCode CLI and streams raw output within a total deadline."
 
   alias ReyCode.Provider.Request
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Environment
+
+  @default_env_allowlist []
+  @default_cpu_seconds 900
+  @default_open_files 1_024
 
   @spec launch_args(Request.t()) :: [binary()]
   def launch_args(%Request{} = request) do
@@ -17,10 +22,9 @@ defmodule ReyCode.Provider.OpenCode.Process do
     ]
   end
 
-  @spec open_stream(binary(), [binary()], binary(), binary()) :: Enumerable.t()
-  def open_stream(executable, args, workspace, prompt) do
-    {wrapper, wrapped_args, env} =
-      Environment.wrap(executable, args, environment_opts())
+  @spec open_stream(binary(), [binary()], binary(), binary(), keyword()) :: Enumerable.t()
+  def open_stream(executable, args, workspace, prompt, environment_opts) do
+    {wrapper, wrapped_args, env} = Environment.wrap(executable, args, environment_opts)
 
     exile_stream([wrapper | wrapped_args],
       input: [prompt],
@@ -81,14 +85,18 @@ defmodule ReyCode.Provider.OpenCode.Process do
     end
   end
 
-  @doc false
-  @spec environment_opts() :: keyword()
-  def environment_opts do
+  @doc """
+  Builds the sandboxed environment options for OpenCode child processes from
+  the injected runtime configuration.
+  """
+  @spec environment_opts(ReyCode.RuntimeConfig.t() | nil) :: keyword()
+  def environment_opts(config) do
     [
       source: System.get_env(),
-      additional_names: Application.get_env(:rey_code, :opencode_env_allowlist, []),
-      cpu_seconds: Application.get_env(:rey_code, :opencode_cpu_seconds, 900),
-      open_files: Application.get_env(:rey_code, :opencode_open_files, 1_024)
+      additional_names:
+        RuntimeConfig.policy(config, :opencode_env_allowlist, @default_env_allowlist),
+      cpu_seconds: RuntimeConfig.policy(config, :opencode_cpu_seconds, @default_cpu_seconds),
+      open_files: RuntimeConfig.policy(config, :opencode_open_files, @default_open_files)
     ]
   end
 

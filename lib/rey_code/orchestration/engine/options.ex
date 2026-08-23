@@ -1,6 +1,8 @@
 defmodule ReyCode.Orchestration.Engine.Options do
   @moduledoc "Normalizes engine execution limits and default participant configuration."
 
+  alias ReyCode.RuntimeConfig
+
   @participant_templates [
     %{
       "id" => "builder",
@@ -23,25 +25,23 @@ defmodule ReyCode.Orchestration.Engine.Options do
   ]
 
   @doc "Returns validated global and workspace execution limits."
-  @spec execution_limits(keyword()) :: map()
-  def execution_limits(opts) do
+  @spec execution_limits(keyword(), RuntimeConfig.t()) :: map()
+  def execution_limits(opts, config \\ RuntimeConfig.fresh()) do
     %{
-      global_concurrency:
-        execution_limit(opts, :global_concurrency, :global_concurrency, :infinity, false),
+      global_concurrency: execution_limit(opts, config, :global_concurrency, :infinity, false),
       workspace_concurrency:
         execution_limit(
           opts,
-          :workspace_concurrency,
+          config,
           :workspace_concurrency,
           :infinity,
           false
         ),
-      global_queue_limit:
-        execution_limit(opts, :global_queue_limit, :global_queue_limit, :infinity, true),
+      global_queue_limit: execution_limit(opts, config, :global_queue_limit, :infinity, true),
       workspace_queue_limit:
         execution_limit(
           opts,
-          :workspace_queue_limit,
+          config,
           :workspace_queue_limit,
           :infinity,
           true
@@ -50,16 +50,16 @@ defmodule ReyCode.Orchestration.Engine.Options do
   end
 
   @doc "Builds the fixed participant templates with the configured default provider."
-  @spec default_participants() :: [map()]
-  def default_participants do
+  @spec default_participants(RuntimeConfig.t()) :: [map()]
+  def default_participants(config \\ RuntimeConfig.fresh()) do
     provider =
-      Application.get_env(:rey_code, :default_provider, :unconfigured) |> Atom.to_string()
+      config |> RuntimeConfig.policy(:default_provider, :unconfigured) |> Atom.to_string()
 
     Enum.map(@participant_templates, &Map.put(&1, "provider", provider))
   end
 
-  defp execution_limit(opts, option, application_key, default, allow_zero?) do
-    value = Keyword.get(opts, option, Application.get_env(:rey_code, application_key, default))
+  defp execution_limit(opts, config, option, default, allow_zero?) do
+    value = Keyword.get(opts, option, RuntimeConfig.policy(config, option, default))
     minimum = if allow_zero?, do: 0, else: 1
 
     if value == :infinity or (is_integer(value) and value >= minimum) do

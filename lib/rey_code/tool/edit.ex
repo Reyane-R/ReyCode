@@ -10,21 +10,27 @@ defmodule ReyCode.Tool.Edit do
   """
   @behaviour ReyCode.Tool
 
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Tool.{Request, Result, Support}
 
   @max_bytes_default 512_000
 
-  defp max_bytes, do: Application.get_env(:rey_code, :tool_edit_max_bytes, @max_bytes_default)
-
   @impl true
-  def run(%Request{arguments: arguments} = request, _opts) do
+  def run(%Request{arguments: arguments} = request, opts) do
     path = Support.arg(arguments, :path)
     old = Support.arg(arguments, :old_string)
     new = Support.arg(arguments, :new_string, "")
 
+    max_bytes =
+      RuntimeConfig.policy(
+        Keyword.fetch!(opts, :policy),
+        :tool_edit_max_bytes,
+        @max_bytes_default
+      )
+
     with :ok <- Support.require_present(path, :missing_path),
          :ok <- Support.require_present(old, :missing_old_string),
-         :ok <- require_size(old, new),
+         :ok <- require_size(old, new, max_bytes),
          {:ok, canonical} <- Support.within_roots(path, request) do
       replace_once(canonical, old, new)
     else
@@ -32,8 +38,8 @@ defmodule ReyCode.Tool.Edit do
     end
   end
 
-  defp require_size(old, new) do
-    if byte_size(old) + byte_size(new) > max_bytes(),
+  defp require_size(old, new, max_bytes) do
+    if byte_size(old) + byte_size(new) > max_bytes,
       do: {:error, :content_too_large},
       else: :ok
   end

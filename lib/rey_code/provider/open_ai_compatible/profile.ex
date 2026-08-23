@@ -5,7 +5,12 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
   A profile binds a display name, a base URL, and the environment variable that
   holds the API key. The key itself is read from the environment at invocation
   time and is never stored on the profile, in the catalog, or in the event log.
+
+  Profiles resolve against an injected runtime configuration. Callers that do
+  not provide one receive the validated schema defaults.
   """
+
+  alias ReyCode.RuntimeConfig
 
   @enforce_keys [:id, :name, :base_url, :key_env]
   defstruct [
@@ -28,18 +33,20 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
           max_prompt_bytes: pos_integer()
         }
 
-  @spec all() :: [t()]
-  def all do
-    configured = Application.get_env(:rey_code, :openai_compatible_providers, [])
+  @spec all(ReyCode.RuntimeConfig.t() | nil) :: [t()]
+  def all(config \\ nil) do
+    config = config || RuntimeConfig.fresh()
+    configured = RuntimeConfig.policy(config, :openai_compatible_providers, [])
     (built_in() ++ configured) |> Enum.uniq_by(& &1.id) |> Enum.map(&normalize/1)
   end
 
-  @spec ids() :: [atom()]
-  def ids, do: Enum.map(all(), & &1.id)
+  @spec ids(ReyCode.RuntimeConfig.t() | nil) :: [atom()]
+  def ids(config \\ nil), do: Enum.map(all(config), & &1.id)
 
-  @spec fetch(atom()) :: {:ok, t()} | {:error, :unknown_provider}
-  def fetch(id) do
-    case Enum.find(all(), &(&1.id == id)) do
+  @spec fetch(atom(), ReyCode.RuntimeConfig.t() | nil) ::
+          {:ok, t()} | {:error, :unknown_provider}
+  def fetch(id, config \\ nil) do
+    case Enum.find(all(config), &(&1.id == id)) do
       nil -> {:error, :unknown_provider}
       profile -> {:ok, profile}
     end

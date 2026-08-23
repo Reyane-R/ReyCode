@@ -7,34 +7,22 @@ defmodule ReyCode.Diagnostics do
   origin (scheme, host, and non-default port) so URL userinfo, paths, query values,
   and fragments never enter the report; malformed or non-HTTP(S) values are
   reported as unavailable without echoing the raw input. Callers may inject probes
-  for deterministic tests or use `snapshot/0` from a running application or
-  release CLI.
+  for deterministic tests; the release CLI supplies the frozen startup config.
   """
 
   alias ReyCode.Provider.{Catalog, Registry}
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Workspace
 
   @default_catalog_wait_ms 15_000
-  @default_limits %{
-    global_concurrency: 2,
-    global_queue_limit: 100,
-    max_checkpoint_bytes: 67_108_864,
-    max_replay_events: 2_000,
-    opencode_cpu_seconds: 900,
-    opencode_max_diagnostic_bytes: 64_000,
-    opencode_max_output_bytes: 10_000_000,
-    opencode_max_prompt_bytes: 128_000,
-    opencode_open_files: 1_024,
-    opencode_text_chunk_bytes: 8_192,
-    opencode_text_chunk_latency_ms: 50,
-    projection_checkpoint_interval: 500,
-    provider_discovery_command_timeout_ms: 5_000,
-    provider_discovery_output_bytes: 256_000,
-    provider_timeout_ms: 600_000,
-    squad_rework_budget: 3,
-    workspace_concurrency: 1,
-    workspace_queue_limit: 20
-  }
+  @limit_keys ~w(
+    global_concurrency global_queue_limit max_checkpoint_bytes max_replay_events
+    opencode_cpu_seconds opencode_max_diagnostic_bytes opencode_max_output_bytes
+    opencode_max_prompt_bytes opencode_open_files opencode_text_chunk_bytes
+    opencode_text_chunk_latency_ms projection_checkpoint_interval
+    provider_discovery_command_timeout_ms provider_discovery_output_bytes
+    provider_timeout_ms squad_rework_budget workspace_concurrency workspace_queue_limit
+  )a
 
   @type report :: %{
           app: map(),
@@ -50,8 +38,10 @@ defmodule ReyCode.Diagnostics do
   @doc "Builds a diagnostics snapshot without exposing application data or secrets."
   @spec snapshot(keyword()) :: report()
   def snapshot(opts \\ []) do
-    config = Keyword.get_lazy(opts, :config, fn -> Application.get_all_env(:rey_code) end)
-    {data_path, database_path} = resolved_paths(config, opts)
+    raw_config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
+    config = normalize_config(raw_config)
+    path_config = Keyword.get(opts, :path_config, raw_config)
+    {data_path, database_path} = resolved_paths(path_config, opts)
     path_probe = Keyword.get(opts, :path_probe, &probe_path/1)
     free_space_probe = Keyword.get(opts, :free_space_probe, &probe_free_space/1)
 
@@ -67,9 +57,9 @@ defmodule ReyCode.Diagnostics do
         database: path_report(database_path, path_probe, free_space_probe)
       },
       opencode: opencode_report(catalog_snapshot(opts)),
-      api_providers: api_providers_report(),
+      api_providers: api_providers_report(config),
       limits: limits(config),
-      security: %{workspace_roots: Workspace.roots()}
+      security: %{workspace_roots: workspace_roots(config)}
     }
   end
 
@@ -279,8 +269,8 @@ defmodule ReyCode.Diagnostics do
     }
   end
 
-  defp api_providers_report do
-    Enum.map(Registry.api_profiles(), fn profile ->
+  defp api_providers_report(config) do
+    Enum.map(Registry.api_profiles(config), fn profile ->
       %{
         id: profile.id,
         name: profile.name,
@@ -311,10 +301,19 @@ defmodule ReyCode.Diagnostics do
   defp explicit_port(_scheme, port), do: port
 
   defp limits(config) do
-    Map.new(@default_limits, fn {key, default} ->
-      {key, config_get(config, key, default)}
+    defaults = RuntimeConfig.declared_defaults()
+
+    Map.new(@limit_keys, fn key ->
+      {key, config_get(config, key, Map.fetch!(defaults, key))}
     end)
   end
+
+  defp workspace_roots(%RuntimeConfig{} = config), do: Workspace.roots(config)
+  defp workspace_roots(config), do: config_get(config, :workspace_roots) || [File.cwd!()]
+
+  defp normalize_config(%RuntimeConfig{} = config), do: config
+  defp normalize_config(config) when is_list(config), do: RuntimeConfig.fresh(config)
+  defp normalize_config(config) when is_map(config), do: RuntimeConfig.fresh(config)
 
   defp config_get(config, key, default \\ nil)
 

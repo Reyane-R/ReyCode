@@ -13,12 +13,13 @@ defmodule ReyCode.Provider.Simulator do
   alias ReyCode.Orchestration.Squad
   alias ReyCode.Provider.{Frame, Response, ToolCall}
   alias ReyCode.Provider.Simulator.Scenario
+  alias ReyCode.RuntimeConfig
 
   @impl true
-  def stream(_runtime, request, emit) do
-    scenario = Scenario.from_application()
+  def stream(runtime, request, emit) do
+    scenario = scenario_for(request, runtime)
     sample = Scenario.sample(scenario, request)
-    sample = regular_delay(request, sample)
+    sample = regular_delay(request, runtime, sample)
 
     case sample.failure do
       :retryable ->
@@ -223,10 +224,26 @@ defmodule ReyCode.Provider.Simulator do
   defp maybe_sleep(0), do: :ok
   defp maybe_sleep(delay), do: Process.sleep(delay)
 
-  defp regular_delay(%{mode: :squad}, sample), do: sample
+  # The engine freezes simulator policy into every invocation request. Direct
+  # provider callers can still resolve it from the runtime's injected config.
+  defp scenario_for(%{simulator_opts: opts}, _runtime) when is_list(opts),
+    do: Scenario.new(opts)
 
-  defp regular_delay(request, sample) do
-    delay = request.agent_delay_ms || Application.get_env(:rey_code, :agent_delay_ms, 0)
+  defp scenario_for(_request, runtime), do: scenario_from_config(runtime)
+
+  defp scenario_from_config(runtime) do
+    delay = RuntimeConfig.policy(runtime.config, :agent_delay_ms, 0)
+
+    runtime.config
+    |> RuntimeConfig.policy(:squad_simulator, [])
+    |> Keyword.put_new(:delay_ms, delay)
+    |> Scenario.new()
+  end
+
+  defp regular_delay(%{mode: :squad}, _runtime, sample), do: sample
+
+  defp regular_delay(request, runtime, sample) do
+    delay = request.agent_delay_ms || RuntimeConfig.policy(runtime.config, :agent_delay_ms, 0)
     %{sample | delay_ms: delay, failure: nil}
   end
 

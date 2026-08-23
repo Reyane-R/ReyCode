@@ -10,37 +10,33 @@ defmodule ReyCode.Tool.Grep do
   """
   @behaviour ReyCode.Tool
 
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Tool.{Request, Result, Support}
 
   @defaults [max_matches: 1_000, max_file_bytes: 512_000]
 
-  defp max_matches,
-    do: Application.get_env(:rey_code, :tool_grep_max_matches, @defaults[:max_matches])
-
-  defp max_file_bytes,
-    do: Application.get_env(:rey_code, :tool_grep_max_file_bytes, @defaults[:max_file_bytes])
-
   @impl true
-  def run(%Request{arguments: arguments} = request, _opts) do
+  def run(%Request{arguments: arguments} = request, opts) do
     pattern = Support.arg(arguments, :pattern)
     path = Support.arg(arguments, :path)
+    limits = limits(Keyword.fetch!(opts, :policy))
 
     with :ok <- Support.require_present(pattern, :missing_pattern),
          {:ok, regex} <- compile_pattern(pattern),
          {:ok, canonical} <- Support.within_roots(path, request) do
-      search(canonical, regex)
+      search(canonical, regex, limits)
     else
       {:error, reason} -> Result.error(reason)
     end
   end
 
-  defp search(root, regex) do
+  defp search(root, regex, limits) do
     acc = %{lines: [], matches: 0, files: 0, binary: 0, truncated?: false}
 
     acc =
       case File.lstat(root) do
-        {:ok, %File.Stat{type: :regular}} -> scan_file(root, regex, acc)
-        _other -> walk(root, regex, acc)
+        {:ok, %File.Stat{type: :regular}} -> scan_file(root, regex, acc, limits)
+        _other -> walk(root, regex, acc, limits)
       end
 
     Result.ok(Enum.reverse(acc.lines) |> Enum.join("\n"),
@@ -55,11 +51,11 @@ defmodule ReyCode.Tool.Grep do
 
   # Depth-first walk that refuses to descend into symlinks, so a link out of
   # the workspace can never widen what is scanned.
-  defp walk(dir, regex, acc) do
+  defp walk(dir, regex, acc, limits) do
     case File.ls(dir) do
       {:ok, entries} ->
         Enum.reduce(Enum.sort(entries), acc, fn entry, acc ->
-          visit(Path.join(dir, entry), regex, acc)
+          visit(Path.join(dir, entry), regex, acc, limits)
         end)
 
       {:error, _reason} ->
@@ -67,28 +63,26 @@ defmodule ReyCode.Tool.Grep do
     end
   end
 
-  defp visit(path, regex, acc) do
+  defp visit(path, regex, acc, limits) do
     case File.lstat(path) do
       {:ok, %File.Stat{type: :regular}} ->
-        scan_file(path, regex, acc)
+        scan_file(path, regex, acc, limits)
 
       {:ok, %File.Stat{type: :directory}} ->
-        walk(path, regex, acc)
+        walk(path, regex, acc, limits)
 
       _other ->
         acc
     end
   end
 
-  defp scan_file(path, regex, acc) do
-    cap = max_file_bytes()
-
+  defp scan_file(path, regex, acc, limits) do
     case File.read(path) do
-      {:ok, content} when byte_size(content) <= cap ->
+      {:ok, content} when byte_size(content) <= limits.max_file_bytes ->
         if String.contains?(content, <<0>>) do
           %{acc | binary: acc.binary + 1}
         else
-          append_matches(content, regex, path, %{acc | files: acc.files + 1})
+          append_matches(content, regex, path, %{acc | files: acc.files + 1}, limits)
         end
 
       _other ->
@@ -96,27 +90,27 @@ defmodule ReyCode.Tool.Grep do
     end
   end
 
-  defp append_matches(content, regex, path, acc) do
+  defp append_matches(content, regex, path, acc, limits) do
     content
     |> String.split("\n")
     |> Enum.with_index(1)
     |> Enum.reduce_while(acc, fn {line, number}, acc ->
-      match_line(line, number, regex, path, acc)
+      match_line(line, number, regex, path, acc, limits)
     end)
   end
 
-  defp match_line(line, number, regex, path, acc) do
+  defp match_line(line, number, regex, path, acc, limits) do
     if Regex.match?(regex, line) do
-      record_match(line, number, path, acc)
+      record_match(line, number, path, acc, limits)
     else
       {:cont, acc}
     end
   end
 
-  defp record_match(line, number, path, acc) do
+  defp record_match(line, number, path, acc, limits) do
     matches = acc.matches + 1
 
-    if matches > max_matches() do
+    if matches > limits.max_matches do
       {:halt, %{acc | matches: matches, truncated?: true}}
     else
       {:cont, %{acc | matches: matches, lines: ["#{path}:#{number}:#{line}" | acc.lines]}}
@@ -128,5 +122,13 @@ defmodule ReyCode.Tool.Grep do
       {:ok, regex} -> {:ok, regex}
       {:error, _reason} -> {:error, :invalid_pattern}
     end
+  end
+
+  defp limits(policy) do
+    %{
+      max_matches: RuntimeConfig.policy(policy, :tool_grep_max_matches, @defaults[:max_matches]),
+      max_file_bytes:
+        RuntimeConfig.policy(policy, :tool_grep_max_file_bytes, @defaults[:max_file_bytes])
+    }
   end
 end

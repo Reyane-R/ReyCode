@@ -68,15 +68,14 @@ defmodule ReyCode.TUITest do
   end
 
   test "confirms and cancels the selected room's running turn" do
-    previous_delay = Application.get_env(:rey_code, :agent_delay_ms)
-    Application.put_env(:rey_code, :agent_delay_ms, 5_000)
-    on_exit(fn -> Application.put_env(:rey_code, :agent_delay_ms, previous_delay) end)
+    %{engine: engine, room_id: room_id} = start_isolated_stack(agent_delay_ms: 5_000)
 
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Cancel this owner run", :compare)
-    assert wait_until_turn_status(turn_id, :running)
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Cancel this owner run", :compare, engine)
 
-    session = start_session({120, 32})
+    assert wait_until_turn_status(engine, turn_id, :running)
+
+    session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     type(session, "/cancel")
@@ -88,7 +87,7 @@ defmodule ReyCode.TUITest do
     assert Breeze.Test.render!(session) =~ turn_id
 
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
-    assert wait_until_turn_status(turn_id, :cancelled)
+    assert wait_until_turn_status(engine, turn_id, :cancelled)
     assert Breeze.Test.render!(session) =~ "Turn cancelled"
   end
 
@@ -119,25 +118,18 @@ defmodule ReyCode.TUITest do
   end
 
   test "adds a directive to the running squad and shows it in status" do
-    previous = Application.get_env(:rey_code, :squad_simulator)
-    Application.put_env(:rey_code, :squad_simulator, delay_ms: 60_000, seed: 654)
+    %{engine: engine, room_id: room_id} =
+      start_isolated_stack(simulator_opts: [delay_ms: 60_000, seed: 654])
 
-    room_id = default_room_id()
     role_ids = Enum.map(Squad.roles(), & &1.id)
-    :ok = ReyCode.configure_squad_roles(room_id, role_ids, :simulator, nil)
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Steer from the TUI", :squad)
+    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Steer from the TUI", :squad, engine)
 
     on_exit(fn ->
-      ReyCode.cancel_turn(turn_id)
-
-      if previous do
-        Application.put_env(:rey_code, :squad_simulator, previous)
-      else
-        Application.delete_env(:rey_code, :squad_simulator)
-      end
+      if GenServer.whereis(engine), do: Engine.cancel_turn(turn_id, "test cleanup", engine)
     end)
 
-    session = start_session({120, 60})
+    session = start_session({120, 60}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     type(session, "/direct")
@@ -148,7 +140,7 @@ defmodule ReyCode.TUITest do
     type(session, "Keep the release read-only")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
 
-    assert [directive] = ReyCode.snapshot().turns[turn_id].squad.directives
+    assert [directive] = Engine.snapshot(engine).turns[turn_id].squad.directives
     assert directive.text == "Keep the release read-only"
     assert Breeze.Test.render!(session) =~ "Squad directive added"
 
@@ -438,6 +430,9 @@ defmodule ReyCode.TUITest do
   end
 
   defp start_isolated_stack(config_overrides) do
+    {agent_delay_ms, config_overrides} = Keyword.pop(config_overrides, :agent_delay_ms, 0)
+    {simulator_opts, config_overrides} = Keyword.pop(config_overrides, :simulator_opts)
+
     path =
       Path.join(
         System.tmp_dir!(),
@@ -470,7 +465,8 @@ defmodule ReyCode.TUITest do
       agent_registry: agent_registry,
       event_registry: event_registry,
       provider_catalog: ReyCode.Provider.Catalog,
-      agent_delay_ms: 0,
+      agent_delay_ms: agent_delay_ms,
+      simulator_opts: simulator_opts,
       config: config
     ]
 
@@ -648,11 +644,11 @@ defmodule ReyCode.TUITest do
   defp wait_until_terminal(turn_id, attempts \\ 300),
     do: Wait.terminal_turn(Engine, turn_id, attempts * 10)
 
-  defp wait_until_turn_status(turn_id, status, attempts \\ 100),
-    do: Wait.turn_status(Engine, turn_id, status, attempts * 10)
+  defp wait_until_turn_status(turn_id, status),
+    do: Wait.turn_status(Engine, turn_id, status, 1_000)
 
-  defp wait_until_pending_review(turn_id, attempts \\ 400),
-    do: Wait.pending_review(Engine, turn_id, attempts * 10)
+  defp wait_until_turn_status(server, turn_id, status),
+    do: Wait.turn_status(server, turn_id, status, 1_000)
 
   defp eventually_renders?(session, text, baseline_sequence, attempts \\ 300) do
     projection =

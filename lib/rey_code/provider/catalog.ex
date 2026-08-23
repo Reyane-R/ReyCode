@@ -47,26 +47,28 @@ defmodule ReyCode.Provider.Catalog do
 
   @impl true
   def init(opts) do
-    profiles = ProviderRegistry.api_profiles()
-    opencode_module = ProviderRegistry.descriptor(:opencode).module
+    config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
+    profiles = ProviderRegistry.api_profiles(config)
+    opencode_module = ProviderRegistry.descriptor(:opencode, config).module
 
     providers =
-      ProviderRegistry.descriptors()
+      ProviderRegistry.descriptors(config)
       |> Map.new(fn descriptor -> {descriptor.id, pending_provider(descriptor)} end)
-      |> maybe_add_simulator(opts)
+      |> maybe_add_simulator(Keyword.put_new(opts, :config, config))
 
     state = %{
       providers: providers,
       profiles: profiles,
       registry: Keyword.get(opts, :registry, ReyCode.EventRegistry),
       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
-      config: Keyword.get(opts, :config),
+      config: config,
       discovery?:
         Keyword.get_lazy(opts, :discovery?, fn ->
-          RuntimeConfig.policy(Keyword.get(opts, :config), :provider_discovery, true)
+          RuntimeConfig.policy(config, :provider_discovery, true)
         end),
-      discover: Keyword.get(opts, :discover, fn -> opencode_module.discover() end),
-      api_discover: Keyword.get(opts, :api_discover, fn -> discover_api_profiles(profiles) end),
+      discover: Keyword.get(opts, :discover, fn -> opencode_module.discover(config: config) end),
+      api_discover:
+        Keyword.get(opts, :api_discover, fn -> discover_api_profiles(profiles, config) end),
       refresh_interval: Keyword.get(opts, :refresh_interval, @refresh_interval),
       retry_interval: Keyword.get(opts, :retry_interval, @retry_interval),
       probe_timeout: Keyword.get(opts, :probe_timeout, @probe_timeout),
@@ -91,18 +93,18 @@ defmodule ReyCode.Provider.Catalog do
   def handle_call(:registry, _from, state), do: {:reply, state.registry, state}
 
   def handle_call({:resolve, provider, model}, _from, state) do
-    key = provider_key(provider)
+    key = provider_key(state.config, provider)
     entry = state.providers[key]
-    {:reply, resolve_entry(key, entry, model), state}
+    {:reply, resolve_entry(key, entry, model, state), state}
   end
 
   def handle_call({:resolve_when_ready, provider, model}, from, state) do
-    key = provider_key(provider)
+    key = provider_key(state.config, provider)
 
     if get_in(state.providers, [key, :status]) == :checking do
       {:noreply, %{state | awaiters: [{from, key, model} | state.awaiters]}}
     else
-      {:reply, resolve_entry(key, state.providers[key], model), state}
+      {:reply, resolve_entry(key, state.providers[key], model, state), state}
     end
   end
 
@@ -301,10 +303,10 @@ defmodule ReyCode.Provider.Catalog do
     }
   end
 
-  defp discover_api_profiles(profiles) do
+  defp discover_api_profiles(profiles, config) do
     Map.new(profiles, fn profile ->
-      module = ProviderRegistry.descriptor(profile.id).module
-      {profile.id, module.discover(profile)}
+      module = ProviderRegistry.descriptor(profile.id, config).module
+      {profile.id, module.discover(profile, config: config)}
     end)
   end
 
@@ -345,7 +347,7 @@ defmodule ReyCode.Provider.Catalog do
 
   defp reply_awaiters(state) do
     Enum.each(state.awaiters, fn {from, key, model} ->
-      GenServer.reply(from, resolve_entry(key, state.providers[key], model))
+      GenServer.reply(from, resolve_entry(key, state.providers[key], model, state))
     end)
 
     %{state | awaiters: []}
@@ -359,30 +361,35 @@ defmodule ReyCode.Provider.Catalog do
     end)
   end
 
-  defp provider_key(value), do: ProviderRegistry.normalize_provider_id(value)
+  defp provider_key(config, value), do: ProviderRegistry.normalize_provider_id(value, config)
 
-  defp resolve_entry(_key, nil, _model), do: {:error, :unknown_provider}
-  defp resolve_entry(_key, %{status: :checking}, _model), do: {:error, :provider_checking}
+  defp resolve_entry(_key, nil, _model, _state), do: {:error, :unknown_provider}
 
-  defp resolve_entry(_key, %{status: status}, _model)
+  defp resolve_entry(_key, %{status: :checking}, _model, _state), do: {:error, :provider_checking}
+
+  defp resolve_entry(_key, %{status: status}, _model, _state)
        when status in [:missing, :available, :unchecked, :error],
        do: {:error, status}
 
-  defp resolve_entry(:simulator, entry, _model), do: {:ok, runtime_from_entry(entry)}
+  defp resolve_entry(:simulator, entry, _model, state),
+    do: {:ok, runtime_from_entry(entry, state)}
 
-  defp resolve_entry(_key, _entry, model) when model in [nil, ""],
+  defp resolve_entry(_key, _entry, model, _state) when model in [nil, ""],
     do: {:error, :model_required}
 
-  defp resolve_entry(_key, %{models: models} = entry, model) do
-    if model in models, do: {:ok, runtime_from_entry(entry)}, else: {:error, :model_unavailable}
+  defp resolve_entry(_key, %{models: models} = entry, model, state) do
+    if model in models,
+      do: {:ok, runtime_from_entry(entry, state)},
+      else: {:error, :model_unavailable}
   end
 
-  defp runtime_from_entry(entry) do
+  defp runtime_from_entry(entry, state) do
     %Runtime{
       module: entry.module,
       provider_id: entry.id,
       executable: Map.get(entry, :executable),
       version: Map.get(entry, :version),
+      config: state.config,
       models: Map.get(entry, :models, []),
       status: entry.status
     }

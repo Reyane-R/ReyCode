@@ -1,6 +1,7 @@
 defmodule ReyCode.ToolExecutionTest do
   use ExUnit.Case, async: true
 
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Tool.{Request, Result}
   alias ReyCode.ToolRegistry
 
@@ -18,7 +19,10 @@ defmodule ReyCode.ToolExecutionTest do
     Request.new(tool: tool, arguments: arguments, workspace: @workspace, roots: [@root])
   end
 
-  defp run(tool, arguments), do: ToolRegistry.execute(request(tool, arguments))
+  defp run(tool, arguments, overrides \\ []) do
+    policy = RuntimeConfig.fresh(Keyword.put(overrides, :workspace_roots, [@root]))
+    ToolRegistry.execute(request(tool, arguments), policy)
+  end
 
   defp escape_root(tag),
     do:
@@ -191,15 +195,15 @@ defmodule ReyCode.ToolExecutionTest do
     end
 
     test "caps oversized content before touching the filesystem" do
-      Application.put_env(:rey_code, :tool_write_max_bytes, 16)
-
       assert %Result{ok: false, error: :content_too_large} =
-               run("write", %{
-                 path: Path.join(@workspace, "big.txt"),
-                 content: String.duplicate("x", 17)
-               })
-    after
-      Application.delete_env(:rey_code, :tool_write_max_bytes)
+               run(
+                 "write",
+                 %{
+                   path: Path.join(@workspace, "big.txt"),
+                   content: String.duplicate("x", 17)
+                 },
+                 tool_write_max_bytes: 16
+               )
     end
   end
 
@@ -255,13 +259,16 @@ defmodule ReyCode.ToolExecutionTest do
 
     @tag :timeout_kill
     test "kills timed-out process trees and reports the timeout" do
-      Application.put_env(:rey_code, :tool_bash_timeout_ms, 300)
       flag = Path.join(@workspace, "survivor.flag")
 
       # The background subshell would create the flag 500ms in; a tree kill
       # must prevent that even though only the parent hit the timeout.
       assert %Result{ok: false, error: error, metadata: metadata} =
-               run("bash", %{command: "(sleep 0.5 && touch #{flag}) & sleep 60"})
+               run(
+                 "bash",
+                 %{command: "(sleep 0.5 && touch #{flag}) & sleep 60"},
+                 tool_bash_timeout_ms: 300
+               )
 
       assert error["reason"] == "timeout"
       assert error["exit_code"] in [137, 143]
@@ -272,22 +279,18 @@ defmodule ReyCode.ToolExecutionTest do
 
       Process.sleep(1_000)
       refute File.exists?(flag), "background child survived the timeout teardown"
-    after
-      Application.delete_env(:rey_code, :tool_bash_timeout_ms)
     end
 
     @tag :output_cap
     test "caps unbounded output and marks truncation" do
-      Application.put_env(:rey_code, :tool_bash_max_output_bytes, 1_000)
-
       assert %Result{ok: true, truncated: true, output: output, metadata: metadata} =
-               run("bash", %{command: "yes x | head -c 100000"})
+               run("bash", %{command: "yes x | head -c 100000"},
+                 tool_bash_max_output_bytes: 1_000
+               )
 
       assert byte_size(output) <= 1_050
       assert output =~ "[output truncated"
       assert metadata["exit_code"] == 0
-    after
-      Application.delete_env(:rey_code, :tool_bash_max_output_bytes)
     end
 
     test "rejects a missing command" do

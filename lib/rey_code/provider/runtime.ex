@@ -20,6 +20,7 @@ defmodule ReyCode.Provider.Runtime do
     :executable,
     :executable_identity,
     :version,
+    :config,
     models: [],
     status: :unchecked
   ]
@@ -30,6 +31,7 @@ defmodule ReyCode.Provider.Runtime do
           executable: binary() | nil,
           executable_identity: executable_identity() | nil,
           version: binary() | nil,
+          config: ReyCode.RuntimeConfig.t() | nil,
           models: [binary()],
           status: status()
         }

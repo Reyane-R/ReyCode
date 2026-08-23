@@ -77,7 +77,10 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
       }
     }
 
-    assert InvocationRequest.build(invocation, projection, 25) == %Request{
+    assert InvocationRequest.build(invocation, projection, %{
+             agent_delay_ms: 25,
+             simulator_opts: [seed: 7]
+           }) == %Request{
              invocation_id: "inv-1",
              turn_id: "turn-1",
              room_id: "room-1",
@@ -116,6 +119,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
              cycle: 1,
              logical_work_id: "work-1",
              agent_delay_ms: 25,
+             simulator_opts: [seed: 7],
              dependencies: ["inv-0"]
            }
   end

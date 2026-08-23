@@ -125,6 +125,9 @@ defmodule ReyCode.Orchestration.Engine do
   @impl true
   def init(opts) do
     event_store = Keyword.get(opts, :event_store, EventStore)
+    config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
+
+    {agent_delay_ms, simulator_opts} = simulator_policy(opts, config)
 
     state = %{
       projection: Persistence.restore!(event_store),
@@ -137,14 +140,32 @@ defmodule ReyCode.Orchestration.Engine do
       execution_queue: [],
       queued_execution_ids: MapSet.new(),
       active_executions: %{},
-      limits: Options.execution_limits(opts),
-      agent_delay_ms: Keyword.get(opts, :agent_delay_ms),
-      config: Keyword.get(opts, :config),
+      limits: Options.execution_limits(opts, config),
+      agent_delay_ms: agent_delay_ms,
+      simulator_opts: simulator_opts,
+      config: config,
       name: Keyword.get(opts, :name, __MODULE__)
     }
 
     state = ensure_default_room(state)
     {:ok, state, {:continue, :recover}}
+  end
+
+  # Simulator pacing is frozen once at startup: explicit engine options win,
+  # otherwise the injected configuration decides. The scenario delay defaults
+  # to the resolved agent delay so squad and regular turns stay in step.
+  defp simulator_policy(opts, config) do
+    agent_delay_ms =
+      Keyword.get(opts, :agent_delay_ms) || RuntimeConfig.policy(config, :agent_delay_ms, 0)
+
+    simulator_opts =
+      Keyword.get_lazy(opts, :simulator_opts, fn ->
+        config
+        |> RuntimeConfig.policy(:squad_simulator, [])
+        |> Keyword.put_new(:delay_ms, agent_delay_ms)
+      end)
+
+    {agent_delay_ms, simulator_opts}
   end
 
   @impl true
@@ -163,7 +184,7 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call(:event_registry, _from, state), do: {:reply, state.event_registry, state}
 
   def handle_call({:create_room, raw_title, workspace}, _from, state) do
-    case Validation.room(raw_title, workspace) do
+    case Validation.room(raw_title, workspace, config: state.config) do
       {:ok, title, workspace} ->
         room_id = Identity.new_id("room")
         slug = Identity.unique_slug(Identity.slugify(title), state.projection)
@@ -174,7 +195,7 @@ defmodule ReyCode.Orchestration.Engine do
             slug,
             title,
             workspace,
-            Options.default_participants()
+            Options.default_participants(state.config)
           )
 
         next = Persistence.append_and_apply!(state, [{type, payload, metadata}])
@@ -217,7 +238,8 @@ defmodule ReyCode.Orchestration.Engine do
       participant_ids,
       provider,
       model,
-      state.provider_catalog
+      state.provider_catalog,
+      state.config
     )
     |> apply_configuration(state)
   end
@@ -247,7 +269,14 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:configure_squad_roles, room_id, role_ids, provider, model}, _from, state) do
     state.projection
-    |> Configuration.squad_roles(room_id, role_ids, provider, model, state.provider_catalog)
+    |> Configuration.squad_roles(
+      room_id,
+      role_ids,
+      provider,
+      model,
+      state.provider_catalog,
+      state.config
+    )
     |> apply_configuration(state)
   end
 
@@ -256,11 +285,24 @@ defmodule ReyCode.Orchestration.Engine do
 
     reply =
       cond do
-        invocation == nil -> {:terminal, :missing}
-        invocation.status in [:completed, :failed, :cancelled] -> {:terminal, invocation.status}
-        ToolRuns.awaiting?(invocation) -> {:waiting, :tool_approval}
-        invocation.status == :waiting_tool_approval -> {:waiting, :tool_approval}
-        true -> {:ok, InvocationRequest.build(invocation, state.projection, state.agent_delay_ms)}
+        invocation == nil ->
+          {:terminal, :missing}
+
+        invocation.status in [:completed, :failed, :cancelled] ->
+          {:terminal, invocation.status}
+
+        ToolRuns.awaiting?(invocation) ->
+          {:waiting, :tool_approval}
+
+        invocation.status == :waiting_tool_approval ->
+          {:waiting, :tool_approval}
+
+        true ->
+          {:ok,
+           InvocationRequest.build(invocation, state.projection, %{
+             agent_delay_ms: state.agent_delay_ms,
+             simulator_opts: state.simulator_opts
+           })}
       end
 
     {:reply, reply, state}
@@ -666,7 +708,7 @@ defmodule ReyCode.Orchestration.Engine do
         "reycode",
         "ReyCode",
         File.cwd!(),
-        Options.default_participants()
+        Options.default_participants(state.config)
       )
 
     Persistence.append_and_project!(state, [{type, payload, metadata}])
@@ -1009,7 +1051,8 @@ defmodule ReyCode.Orchestration.Engine do
        registry: state.agent_registry,
        invocation_id: invocation.id,
        provider: invocation.participant.provider,
-       provider_catalog: state.provider_catalog}
+       provider_catalog: state.provider_catalog,
+       config: state.config}
 
     case DynamicSupervisor.start_child(state.agent_supervisor, spec) do
       {:ok, pid} ->

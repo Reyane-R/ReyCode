@@ -127,7 +127,7 @@ defmodule ReyCode.AgentLoop do
         request_id: run.id
       )
 
-    result = ToolRegistry.execute(tool_request)
+    result = ToolRegistry.execute(tool_request, state.config)
     record_tool_result(state, run, Result.to_wire(result))
   end
 

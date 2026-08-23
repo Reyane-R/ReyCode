@@ -32,6 +32,7 @@ defmodule ReyCode.Provider.Request do
     :cycle,
     :logical_work_id,
     agent_delay_ms: nil,
+    simulator_opts: nil,
     dependencies: []
   ]
 
@@ -59,6 +60,7 @@ defmodule ReyCode.Provider.Request do
           cycle: non_neg_integer() | nil,
           logical_work_id: String.t() | nil,
           agent_delay_ms: non_neg_integer() | nil,
+          simulator_opts: keyword() | nil,
           dependencies: [String.t()]
         }
 end

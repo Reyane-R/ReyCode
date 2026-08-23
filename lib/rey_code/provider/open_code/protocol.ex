@@ -3,6 +3,7 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
 
   alias ReyCode.Provider.{Frame, Request, TextBuffer}
   alias ReyCode.Provider.OpenCode.Protocol.State
+  alias ReyCode.RuntimeConfig
 
   @ansi ~r/\e\[[0-?]*[ -\/]*[@-~]/
   @tool_started_states ~w(pending running started start executing)
@@ -48,23 +49,19 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
           }
   end
 
-  @spec new(Request.t()) :: State.t()
-  def new(%Request{} = request) do
+  @spec new(Request.t(), ReyCode.RuntimeConfig.t() | nil) :: State.t()
+  def new(%Request{} = request, config \\ nil) do
     diagnostic_limit =
-      Application.get_env(:rey_code, :opencode_max_diagnostic_bytes, @default_diagnostic_bytes)
+      RuntimeConfig.policy(config, :opencode_max_diagnostic_bytes, @default_diagnostic_bytes)
 
     %State{
       text_buffer:
         TextBuffer.new(
           chunk_bytes:
-            Application.get_env(
-              :rey_code,
-              :opencode_text_chunk_bytes,
-              @default_text_chunk_bytes
-            ),
+            RuntimeConfig.policy(config, :opencode_text_chunk_bytes, @default_text_chunk_bytes),
           chunk_latency_ms:
-            Application.get_env(
-              :rey_code,
+            RuntimeConfig.policy(
+              config,
               :opencode_text_chunk_latency_ms,
               @default_text_chunk_latency_ms
             )
@@ -72,7 +69,7 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
       sequence: request.resume_from,
       diagnostic_limit: diagnostic_limit,
       output_limit:
-        Application.get_env(:rey_code, :opencode_max_output_bytes, @default_output_bytes)
+        RuntimeConfig.policy(config, :opencode_max_output_bytes, @default_output_bytes)
     }
   end
 

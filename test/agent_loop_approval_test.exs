@@ -11,7 +11,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
 
   use ExUnit.Case, async: false
 
-  alias ReyCode.EventStore
+  alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.{Engine, Squad}
   alias ReyCode.Test.Wait
 
@@ -32,17 +32,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
     File.mkdir_p!(workspace_a)
     File.mkdir_p!(workspace_b)
 
-    previous_simulator = Application.get_env(:rey_code, :squad_simulator)
-
-    on_exit(fn ->
-      File.rm_rf!(base)
-
-      if previous_simulator do
-        Application.put_env(:rey_code, :squad_simulator, previous_simulator)
-      else
-        Application.delete_env(:rey_code, :squad_simulator)
-      end
-    end)
+    on_exit(fn -> File.rm_rf!(base) end)
 
     %{workspace_a: workspace_a, workspace_b: workspace_b}
   end
@@ -55,11 +45,16 @@ defmodule ReyCode.AgentLoopApprovalTest do
       agent_registry: @agent_registry,
       event_registry: @event_registry,
       provider_catalog: ReyCode.Provider.Catalog,
+      config:
+        RuntimeConfig.fresh(
+          allow_simulator_provider: true,
+          default_provider: :simulator
+        ),
       agent_delay_ms: 0
     ] ++ extra
   end
 
-  defp start_engine(extra \\ []) do
+  defp start_engine(extra) do
     path =
       Path.join(
         System.tmp_dir!(),
@@ -78,20 +73,18 @@ defmodule ReyCode.AgentLoopApprovalTest do
     store
   end
 
-  defp ask_scenario(workspace) do
-    Application.put_env(
-      :rey_code,
-      :squad_simulator,
-      seed: 0,
-      delay_ms: 0,
-      jitter_ms: 0,
-      failure_rate: 0.0,
-      tool_requests: [
-        %{tool: "write", arguments: %{"path" => "out.txt", "content" => "approved-content"}}
+  defp ask_scenario_opts do
+    [
+      simulator_opts: [
+        seed: 0,
+        delay_ms: 0,
+        jitter_ms: 0,
+        failure_rate: 0.0,
+        tool_requests: [
+          %{tool: "write", arguments: %{"path" => "out.txt", "content" => "approved-content"}}
+        ]
       ]
-    )
-
-    Path.join(workspace, "out.txt")
+    ]
   end
 
   defp waiting_count(projection) do
@@ -199,8 +192,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
   test "approve executes the persisted request once and completes the conversation", %{
     workspace_a: workspace
   } do
-    out_path = ask_scenario(workspace)
-    store = start_engine()
+    out_path = Path.join(workspace, "out.txt")
+    store = start_engine(ask_scenario_opts())
 
     assert {:ok, room_id} = Engine.create_room("Approve Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
@@ -231,18 +224,16 @@ defmodule ReyCode.AgentLoopApprovalTest do
   test "a permanent squad failure cancels an approval-waiting sibling", %{
     workspace_a: workspace
   } do
-    Application.put_env(
-      :rey_code,
-      :squad_simulator,
+    simulator_opts = [
       seed: 0,
       delay_ms: 0,
       failure_plan: %{{"specification", "gherkin_author", 1} => :permanent},
       tool_requests: [
         %{tool: "write", arguments: %{"path" => "out.txt", "content" => "approved-content"}}
       ]
-    )
+    ]
 
-    store = start_engine()
+    store = start_engine(simulator_opts: simulator_opts)
     assert {:ok, room_id} = Engine.create_room("Failed Squad Approval", workspace, @engine)
 
     role_ids = Enum.map(Squad.roles(), & &1.id)
@@ -266,8 +257,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
   test "deny performs no side effect and fails the invocations cleanly", %{
     workspace_a: workspace
   } do
-    out_path = ask_scenario(workspace)
-    store = start_engine()
+    out_path = Path.join(workspace, "out.txt")
+    store = start_engine(ask_scenario_opts())
 
     assert {:ok, room_id} = Engine.create_room("Deny Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
@@ -297,8 +288,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
   test "approve after a complete engine restart executes exactly once", %{
     workspace_a: workspace
   } do
-    out_path = ask_scenario(workspace)
-    store = start_engine()
+    out_path = Path.join(workspace, "out.txt")
+    store = start_engine(ask_scenario_opts())
 
     assert {:ok, room_id} = Engine.create_room("Restart Approve", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
@@ -334,8 +325,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
   end
 
   test "cancelling a turn cancels waiting approvals durably", %{workspace_a: workspace} do
-    out_path = ask_scenario(workspace)
-    store = start_engine()
+    out_path = Path.join(workspace, "out.txt")
+    store = start_engine(ask_scenario_opts())
 
     assert {:ok, room_id} = Engine.create_room("Cancel Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
@@ -387,8 +378,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
     workspace_a: workspace_a,
     workspace_b: workspace_b
   } do
-    ask_scenario(workspace_a)
-    store = start_engine(global_concurrency: 1, workspace_concurrency: 1)
+    store =
+      start_engine([global_concurrency: 1, workspace_concurrency: 1] ++ ask_scenario_opts())
 
     assert {:ok, room_a} = Engine.create_room("Room A", workspace_a, @engine)
     assert {:ok, room_b} = Engine.create_room("Room B", workspace_b, @engine)

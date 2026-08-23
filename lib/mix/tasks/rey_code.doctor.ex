@@ -10,7 +10,7 @@ defmodule Mix.Tasks.ReyCode.Doctor do
 
   use Mix.Task
 
-  alias ReyCode.Diagnostics
+  alias ReyCode.{Diagnostics, RuntimeConfig}
 
   @switches [json: :boolean]
 
@@ -22,9 +22,17 @@ defmodule Mix.Tasks.ReyCode.Doctor do
       Mix.raise("Usage: mix rey_code.doctor [--json]")
     end
 
+    config = RuntimeConfig.load!()
+    path_config = Application.get_all_env(:rey_code)
     start_application_without_tui()
 
-    report = Diagnostics.snapshot(app_version: Mix.Project.config()[:version])
+    report =
+      Diagnostics.snapshot(
+        app_version: Mix.Project.config()[:version],
+        config: config,
+        path_config: path_config
+      )
+
     format = if opts[:json], do: :json, else: :human
     Mix.shell().info(render(report, format))
   end

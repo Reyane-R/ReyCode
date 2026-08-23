@@ -14,35 +14,15 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     ToolCall
   }
 
+  alias ReyCode.RuntimeConfig
+
   @key_env "DEEPSEEK_API_KEY"
 
   setup do
-    previous_transport = Application.get_env(:rey_code, :openai_compatible_transport)
-
-    previous_chunk_latency =
-      Application.get_env(:rey_code, :openai_compatible_chunk_latency_ms)
-
-    Application.put_env(:rey_code, :openai_compatible_transport, FakeTransport)
     FakeTransport.clear()
     System.put_env(@key_env, "test-key")
 
     on_exit(fn ->
-      if previous_transport do
-        Application.put_env(:rey_code, :openai_compatible_transport, previous_transport)
-      else
-        Application.delete_env(:rey_code, :openai_compatible_transport)
-      end
-
-      if previous_chunk_latency do
-        Application.put_env(
-          :rey_code,
-          :openai_compatible_chunk_latency_ms,
-          previous_chunk_latency
-        )
-      else
-        Application.delete_env(:rey_code, :openai_compatible_chunk_latency_ms)
-      end
-
       System.delete_env(@key_env)
       FakeTransport.clear()
     end)
@@ -56,7 +36,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       {:ok, profile} = Profile.fetch(:deepseek)
 
       assert {:ok, %{status: :available, models: [], credential_count: 0}} =
-               OpenAICompatible.discover(profile)
+               OpenAICompatible.discover(profile, transport: FakeTransport)
     end
 
     test "parses the model list from /models when the key is present" do
@@ -68,7 +48,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                 status: :configured,
                 models: ["deepseek-chat", "deepseek-reasoner"],
                 credential_count: 1
-              }} = OpenAICompatible.discover(profile)
+              }} = OpenAICompatible.discover(profile, transport: FakeTransport)
 
       assert FakeTransport.last_request().method == :get
       assert FakeTransport.last_request().body == nil
@@ -79,7 +59,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       {:ok, profile} = Profile.fetch(:deepseek)
 
       assert {:ok, %{status: :configured, models: [], credential_count: 1, error: nil}} =
-               OpenAICompatible.discover(profile)
+               OpenAICompatible.discover(profile, transport: FakeTransport)
     end
 
     test "fails closed for every malformed model response" do
@@ -102,7 +82,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         FakeTransport.set_models(body)
 
         assert {:ok, %{status: :error, models: [], credential_count: 1, error: error}} =
-                 OpenAICompatible.discover(profile)
+                 OpenAICompatible.discover(profile, transport: FakeTransport)
 
         assert is_binary(error)
       end
@@ -113,7 +93,10 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       {:ok, profile} = Profile.fetch(:deepseek)
 
       assert {:ok, %{status: :error, error: "Model response exceeded 8 bytes"}} =
-               OpenAICompatible.discover(profile, max_response_bytes: 8)
+               OpenAICompatible.discover(profile,
+                 transport: FakeTransport,
+                 max_response_bytes: 8
+               )
     end
 
     test "folds a discovery failure into an error status" do
@@ -121,14 +104,12 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       {:ok, profile} = Profile.fetch(:deepseek)
 
       assert {:ok, %{status: :error, models: [], error: "slow down"}} =
-               OpenAICompatible.discover(profile)
+               OpenAICompatible.discover(profile, transport: FakeTransport)
     end
   end
 
   describe "stream/3" do
     test "emits text deltas parsed from the SSE response" do
-      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
-
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n),
         ~s(data: {"choices":[{"delta":{"content":"there"}}]}\n\n),
@@ -149,19 +130,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     end
 
     test "flushes a short text delta while the transport remains silent" do
-      previous_bytes = Application.get_env(:rey_code, :openai_compatible_chunk_bytes)
-      Application.put_env(:rey_code, :openai_compatible_chunk_bytes, 1_000)
-      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 50)
       token = make_ref()
       test_pid = self()
-
-      on_exit(fn ->
-        if previous_bytes do
-          Application.put_env(:rey_code, :openai_compatible_chunk_bytes, previous_bytes)
-        else
-          Application.delete_env(:rey_code, :openai_compatible_chunk_bytes)
-        end
-      end)
 
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"content":"latency bounded"}}]}\n\n),
@@ -171,7 +141,12 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       task =
         Task.async(fn ->
-          OpenAICompatible.stream(runtime(), request(), fn frame ->
+          policy = [
+            openai_compatible_chunk_bytes: 1_000,
+            openai_compatible_chunk_latency_ms: 50
+          ]
+
+          OpenAICompatible.stream(runtime(policy), request(), fn frame ->
             send(test_pid, {:frame, frame})
             :ok
           end)
@@ -189,8 +164,6 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     end
 
     test "starts emitted frame sequence from request.resume_from" do
-      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
-
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n),
         ~s(data: {"choices":[{"delta":{"content":"there"}}]}\n\n),
@@ -246,8 +219,6 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     end
 
     test "drives a complete two-round conversation through the one-round contract" do
-      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
-
       # Round 1: the model asks for a tool.
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-9","index":0,"type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"hello.txt\\"}"}}]}}]}\n\n),
@@ -378,7 +349,6 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     end
 
     test "accepts clean EOF after text but rejects malformed or unterminated tails" do
-      Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
       text = ~s(data: {"choices":[{"delta":{"content":"valid"}}]}\n\n)
 
       FakeTransport.set_stream([text])
@@ -428,16 +398,6 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     end
 
     test "halts and errors when output exceeds the profile limit" do
-      Application.put_env(:rey_code, :openai_compatible_providers, [
-        %{
-          id: :tiny,
-          name: "Tiny",
-          base_url: "https://example.test",
-          key_env: "TINY_API_KEY",
-          max_output_bytes: 8
-        }
-      ])
-
       System.put_env("TINY_API_KEY", "tiny-key")
 
       FakeTransport.set_stream([
@@ -445,12 +405,28 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         "data: [DONE]\n\n"
       ])
 
-      runtime = %Runtime{module: OpenAICompatible, provider_id: :tiny, status: :configured}
+      runtime = %Runtime{
+        module: OpenAICompatible,
+        provider_id: :tiny,
+        status: :configured,
+        config:
+          RuntimeConfig.fresh(
+            openai_compatible_transport: FakeTransport,
+            openai_compatible_providers: [
+              %{
+                id: :tiny,
+                name: "Tiny",
+                base_url: "https://example.test",
+                key_env: "TINY_API_KEY",
+                max_output_bytes: 8
+              }
+            ]
+          )
+      }
 
       assert {:error, %{"category" => "output_too_large", "retryable" => false}} =
                OpenAICompatible.stream(runtime, request(), fn _frame -> :ok end)
     after
-      Application.delete_env(:rey_code, :openai_compatible_providers)
       System.delete_env("TINY_API_KEY")
     end
   end
@@ -478,8 +454,22 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     end
   end
 
-  defp runtime do
-    %Runtime{module: OpenAICompatible, provider_id: :deepseek, status: :configured}
+  defp runtime(overrides \\ []) do
+    config =
+      RuntimeConfig.fresh(
+        openai_compatible_transport: FakeTransport,
+        openai_compatible_chunk_latency_ms: 0
+      )
+      |> Map.from_struct()
+      |> Map.merge(Map.new(overrides))
+      |> then(&struct!(RuntimeConfig, &1))
+
+    %Runtime{
+      module: OpenAICompatible,
+      provider_id: :deepseek,
+      status: :configured,
+      config: config
+    }
   end
 
   defp request do

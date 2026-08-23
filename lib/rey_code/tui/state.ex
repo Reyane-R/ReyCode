@@ -12,6 +12,7 @@ defmodule ReyCode.TUI.State do
   def mount(opts, term) do
     engine = Keyword.get(opts, :engine, Engine)
     provider_catalog = Keyword.get(opts, :provider_catalog, Catalog)
+    config = Keyword.get_lazy(opts, :config, &ReyCode.RuntimeConfig.fresh/0)
     projection = Engine.subscribe(engine)
     providers = Catalog.subscribe(provider_catalog)
 
@@ -20,6 +21,7 @@ defmodule ReyCode.TUI.State do
      |> View.focus("prompt")
      |> Component.assign(
        engine: engine,
+       config: config,
        provider_catalog: provider_catalog,
        providers: providers,
        projection: projection,

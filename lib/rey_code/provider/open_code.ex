@@ -5,9 +5,11 @@ defmodule ReyCode.Provider.OpenCode do
 
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenCode.{Discovery, Process, Prompt, Protocol}
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Workspace
 
   @default_prompt_bytes 128_000
+  @default_timeout_ms :timer.minutes(10)
 
   @doc "Discovers the OpenCode executable, version, credentials, and available models."
   @spec discover(keyword()) :: {:ok, map()} | {:error, term()}
@@ -20,8 +22,8 @@ defmodule ReyCode.Provider.OpenCode do
   def stream(%Runtime{module: __MODULE__, executable: executable} = runtime, request, emit)
       when is_binary(executable) do
     with {:ok, runtime} <- Runtime.revalidate_executable(runtime),
-         {:ok, workspace} <- Workspace.validate(request.workspace) do
-      run(runtime.executable, %{request | workspace: workspace}, emit)
+         {:ok, workspace} <- Workspace.validate(request.workspace, config: runtime.config) do
+      run(runtime.executable, %{request | workspace: workspace}, emit, runtime.config)
     else
       {:error, {:executable_changed, _details}} ->
         {:error, error("executable_changed", "OpenCode executable changed after discovery")}
@@ -38,11 +40,11 @@ defmodule ReyCode.Provider.OpenCode do
     {:error, error("invalid_runtime", "OpenCode runtime has no executable")}
   end
 
-  defp run(executable, request, emit) do
+  defp run(executable, request, emit, config) do
     prompt = Prompt.build(request)
 
     max_prompt_bytes =
-      Application.get_env(:rey_code, :opencode_max_prompt_bytes, @default_prompt_bytes)
+      RuntimeConfig.policy(config, :opencode_max_prompt_bytes, @default_prompt_bytes)
 
     if byte_size(prompt) > max_prompt_bytes do
       {:error,
@@ -51,15 +53,24 @@ defmodule ReyCode.Provider.OpenCode do
          "OpenCode prompt is #{byte_size(prompt)} bytes; maximum is #{max_prompt_bytes} bytes"
        )}
     else
-      launch(executable, request, prompt, emit)
+      launch(executable, request, prompt, emit, config)
     end
   end
 
-  defp launch(executable, request, prompt, emit) do
-    timeout = Application.get_env(:rey_code, :provider_timeout_ms, :timer.minutes(10))
-    state = Protocol.new(request)
+  defp launch(executable, request, prompt, emit, config) do
+    timeout = RuntimeConfig.policy(config, :provider_timeout_ms, @default_timeout_ms)
+    state = Protocol.new(request, config)
+
     args = Process.launch_args(request)
-    stream = Process.open_stream(executable, args, request.workspace, prompt)
+
+    stream =
+      Process.open_stream(
+        executable,
+        args,
+        request.workspace,
+        prompt,
+        Process.environment_opts(config)
+      )
 
     collect_opts = [
       next_deadline: &Protocol.next_flush_deadline/1,

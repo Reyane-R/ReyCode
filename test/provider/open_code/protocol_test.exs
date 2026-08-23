@@ -1,10 +1,10 @@
 defmodule ReyCode.Provider.OpenCode.ProtocolTest do
   use ExUnit.Case, async: false
 
-  import ReyCode.Test.OpenCodeHelpers,
-    only: [collect_frames: 1, request: 0, restore_env: 2, text_record: 1]
+  import ReyCode.Test.OpenCodeHelpers, only: [collect_frames: 1, request: 0, text_record: 1]
 
   alias ReyCode.Provider.OpenCode.Protocol
+  alias ReyCode.RuntimeConfig
 
   test "maps OpenCode JSON output into text frames" do
     {result, frames} =
@@ -98,16 +98,14 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
   end
 
   test "returns bounded diagnostics for a nonzero exit" do
-    previous = Application.get_env(:rey_code, :opencode_max_diagnostic_bytes)
-    Application.put_env(:rey_code, :opencode_max_diagnostic_bytes, 10)
-
-    on_exit(fn -> restore_env(:opencode_max_diagnostic_bytes, previous) end)
-
     {result, _frames} =
-      run([
-        {:stderr, "authentication failed\n"},
-        {:exit, {:status, 7}}
-      ])
+      run(
+        [
+          {:stderr, "authentication failed\n"},
+          {:exit, {:status, 7}}
+        ],
+        opencode_max_diagnostic_bytes: 10
+      )
 
     assert {:error,
             %{
@@ -118,49 +116,43 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
   end
 
   test "counts newline-free stderr against total output and bounds retained diagnostics" do
-    previous_output = Application.get_env(:rey_code, :opencode_max_output_bytes)
-    previous_diagnostics = Application.get_env(:rey_code, :opencode_max_diagnostic_bytes)
-
-    on_exit(fn ->
-      restore_env(:opencode_max_output_bytes, previous_output)
-      restore_env(:opencode_max_diagnostic_bytes, previous_diagnostics)
-    end)
-
     stderr = [{:stderr, String.duplicate("x", 100)}, {:exit, {:status, 7}}]
 
-    Application.put_env(:rey_code, :opencode_max_output_bytes, 50)
-    Application.put_env(:rey_code, :opencode_max_diagnostic_bytes, 10)
-
-    assert {:error, %{"category" => "output_too_large"}} = elem(run(stderr), 0)
-
-    Application.put_env(:rey_code, :opencode_max_output_bytes, 1_000)
+    assert {:error, %{"category" => "output_too_large"}} =
+             elem(
+               run(stderr,
+                 opencode_max_output_bytes: 50,
+                 opencode_max_diagnostic_bytes: 10
+               ),
+               0
+             )
 
     assert {:error,
             %{
               "category" => "command_failed",
               "message" => "xxxxxxxxxx\n[diagnostics truncated]"
-            }} = elem(run(stderr), 0)
+            }} =
+             elem(
+               run(stderr,
+                 opencode_max_output_bytes: 1_000,
+                 opencode_max_diagnostic_bytes: 10
+               ),
+               0
+             )
   end
 
   test "coalesces adjacent text records into bounded durable frames" do
-    previous_bytes = Application.get_env(:rey_code, :opencode_text_chunk_bytes)
-    previous_latency = Application.get_env(:rey_code, :opencode_text_chunk_latency_ms)
-
-    on_exit(fn ->
-      restore_env(:opencode_text_chunk_bytes, previous_bytes)
-      restore_env(:opencode_text_chunk_latency_ms, previous_latency)
-    end)
-
-    Application.put_env(:rey_code, :opencode_text_chunk_bytes, 16)
-    Application.put_env(:rey_code, :opencode_text_chunk_latency_ms, 60_000)
-
     body = Enum.map_join(1..100, fn _index -> text_record("x") end)
 
     {result, frames} =
-      run([
-        {:stdout, body},
-        {:exit, {:status, 0}}
-      ])
+      run(
+        [
+          {:stdout, body},
+          {:exit, {:status, 0}}
+        ],
+        opencode_text_chunk_bytes: 16,
+        opencode_text_chunk_latency_ms: 60_000
+      )
 
     assert {:ok, _metadata} = result
 
@@ -241,18 +233,11 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
   end
 
   test "flush_due emits pending text at its absolute latency deadline" do
-    previous_bytes = Application.get_env(:rey_code, :opencode_text_chunk_bytes)
-    previous_latency = Application.get_env(:rey_code, :opencode_text_chunk_latency_ms)
-    Application.put_env(:rey_code, :opencode_text_chunk_bytes, 1_000)
-    Application.put_env(:rey_code, :opencode_text_chunk_latency_ms, 50)
-
-    on_exit(fn ->
-      restore_env(:opencode_text_chunk_bytes, previous_bytes)
-      restore_env(:opencode_text_chunk_latency_ms, previous_latency)
-    end)
+    config =
+      RuntimeConfig.fresh(opencode_text_chunk_bytes: 1_000, opencode_text_chunk_latency_ms: 50)
 
     emit = emit_frame(self())
-    state = Protocol.new(request())
+    state = Protocol.new(request(), config)
     assert {:cont, state} = Protocol.fold({:stdout, text_record("deadline text")}, state, emit)
     deadline = Protocol.next_flush_deadline(state)
 
@@ -283,16 +268,15 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
   end
 
   test "marks diagnostics truncated when a separator no longer fits" do
-    previous = Application.get_env(:rey_code, :opencode_max_diagnostic_bytes)
-    Application.put_env(:rey_code, :opencode_max_diagnostic_bytes, 10)
-    on_exit(fn -> restore_env(:opencode_max_diagnostic_bytes, previous) end)
-
     {result, _frames} =
-      run([
-        {:stderr, "0123456789\n"},
-        {:stderr, "x"},
-        {:exit, {:status, 3}}
-      ])
+      run(
+        [
+          {:stderr, "0123456789\n"},
+          {:stderr, "x"},
+          {:exit, {:status, 3}}
+        ],
+        opencode_max_diagnostic_bytes: 10
+      )
 
     assert {:error,
             %{
@@ -301,10 +285,10 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
             }} = result
   end
 
-  defp run(elements) do
+  defp run(elements, overrides \\ []) do
     test_pid = self()
     emit = emit_frame(test_pid)
-    state = Protocol.new(request())
+    state = Protocol.new(request(), RuntimeConfig.fresh(overrides))
 
     state = Enum.reduce_while(elements, state, &fold_element(&1, &2, emit))
 
