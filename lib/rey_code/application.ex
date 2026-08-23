@@ -18,8 +18,8 @@ defmodule ReyCode.Application do
       {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
       {ReyCode.EventStore, [config: runtime_config] ++ event_store_options()},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
-      {ReyCode.Provider.Catalog, []},
-      {ReyCode.Orchestration.Supervisor, []}
+      {ReyCode.Provider.Catalog, [config: runtime_config]},
+      {ReyCode.Orchestration.Supervisor, config: runtime_config}
     ]
 
     children = children ++ tui_children()

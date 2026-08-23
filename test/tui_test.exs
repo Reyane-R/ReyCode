@@ -1,7 +1,9 @@
 defmodule ReyCode.TUITest do
   use ExUnit.Case, async: false
 
-  alias ReyCode.Orchestration.{Engine, Squad}
+  alias ReyCode.{EventStore, RuntimeConfig}
+  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.Squad
   alias ReyCode.Test.Wait
 
   test "renders a project room and posts a mode-tagged message" do
@@ -158,24 +160,25 @@ defmodule ReyCode.TUITest do
   end
 
   test "reviews and approves the held release gate" do
-    previous_review = Application.get_env(:rey_code, :squad_release_gate_human)
-    previous_simulator = Application.get_env(:rey_code, :squad_simulator)
-    Application.put_env(:rey_code, :squad_release_gate_human, true)
-    Application.put_env(:rey_code, :squad_simulator, delay_ms: 0, seed: 777)
+    context = start_isolated_stack(squad_release_gate_human: true)
+    %{engine: engine, room_id: room_id} = context
 
-    room_id = default_room_id()
     role_ids = Enum.map(Squad.roles(), & &1.id)
-    :ok = ReyCode.configure_squad_roles(room_id, role_ids, :simulator, nil)
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Approve from the TUI", :squad)
-    assert wait_until_pending_review(turn_id)
+    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Approve from the TUI", :squad, engine)
+
+    wait_for_pending_review(engine, turn_id)
 
     on_exit(fn ->
-      ReyCode.cancel_turn(turn_id)
-      Application.put_env(:rey_code, :squad_release_gate_human, previous_review)
-      Application.put_env(:rey_code, :squad_simulator, previous_simulator)
+      case GenServer.whereis(engine) do
+        pid when is_pid(pid) -> Engine.cancel_turn(turn_id, "test cleanup", engine)
+        _ -> :ok
+      end
     end)
 
-    session = start_session({120, 60})
+    session = start_session({120, 60}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     assert Breeze.Test.render!(session) =~ "release approval required"
@@ -434,6 +437,66 @@ defmodule ReyCode.TUITest do
     refute screen =~ "Demo"
   end
 
+  defp start_isolated_stack(config_overrides) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_tui_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
+      )
+
+    store = start_supervised!({EventStore, name: nil, path: path})
+    suffix = System.unique_integer([:positive])
+
+    agent_registry = :"tui_agent_#{suffix}"
+    event_registry = :"tui_events_#{suffix}"
+    agent_supervisor = :"tui_sup_#{suffix}"
+
+    start_supervised!({Registry, keys: :unique, name: agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: event_registry})
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: agent_supervisor})
+
+    config =
+      RuntimeConfig.load!()
+      |> Map.from_struct()
+      |> Map.merge(Map.new(config_overrides))
+      |> then(&struct!(RuntimeConfig, &1))
+
+    engine = :"tui_engine_#{suffix}"
+
+    opts = [
+      name: engine,
+      event_store: store,
+      agent_supervisor: agent_supervisor,
+      agent_registry: agent_registry,
+      event_registry: event_registry,
+      provider_catalog: ReyCode.Provider.Catalog,
+      agent_delay_ms: 0,
+      config: config
+    ]
+
+    start_supervised!(Supervisor.child_spec({Engine, opts}, restart: :temporary))
+
+    projection = Engine.subscribe(engine)
+    room_id = List.first(projection.room_order)
+
+    %{engine: engine, store: store, room_id: room_id}
+  end
+
+  defp wait_for_pending_review(server, turn_id, attempts \\ 400)
+
+  defp wait_for_pending_review(_server, _turn_id, 0), do: flunk("no pending review")
+
+  defp wait_for_pending_review(server, turn_id, attempts) do
+    turn = Engine.snapshot(server).turns[turn_id]
+
+    if turn && Map.get(turn.squad || %{}, :pending_review) do
+      :ok
+    else
+      Process.sleep(25)
+      wait_for_pending_review(server, turn_id, attempts - 1)
+    end
+  end
+
   defp type(session, text) do
     Breeze.Test.render!(session)
 
@@ -443,11 +506,12 @@ defmodule ReyCode.TUITest do
     end
   end
 
-  defp start_session(size) do
+  defp start_session(size, opts \\ []) do
     Breeze.Test.start!(ReyCode.TUI,
       size: size,
       theme: ReyCode.Theme.default(),
-      global_keybindings: ReyCode.TUI.global_keybindings()
+      global_keybindings: ReyCode.TUI.global_keybindings(),
+      start_opts: Keyword.take(opts, [:engine])
     )
   end
 
