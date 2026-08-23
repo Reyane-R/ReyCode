@@ -31,7 +31,7 @@ defmodule ReyCode.Agent do
           optional(atom()) => term()
         }
 
-  @type step :: {:noreply, state()} | {:stop, :normal, state()}
+  @type step :: {:stop, state()}
 
   @impl true
   def init(opts) do
@@ -41,7 +41,6 @@ defmodule ReyCode.Agent do
   @impl true
   def handle_continue(:run, state) do
     case AgentLoop.run(state) do
-      {:noreply, state} -> {:noreply, state}
       {:stop, state} -> {:stop, :normal, state}
     end
   end

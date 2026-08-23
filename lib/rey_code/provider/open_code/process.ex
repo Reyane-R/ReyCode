@@ -146,16 +146,18 @@ defmodule ReyCode.Provider.OpenCode.Process do
   end
 
   defp receive_item(task, tag, acc, loop, receive_for) do
+    task_ref = task.ref
+
     receive do
       {^tag, :item, acknowledgement, item} ->
         result = call_before(fn -> loop.reducer.(item, acc) end, loop.deadline)
         handle_reducer_result(result, task, tag, loop, acknowledgement)
 
-      {reference, result} when reference == task.ref ->
+      {^task_ref, result} ->
         Process.demonitor(task.ref, [:flush])
         producer_result(result, acc)
 
-      {:DOWN, reference, :process, _pid, reason} when reference == task.ref ->
+      {:DOWN, ^task_ref, :process, _pid, reason} ->
         {:error, error("launch_failed", inspect(reason))}
     after
       max(receive_for, 0) ->

@@ -168,6 +168,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp receive_stream(task, tag, context, state, deadline, timeout, receive_for) do
+    task_ref = task.ref
+
     receive do
       {^tag, :event, relay, acknowledgement, event} ->
         handle_relay_event(
@@ -180,11 +182,11 @@ defmodule ReyCode.Provider.OpenAICompatible do
           {relay, acknowledgement, event}
         )
 
-      {reference, result} when reference == task.ref ->
+      {^task_ref, result} ->
         Process.demonitor(task.ref, [:flush])
         finish_stream(result, state, context.emit, deadline, timeout)
 
-      {:DOWN, reference, :process, _pid, reason} when reference == task.ref ->
+      {:DOWN, ^task_ref, :process, _pid, reason} ->
         {:error,
          HTTP.error("launch_failed", "Provider stream crashed: #{inspect(reason)}", false)}
     after

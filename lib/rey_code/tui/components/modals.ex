@@ -436,8 +436,6 @@ defmodule ReyCode.TUI.Components.Modals do
       else: String.slice(value, 0, limit - 1) <> "…"
   end
 
-  defp truncate(_value, _limit), do: ""
-
   defp settings_header_controls(:providers), do: "Esc back   R recheck"
   defp settings_header_controls(_step), do: "Esc back"
 

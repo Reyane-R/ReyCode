@@ -70,7 +70,7 @@ defmodule ReyCode.Tool.Bash do
   end
 
   defp start(wrapper, wrapped_args, env, cwd) do
-    case Exile.Process.start_link([wrapper | wrapped_args],
+    case exile_start_link([wrapper | wrapped_args],
            cd: cwd,
            env: env,
            stderr: :consume
@@ -81,6 +81,12 @@ defmodule ReyCode.Tool.Bash do
       {:error, reason} ->
         {:error, "bash failed to start: #{inspect(reason)}"}
     end
+  end
+
+  # Exile's published start_link spec omits its supported :consume mode.
+  defp exile_start_link(args, opts) do
+    module = Exile.Process
+    module.start_link(args, opts)
   end
 
   # Streams stdout/stderr through a reader task that owns both pipes, while
@@ -110,7 +116,6 @@ defmodule ReyCode.Tool.Bash do
   end
 
   defp exit_status({:ok, status}) when is_integer(status), do: status
-  defp exit_status(status) when is_integer(status), do: status
 
   # SIGTERM reaches the wrapper, whose trap kills the entire process group;
   # awaiting exit lets Exile escalate to SIGKILL and reap the status.
