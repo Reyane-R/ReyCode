@@ -92,6 +92,25 @@ defmodule ReyCode.ToolExecutionTest do
                run("read", %{path: path, limit: 2})
     end
 
+    test "reassembles lines that span many chunks without buffering beyond the cap" do
+      path = Path.join(@workspace, "multi-chunk.txt")
+      # Several 64 KB chunks in one line, then a second short line.
+      File.write!(path, String.duplicate("y", 200_000) <> "\ntail\n")
+
+      assert %Result{ok: true, output: output, truncated: false} =
+               run("read", %{path: path, limit: 2})
+
+      assert output == String.duplicate("y", 200_000) <> "\ntail\n"
+    end
+
+    test "skips over multi-chunk lines when offsetting without retaining them" do
+      path = Path.join(@workspace, "offset-chunks.txt")
+      File.write!(path, String.duplicate("y", 130_000) <> "\nsecond\n")
+
+      assert %Result{ok: true, output: "second\n", truncated: false} =
+               run("read", %{path: path, offset: 2})
+    end
+
     test "rejects binary files instead of returning garbled bytes" do
       path = Path.join(@workspace, "blob.bin")
       File.write!(path, <<0, 1, 2, 3>>)
@@ -115,6 +134,20 @@ defmodule ReyCode.ToolExecutionTest do
     File.write!(Path.join(@workspace, "f2"), "")
     assert %Result{ok: true, output: output} = run("list", %{path: @workspace})
     assert output =~ "f1" and output =~ "f2"
+  end
+
+  test "list bounds its output and flags truncation" do
+    Enum.each(1..3, fn index -> File.write!(Path.join(@workspace, "l#{index}"), "") end)
+
+    assert %Result{ok: true, output: output, truncated: true, metadata: %{"entries" => 2}} =
+             run("list", %{path: @workspace}, tool_list_max_entries: 2)
+
+    assert byte_size(output) > 0
+  end
+
+  test "list rejects a non-string path instead of coercing it" do
+    assert %Result{ok: false, error: {:invalid_argument, :path}} =
+             run("list", %{path: 42})
   end
 
   describe "glob" do
@@ -253,6 +286,15 @@ defmodule ReyCode.ToolExecutionTest do
       assert output |> String.split("\n", trim: true) |> length() == 3
       assert skipped >= 1
     end
+
+    test "marks the scan truncated when the file-visit budget is exhausted" do
+      Enum.each(1..3, fn index ->
+        File.write!(Path.join(@workspace, "budget-#{index}.txt"), "needle\n")
+      end)
+
+      assert %Result{ok: true, truncated: true} =
+               run("grep", %{path: @workspace, pattern: "needle"}, tool_grep_max_files: 1)
+    end
   end
 
   describe "write" do
@@ -281,6 +323,25 @@ defmodule ReyCode.ToolExecutionTest do
                  tool_write_max_bytes: 16
                )
     end
+
+    test "rejects a numeric content instead of truncating the target file" do
+      path = Path.join(@workspace, "guard.txt")
+      File.write!(path, "precious")
+
+      assert %Result{ok: false, error: {:invalid_argument, :content}} =
+               run("write", %{path: path, content: 42})
+
+      assert File.read!(path) == "precious"
+    end
+
+    test "rejects a missing content argument" do
+      path = Path.join(@workspace, "missing-content.txt")
+
+      assert %Result{ok: false, error: {:missing_argument, :content}} =
+               run("write", %{path: path})
+
+      refute File.exists?(path)
+    end
   end
 
   describe "edit" do
@@ -292,6 +353,16 @@ defmodule ReyCode.ToolExecutionTest do
                run("edit", %{path: path, old_string: "bbb", new_string: "ZZZ"})
 
       assert File.read!(path) == "aaa ZZZ ccc"
+    end
+
+    test "rejects a numeric new_string instead of deleting the match" do
+      path = Path.join(@workspace, "typed-edit.txt")
+      File.write!(path, "keep alpha keep")
+
+      assert %Result{ok: false, error: {:invalid_argument, :new_string}} =
+               run("edit", %{path: path, old_string: "alpha", new_string: 7})
+
+      assert File.read!(path) == "keep alpha keep"
     end
 
     test "rejects ambiguous matches without writing" do

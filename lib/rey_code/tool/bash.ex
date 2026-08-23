@@ -24,27 +24,21 @@ defmodule ReyCode.Tool.Bash do
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    command = Support.arg(arguments, :command)
     policy = Keyword.fetch!(opts, :policy)
 
-    case command do
-      command when command in [nil, ""] ->
-        Result.error(:missing_command)
-
-      command ->
-        case cwd(arguments, request) do
-          {:ok, cwd} -> execute(command, cwd, policy, limits(policy))
-          {:error, reason} -> Result.error(reason)
-        end
+    with {:ok, command} <- Support.require_arg(arguments, :command),
+         :ok <- Support.require_present(command, :missing_command),
+         {:ok, cwd} <- cwd(arguments, request) do
+      execute(command, cwd, policy, limits(policy))
+    else
+      {:error, {:missing_argument, :command}} -> Result.error(:missing_command)
+      {:error, reason} -> Result.error(reason)
     end
   end
 
   defp cwd(arguments, %Request{workspace: workspace} = request) do
-    requested = Support.arg(arguments, :cwd, workspace)
-
-    case Workspace.contained?(requested, roots: Request.roots(request)) do
-      {:ok, canonical} -> {:ok, canonical}
-      {:error, reason} -> {:error, reason}
+    with {:ok, requested} <- Support.arg(arguments, :cwd, workspace) do
+      Workspace.contained?(requested, roots: Request.roots(request))
     end
   end
 

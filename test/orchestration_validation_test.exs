@@ -98,47 +98,64 @@ defmodule ReyCode.Orchestration.ValidationTest do
     end
   end
 
-  describe "gate_resolution/4" do
+  describe "gate_resolution/5" do
     test "normalizes decisions, targets, and reasons" do
       review = running_squad().squad.pending_review
 
       assert {:ok, ^review, :rework, "stories", ["Missing tests"]} =
                Validation.gate_resolution(
                  running_squad(),
+                 review_id(),
                  "rework",
                  "stories",
                  ["  Missing tests  ", "  "]
                )
 
       assert {:ok, ^review, :approve, nil, []} =
-               Validation.gate_resolution(running_squad(), :approve, "", [])
+               Validation.gate_resolution(running_squad(), review_id(), :approve, "", [])
+    end
+
+    test "rejects a decision addressed to a different review" do
+      assert {:error, :gate_review_not_found} =
+               Validation.gate_resolution(running_squad(), "turn-1:stale:9", :approve, nil, [])
+
+      assert {:error, :gate_review_not_found} =
+               Validation.gate_resolution(running_squad(), nil, :approve, nil, [])
     end
 
     test "preserves precondition and field error precedence" do
-      assert {:error, :turn_not_found} = Validation.gate_resolution(nil, :ship, :bad, :bad)
+      assert {:error, :turn_not_found} =
+               Validation.gate_resolution(nil, review_id(), :ship, :bad, :bad)
 
       assert {:error, :not_a_squad_turn} =
-               Validation.gate_resolution(%{mode: :compare}, :ship, :bad, :bad)
+               Validation.gate_resolution(%{mode: :compare}, review_id(), :ship, :bad, :bad)
 
       assert {:error, :squad_not_running} =
-               Validation.gate_resolution(%{mode: :squad, status: :completed}, :ship, :bad, :bad)
+               Validation.gate_resolution(
+                 %{mode: :squad, status: :completed},
+                 review_id(),
+                 :ship,
+                 :bad,
+                 :bad
+               )
 
       assert {:error, :gate_review_not_pending} =
                Validation.gate_resolution(
                  %{mode: :squad, status: :running, squad: %{pending_review: nil}},
+                 review_id(),
                  :ship,
                  :bad,
                  :bad
                )
 
       assert {:error, :invalid_gate_decision} =
-               Validation.gate_resolution(running_squad(), :ship, :bad, :bad)
+               Validation.gate_resolution(running_squad(), review_id(), :ship, :bad, :bad)
 
       assert {:error, :invalid_rework_target} =
-               Validation.gate_resolution(running_squad(), :approve, "stories", :bad)
+               Validation.gate_resolution(running_squad(), review_id(), :approve, "stories", :bad)
 
       assert {:error, :invalid_gate_reasons} =
-               Validation.gate_resolution(running_squad(), :approve, nil, :bad)
+               Validation.gate_resolution(running_squad(), review_id(), :approve, nil, :bad)
     end
   end
 
@@ -157,7 +174,9 @@ defmodule ReyCode.Orchestration.ValidationTest do
     %{
       mode: :squad,
       status: :running,
-      squad: %{pending_review: %{phase: "release_gate", cycle: 1}}
+      squad: %{pending_review: %{review_id: review_id(), phase: "release_gate", cycle: 1}}
     }
   end
+
+  defp review_id, do: "turn-1:release_gate:1"
 end

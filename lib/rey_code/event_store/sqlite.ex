@@ -55,15 +55,42 @@ defmodule ReyCode.EventStore.SQLite do
          LIMIT 1
          """) do
       [] ->
-        load_projection_tail(connection, nil, 0, replay_limit)
+        recover_tail(connection, nil, 0, replay_limit)
 
       [[sequence, version, payload, checksum]] ->
         with {:ok, projection} <-
                Checkpoint.decode(payload, version, sequence, checksum, max_checkpoint_bytes) do
-          load_projection_tail(connection, projection, sequence, replay_limit)
+          recover_tail(connection, projection, sequence, replay_limit)
         end
     end
   end
+
+  # A tail longer than the replay limit means the newest checkpoint is too
+  # stale (or absent) to resume from. The event log itself is intact, so fall
+  # back to one full replay instead of making startup impossible. The replay
+  # starts at the same schema-v2 snapshot barrier load/1 uses, so retired
+  # event types before the barrier are never decoded.
+  defp recover_tail(connection, projection, sequence, replay_limit) do
+    case load_projection_tail(connection, projection, sequence, replay_limit) do
+      {:error, {:replay_limit_exceeded, _, _}} ->
+        rows =
+          Sql.rows(connection, """
+          SELECT payload FROM events
+          WHERE sequence >= COALESCE(
+            (SELECT MAX(sequence) FROM events WHERE type = 'snapshot_recorded'),
+            1
+          )
+          ORDER BY sequence
+          """)
+
+        {:ok, nil, decode_events(rows)}
+
+      result ->
+        result
+    end
+  end
+
+  defp decode_events(rows), do: Enum.map(rows, fn [payload] -> Event.decode!(payload) end)
 
   def checkpoint(%{connection: connection, sequence: store_sequence}, projection, max_bytes) do
     sequence = projection[:sequence]
@@ -230,8 +257,7 @@ defmodule ReyCode.EventStore.SQLite do
     if length(event_rows) > replay_limit do
       {:error, {:replay_limit_exceeded, sequence, replay_limit}}
     else
-      events = Enum.map(event_rows, fn [payload] -> Event.decode!(payload) end)
-      {:ok, projection, events}
+      {:ok, projection, decode_events(event_rows)}
     end
   end
 

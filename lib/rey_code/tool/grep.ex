@@ -13,15 +13,15 @@ defmodule ReyCode.Tool.Grep do
   alias ReyCode.RuntimeConfig
   alias ReyCode.Tool.{Request, Result, Support}
 
-  @defaults [max_matches: 1_000, max_file_bytes: 512_000]
+  @defaults [max_matches: 1_000, max_file_bytes: 512_000, max_files: 10_000, timeout_ms: 10_000]
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    pattern = Support.arg(arguments, :pattern)
-    path = Support.arg(arguments, :path)
     limits = limits(Keyword.fetch!(opts, :policy))
 
-    with :ok <- Support.require_present(pattern, :missing_pattern),
+    with {:ok, pattern} <- Support.require_arg(arguments, :pattern),
+         :ok <- Support.require_present(pattern, :missing_pattern),
+         {:ok, path} <- Support.require_arg(arguments, :path),
          {:ok, regex} <- compile_pattern(pattern),
          {:ok, canonical} <- Support.within_roots(path, request) do
       search(canonical, regex, limits)
@@ -77,15 +77,24 @@ defmodule ReyCode.Tool.Grep do
   end
 
   defp visit(path, regex, acc, limits) do
-    case File.lstat(path) do
-      {:ok, %File.Stat{type: :regular}} ->
-        scan_file(path, regex, acc, limits)
+    cond do
+      acc.files >= limits.max_files ->
+        %{acc | truncated?: true}
 
-      {:ok, %File.Stat{type: :directory}} ->
-        walk(path, regex, acc, limits)
+      System.monotonic_time(:millisecond) > limits.deadline ->
+        %{acc | truncated?: true}
 
-      _other ->
-        %{acc | skipped: acc.skipped + 1}
+      true ->
+        case File.lstat(path) do
+          {:ok, %File.Stat{type: :regular}} ->
+            scan_file(path, regex, acc, limits)
+
+          {:ok, %File.Stat{type: :directory}} ->
+            walk(path, regex, acc, limits)
+
+          _other ->
+            %{acc | skipped: acc.skipped + 1}
+        end
     end
   end
 
@@ -140,7 +149,11 @@ defmodule ReyCode.Tool.Grep do
     %{
       max_matches: RuntimeConfig.policy(policy, :tool_grep_max_matches, @defaults[:max_matches]),
       max_file_bytes:
-        RuntimeConfig.policy(policy, :tool_grep_max_file_bytes, @defaults[:max_file_bytes])
+        RuntimeConfig.policy(policy, :tool_grep_max_file_bytes, @defaults[:max_file_bytes]),
+      max_files: RuntimeConfig.policy(policy, :tool_grep_max_files, @defaults[:max_files]),
+      deadline:
+        System.monotonic_time(:millisecond) +
+          RuntimeConfig.policy(policy, :tool_grep_timeout_ms, @defaults[:timeout_ms])
     }
   end
 end

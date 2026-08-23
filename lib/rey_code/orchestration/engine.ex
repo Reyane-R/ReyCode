@@ -100,17 +100,23 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:add_squad_directive, turn_id, directive})
   end
 
-  @doc "Records the human decision for a pending squad gate review."
-  @spec resolve_gate(term(), term(), term(), term(), GenServer.server()) ::
+  @doc """
+  Records the human decision for a pending squad gate review.
+
+  The `review_id` must match the review that was displayed when the caller
+  opened the modal, so a stale view can never resolve a newer gate.
+  """
+  @spec resolve_gate(term(), String.t() | nil, term(), term(), [term()], GenServer.server()) ::
           :ok | {:error, atom()}
   def resolve_gate(
         turn_id,
+        review_id,
         decision,
         target_phase \\ nil,
         reasons \\ [],
         server \\ __MODULE__
       ) do
-    GenServer.call(server, {:resolve_gate, turn_id, decision, target_phase, reasons})
+    GenServer.call(server, {:resolve_gate, turn_id, review_id, decision, target_phase, reasons})
   end
 
   @doc """
@@ -252,17 +258,7 @@ defmodule ReyCode.Orchestration.Engine do
     with {:ok, review, decision} <-
            Validation.tool_run_resolution(invocation, run_id, raw_decision),
          {:ok, run} <- resumable_run(invocation, review) do
-      entry = EventEntries.tool_run_approval_resolved(invocation, run, decision)
-      next = Persistence.append_and_apply!(state, [entry])
-
-      next =
-        if decision == :approve do
-          next |> Admission.enqueue(invocation_id) |> pump_admission()
-        else
-          finalize_invocation(next, invocation_id, {:failed, tool_denied_error()})
-        end
-
-      {:reply, :ok, next}
+      {:reply, :ok, resolve_tool_decision(state, invocation, run, decision)}
     else
       {:error, reason} ->
         {:reply, {:error, reason}, state}
@@ -440,13 +436,13 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   def handle_call(
-        {:resolve_gate, turn_id, raw_decision, raw_target_phase, raw_reasons},
+        {:resolve_gate, turn_id, review_id, raw_decision, raw_target_phase, raw_reasons},
         _from,
         state
       ) do
     turn = state.projection.turns[turn_id]
 
-    case Validation.gate_resolution(turn, raw_decision, raw_target_phase, raw_reasons) do
+    case Validation.gate_resolution(turn, review_id, raw_decision, raw_target_phase, raw_reasons) do
       {:ok, review, decision, target_phase, reasons} ->
         entries = [EventEntries.gate_resolved(turn, review, decision, target_phase, reasons)]
         entries = entries ++ budget_extension_entries(turn, decision)
@@ -616,6 +612,24 @@ defmodule ReyCode.Orchestration.Engine do
       _other ->
         {:error, :legacy_tool_approval_unresumable}
     end
+  end
+
+  defp resolve_tool_decision(state, invocation, run, :approve) do
+    entry = EventEntries.tool_run_approval_resolved(invocation, run, :approve)
+
+    state
+    |> Persistence.append_and_apply!([entry])
+    |> Admission.enqueue(invocation.id)
+    |> pump_admission()
+  end
+
+  # A denial and its terminal failure must share one durable transaction:
+  # persisting them separately could crash between the writes and strand the
+  # invocation in :waiting_tool_approval with no review left to resolve.
+  defp resolve_tool_decision(state, invocation, run, :deny) do
+    denial = EventEntries.tool_run_approval_resolved(invocation, run, :deny)
+
+    finalize_invocation(state, invocation.id, {:failed, tool_denied_error()}, [denial])
   end
 
   defp tool_denied_error do
@@ -1029,7 +1043,7 @@ defmodule ReyCode.Orchestration.Engine do
 
   defp budget_extension_entries(_turn, _decision), do: []
 
-  defp finalize_invocation(state, invocation_id, outcome) do
+  defp finalize_invocation(state, invocation_id, outcome, prepend \\ []) do
     state = release_execution(state, invocation_id)
     invocation = state.projection.invocations[invocation_id]
 
@@ -1048,22 +1062,24 @@ defmodule ReyCode.Orchestration.Engine do
         turn.mode
         |> WorkflowDispatcher.for_mode()
         |> then(& &1.finalize(invocation, message, outcome, opts))
-        |> apply_finalization(state, invocation)
+        |> apply_finalization(state, invocation, prepend)
       end
 
     pump_admission(next)
   end
 
-  defp apply_finalization({:advance, entries}, state, invocation) do
-    state |> Persistence.append_and_apply!(entries) |> advance_turn(invocation.turn_id)
+  defp apply_finalization({:advance, entries}, state, invocation, prepend) do
+    state
+    |> Persistence.append_and_apply!(prepend ++ entries)
+    |> advance_turn(invocation.turn_id)
   end
 
-  defp apply_finalization({:retry, entries, retry_spec}, state, invocation) do
+  defp apply_finalization({:retry, entries, retry_spec}, state, invocation, prepend) do
     turn = state.projection.turns[invocation.turn_id]
     room = state.projection.rooms[invocation.room_id]
     invocation_entries = build_invocation_entries(room, turn, [retry_spec])
 
-    next = Persistence.append_and_apply!(state, entries ++ invocation_entries)
+    next = Persistence.append_and_apply!(state, prepend ++ entries ++ invocation_entries)
     start_invocation_workers(next, invocation_entries)
   end
 

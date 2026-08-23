@@ -50,7 +50,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
     with_application_env(config.application_env, fn ->
       start_live_runtime(config)
       {room_id, workspace} = prepare_room(config)
-      turn = execute_turn(room_id, workspace, config.theme)
+      turn = execute_turn(room_id, workspace, config)
       Mix.shell().info(render(turn, workspace, config.format))
 
       if turn.status != :completed, do: Mix.raise("Squad did not approve the theme")
@@ -75,6 +75,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
       ],
       format: if(opts[:json], do: :json, else: :human),
       model: model,
+      release: Keyword.get(opts, :release, "auto"),
       theme: Enum.join(args, " "),
       workspace: opts[:workspace]
     }
@@ -143,11 +144,11 @@ defmodule Mix.Tasks.ReyCode.Squad do
     end
   end
 
-  defp execute_turn(room_id, workspace, theme) do
+  defp execute_turn(room_id, workspace, config) do
     Mix.shell().info("Workspace: #{workspace}")
 
-    case ReyCode.post_message(room_id, theme, :squad) do
-      {:ok, turn_id} -> wait(turn_id, nil, 12_000)
+    case ReyCode.post_message(room_id, config.theme, :squad) do
+      {:ok, turn_id} -> wait(turn_id, config, nil, wait_attempts())
       {:error, reason} -> Mix.raise("Could not start squad turn: #{inspect(reason)}")
     end
   end
@@ -173,9 +174,16 @@ defmodule Mix.Tasks.ReyCode.Squad do
     end
   end
 
-  defp wait(_turn_id, _phase, 0), do: Mix.raise("Squad timed out")
+  # The machine budget must exceed the permitted provider timeout so one slow
+  # provider round cannot exhaust it; human gate resolutions reset it.
+  @wait_poll_ms 25
+  @wait_timeout_ms 900_000
 
-  defp wait(turn_id, previous_phase, attempts) do
+  defp wait_attempts, do: div(@wait_timeout_ms, @wait_poll_ms)
+
+  defp wait(_turn_id, _config, _previous_phase, 0), do: Mix.raise("Squad timed out")
+
+  defp wait(turn_id, config, previous_phase, attempts) do
     turn =
       case Map.fetch(ReyCode.snapshot().turns, turn_id) do
         {:ok, turn} -> turn
@@ -183,16 +191,71 @@ defmodule Mix.Tasks.ReyCode.Squad do
       end
 
     phase = turn.squad && turn.squad.phase
+    announce_phase(phase, previous_phase)
+    step(turn, turn_id, config, phase, attempts)
+  end
 
-    if phase != nil and phase != previous_phase do
-      Mix.shell().info("[squad] #{phase}")
-    end
+  defp announce_phase(phase, previous_phase) do
+    if phase != nil and phase != previous_phase, do: Mix.shell().info("[squad] #{phase}")
+  end
 
-    if turn.status in [:completed, :failed, :partial] do
-      turn
+  defp step(%{status: status} = turn, _turn_id, _config, _phase, _attempts)
+       when status in [:completed, :failed, :partial],
+       do: turn
+
+  defp step(turn, turn_id, config, phase, attempts) do
+    if human_gate_pending?(turn, config) do
+      resolve_human_gate(turn_id, turn)
+      wait(turn_id, config, phase, wait_attempts())
     else
-      Process.sleep(10)
-      wait(turn_id, phase, attempts - 1)
+      Process.sleep(@wait_poll_ms)
+      wait(turn_id, config, phase, attempts - 1)
+    end
+  end
+
+  defp human_gate_pending?(turn, config) do
+    config.release == "wait" and turn.squad != nil and
+      Map.get(turn.squad, :pending_review) != nil
+  end
+
+  # A headless --release wait run has no TUI, so the terminal itself is the
+  # owner console: print the pending gate, read a decision, submit it with the
+  # review id so a stale answer can never resolve a newer gate.
+  defp resolve_human_gate(turn_id, turn) do
+    review = turn.squad.pending_review
+    Mix.shell().info("[squad] release gate awaiting the owner (leader says: #{review.decision})")
+
+    decision = prompt_gate_decision()
+
+    case ReyCode.resolve_gate(turn_id, Map.get(review, :review_id), decision, nil, []) do
+      :ok ->
+        Mix.shell().info("[squad] release gate resolved: #{decision}")
+
+      {:error, reason} ->
+        Mix.shell().info("[squad] could not resolve the gate (#{reason}); asking again")
+        resolve_human_gate(turn_id, turn)
+    end
+  end
+
+  defp prompt_gate_decision do
+    case parse_gate_decision(Mix.shell().prompt("Release gate [a]pprove / [r]ework / a[b]ort:")) do
+      {:ok, decision} ->
+        decision
+
+      :error ->
+        Mix.shell().info("Unrecognized decision; answer a, r, or b.")
+        prompt_gate_decision()
+    end
+  end
+
+  @doc false
+  @spec parse_gate_decision(String.t()) :: {:ok, :approve | :rework | :abort} | :error
+  def parse_gate_decision(answer) do
+    case answer |> String.trim() |> String.downcase() do
+      choice when choice in ["a", "approve"] -> {:ok, :approve}
+      choice when choice in ["r", "rework"] -> {:ok, :rework}
+      choice when choice in ["b", "abort"] -> {:ok, :abort}
+      _other -> :error
     end
   end
 

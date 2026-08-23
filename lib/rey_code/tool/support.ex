@@ -4,17 +4,45 @@ defmodule ReyCode.Tool.Support do
   alias ReyCode.Security.Workspace
   alias ReyCode.Tool.Request
 
-  @doc "Reads a string argument, returning `default` when missing, non-binary, or keyed by atom/string."
-  @spec arg(map(), atom() | String.t(), term()) :: term()
+  @doc """
+  Reads a required string argument.
+
+  A missing key and a wrongly typed value are distinct failures: neither is
+  coerced, so a numeric or map `content` can never silently become an empty
+  string that truncates a file.
+  """
+  @spec require_arg(map(), atom() | String.t()) ::
+          {:ok, String.t()} | {:error, {:missing_argument | :invalid_argument, atom()}}
+  def require_arg(arguments, key) when is_map(arguments) do
+    case fetch_argument(arguments, key) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      {:ok, _other} -> {:error, {:invalid_argument, key}}
+      :error -> {:error, {:missing_argument, key}}
+    end
+  end
+
+  @doc """
+  Reads an optional string argument, substituting `default` only when the key
+  is absent. A present but non-binary value is an error, never a coercion.
+  """
+  @spec arg(map(), atom() | String.t(), term()) ::
+          {:ok, term()} | {:error, {:invalid_argument, atom()}}
   def arg(arguments, key, default \\ nil) when is_map(arguments) do
+    case fetch_argument(arguments, key) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      {:ok, _other} -> {:error, {:invalid_argument, key}}
+      :error -> {:ok, default}
+    end
+  end
+
+  defp fetch_argument(arguments, key) do
     string_key = to_string(key)
 
     with :error <- Map.fetch(arguments, string_key),
          :error <- Map.fetch(arguments, key) do
-      default
+      :error
     else
-      {:ok, value} when is_binary(value) -> value
-      {:ok, _other} -> default
+      {:ok, value} -> {:ok, value}
     end
   end
 
@@ -43,11 +71,13 @@ defmodule ReyCode.Tool.Support do
   end
 
   @doc "Returns `{:ok, canonical}` when `key` is present and resolves within the trusted roots."
-  @spec require_path(map(), atom(), Request.t()) :: {:ok, String.t()} | {:error, :missing_path}
+  @spec require_path(map(), atom(), Request.t()) ::
+          {:ok, String.t()} | {:error, :missing_path | {:invalid_argument, atom()} | term()}
   def require_path(arguments, key, %Request{} = request) do
-    case arg(arguments, key) do
-      nil -> {:error, :missing_path}
-      path -> within_roots(path, request)
+    case require_arg(arguments, key) do
+      {:ok, path} -> within_roots(path, request)
+      {:error, {:missing_argument, _key}} -> {:error, :missing_path}
+      {:error, _reason} = error -> error
     end
   end
 

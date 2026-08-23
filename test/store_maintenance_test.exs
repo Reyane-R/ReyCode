@@ -21,6 +21,26 @@ defmodule ReyCode.StoreMaintenanceTest do
     assert EventStore.load(restored_store) == [event]
   end
 
+  test "restore preserves an existing parent directory's permissions" do
+    source = tmp_path("source.sqlite3")
+    backup = tmp_path("backup.sqlite3")
+    parent = tmp_path("kept-parent")
+    restored = Path.join(parent, "restored.sqlite3")
+    {store, id} = start_store(source)
+
+    assert {:ok, _event} = EventStore.append(:room_created, room_data(), store, metadata())
+    assert {:ok, _manifest} = EventStore.backup(backup, store)
+    stop_supervised!(id)
+
+    File.mkdir_p!(parent)
+    File.chmod!(parent, 0o755)
+
+    assert {:ok, %{sequence: 1}} = StoreMaintenance.restore(backup, restored)
+
+    assert {:ok, %File.Stat{} = stat} = File.stat(parent)
+    assert Bitwise.band(stat.mode, 0o777) == 0o755
+  end
+
   test "detects a live destination store through a symlink alias" do
     source = tmp_path("source.sqlite3")
     backup = tmp_path("backup.sqlite3")

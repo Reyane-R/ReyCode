@@ -24,13 +24,12 @@ defmodule ReyCode.Orchestration.Squad.Output do
 
   defp output(_metadata, _body), do: {:error, :invalid_squad_output}
 
-  defp validate(%{"kind" => "artifact"} = output, role_id, _phase) do
+  defp validate(%{"kind" => "artifact"} = output, role_id, phase) do
     kind = output["artifact_type"]
     blockers = Map.get(output, "blockers", [])
 
     if is_binary(kind) and is_binary(output["summary"]) and string_list?(blockers) and
-         (Squad.eligible?(role_id, :record, kind) or
-            Squad.eligible?(role_id, :record_legacy, kind)) do
+         kind in Squad.acceptable_artifacts(phase, role_id) do
       {:ok, Map.put(output, "blockers", blockers)}
     else
       {:error, :invalid_artifact}
@@ -42,7 +41,7 @@ defmodule ReyCode.Orchestration.Squad.Output do
 
     with true <- expected != [],
          {:ok, artifacts} <- artifact_list(output["artifacts"]),
-         {:ok, artifacts} <- validate_artifacts(artifacts, role_id),
+         {:ok, artifacts} <- validate_artifacts(artifacts, role_id, phase),
          true <- exact_bundle?(artifacts, expected) do
       {:ok, Map.put(output, "artifacts", artifacts)}
     else
@@ -50,13 +49,14 @@ defmodule ReyCode.Orchestration.Squad.Output do
     end
   end
 
-  defp validate(%{"kind" => "gate"} = output, role_id, _phase) do
+  defp validate(%{"kind" => "gate"} = output, role_id, phase) do
     decision = output["decision"]
     reasons = Map.get(output, "reasons", [])
     target_phase = Map.get(output, "target_phase", nil)
 
     if is_binary(decision) and string_list?(reasons) and
          (is_nil(target_phase) or is_binary(target_phase)) and
+         Squad.decides_gate?(phase, role_id) and
          Squad.eligible?(role_id, :decide, decision) do
       {:ok, output |> Map.put("reasons", reasons) |> Map.put("target_phase", target_phase)}
     else
@@ -71,10 +71,10 @@ defmodule ReyCode.Orchestration.Squad.Output do
 
   defp string_list?(values), do: is_list(values) and Enum.all?(values, &is_binary/1)
 
-  defp validate_artifacts(artifacts, role_id) do
+  defp validate_artifacts(artifacts, role_id, phase) do
     Enum.reduce_while(artifacts, {:ok, []}, fn
       artifact, {:ok, valid} when is_map(artifact) ->
-        case validate(Map.put(artifact, "kind", "artifact"), role_id, nil) do
+        case validate(Map.put(artifact, "kind", "artifact"), role_id, phase) do
           {:ok, artifact} -> {:cont, {:ok, [Map.delete(artifact, "kind") | valid]}}
           {:error, _reason} -> {:halt, {:error, :invalid_artifact_bundle}}
         end

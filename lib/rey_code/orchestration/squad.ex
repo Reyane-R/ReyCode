@@ -162,7 +162,7 @@ defmodule ReyCode.Orchestration.Squad do
   def phases, do: @phases
 
   @doc "Looks up a workflow phase by index or stable ID."
-  @spec phase(non_neg_integer() | String.t()) :: phase() | nil
+  def phase(nil), do: nil
   def phase(index) when is_integer(index), do: Enum.at(@phases, index)
   def phase(id) when is_binary(id), do: @phase_by_id[id]
 
@@ -233,6 +233,34 @@ defmodule ReyCode.Orchestration.Squad do
       _ -> []
     end
   end
+
+  @doc """
+  Returns every artifact kind a role may legitimately record in a phase.
+
+  This is the phase-aware acceptance set for provider output: the required
+  kinds for the phase plus the legacy envelopes that phase still completes
+  with. A kind the role owns in some *other* phase is not acceptable here.
+  """
+  @spec acceptable_artifacts(String.t() | nil, String.t()) :: [String.t()]
+  def acceptable_artifacts(phase_id, role_id) do
+    Enum.uniq(required_artifacts(phase_id, role_id) ++ legacy_artifacts(role_id))
+  end
+
+  @doc "Checks whether a role is the decider for a phase's gate."
+  @spec decides_gate?(String.t() | nil, String.t()) :: boolean()
+  def decides_gate?(phase_id, role_id) do
+    case phase(phase_id) do
+      %{gate: true, roles: roles} -> role_id in roles
+      _other -> false
+    end
+  end
+
+  # Schema-v2 logs may carry the former single implementation envelope; it is
+  # acceptable only from the role whose phase still completes with it.
+  @legacy_artifacts ["implementation"]
+
+  defp legacy_artifacts(role_id),
+    do: Enum.filter(@legacy_artifacts, &eligible?(role_id, :record_legacy, &1))
 
   @doc "Checks whether the recorded artifact kinds satisfy a phase's requirements."
   @spec phase_artifacts_complete?(phase(), MapSet.t(String.t())) :: boolean()

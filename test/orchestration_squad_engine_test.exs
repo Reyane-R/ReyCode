@@ -177,10 +177,23 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert turn.squad.pending_review.actor == "agent"
     refute Enum.any?(turn.squad.decisions, &(&1.phase == "release_gate"))
 
-    assert {:error, :invalid_gate_decision} = Engine.resolve_gate(turn_id, :ship, nil, [], engine)
+    review_id = turn.squad.pending_review.review_id
+
+    assert {:error, :invalid_gate_decision} =
+             Engine.resolve_gate(turn_id, review_id, :ship, nil, [], engine)
+
+    assert {:error, :gate_review_not_found} =
+             Engine.resolve_gate(turn_id, "turn-1:stale:9", :approve, nil, [], engine)
 
     assert :ok =
-             Engine.resolve_gate(turn_id, :approve, nil, ["Owner accepted the evidence"], engine)
+             Engine.resolve_gate(
+               turn_id,
+               review_id,
+               :approve,
+               nil,
+               ["Owner accepted the evidence"],
+               engine
+             )
 
     completed = wait_until_terminal(turn_id, engine)
     assert completed.status == :completed
@@ -234,6 +247,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
       assert :ok =
                Engine.resolve_gate(
                  turn_id,
+                 turn.squad.pending_review.review_id,
                  :rework,
                  "integration",
                  ["owner approves cycle #{cycle}"],
@@ -246,7 +260,15 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     final = wait_until_pending_review(turn_id, engine)
     assert final.squad.pending_review.decision == "approve"
 
-    assert :ok = Engine.resolve_gate(turn_id, :approve, nil, ["owner approves release"], engine)
+    assert :ok =
+             Engine.resolve_gate(
+               turn_id,
+               final.squad.pending_review.review_id,
+               :approve,
+               nil,
+               ["owner approves release"],
+               engine
+             )
 
     completed = wait_until_terminal(turn_id, engine)
     assert completed.status == :completed
@@ -275,7 +297,15 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert turn.squad.release_authority == "human"
     assert turn.squad.pending_review.decision == "approve"
 
-    assert :ok = Engine.resolve_gate(turn_id, :approve, nil, ["owner approves release"], engine)
+    assert :ok =
+             Engine.resolve_gate(
+               turn_id,
+               turn.squad.pending_review.review_id,
+               :approve,
+               nil,
+               ["owner approves release"],
+               engine
+             )
 
     assert wait_until_terminal(turn_id, engine).status == :completed
   end

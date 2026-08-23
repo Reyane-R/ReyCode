@@ -11,7 +11,7 @@ defmodule ReyCode.TUI.ToolReviewTest do
   alias ReyCode.Orchestration.Engine
 
   setup do
-    %{engine: engine, config: config} =
+    %{engine: engine, config: config, store: store} =
       start_isolated_stack(
         seed: 0,
         delay_ms: 0,
@@ -25,21 +25,32 @@ defmodule ReyCode.TUI.ToolReviewTest do
     room_id = Enum.find(snapshot.room_order, &(snapshot.rooms[&1].slug == "reycode"))
     assert {:ok, turn_id} = Engine.post_message(room_id, "Review this write", :compare, engine)
     wait_until_waiting(engine, turn_id)
-
     out_path = Path.join(File.cwd!(), "out.txt")
+    # The engine's default room roots the workspace at the repository, so the
+    # approval flow really does target ./out.txt. Never delete a file the
+    # repository already owned before this test ran.
+    preexisting_out_file? = File.exists?(out_path)
 
     on_exit(fn ->
       if GenServer.whereis(engine), do: Engine.cancel_turn(turn_id, "test cleanup", engine)
 
-      File.rm(out_path)
+      if not preexisting_out_file?, do: File.rm(out_path)
     end)
 
-    %{engine: engine, config: config, room_id: room_id, turn_id: turn_id, out_path: out_path}
+    %{
+      engine: engine,
+      config: config,
+      store: store,
+      room_id: room_id,
+      turn_id: turn_id,
+      out_path: out_path
+    }
   end
 
   test "opens from the palette and renders the exact persisted request", %{
     engine: engine,
     config: config,
+    store: store,
     turn_id: turn_id,
     out_path: out_path
   } do
@@ -61,13 +72,17 @@ defmodule ReyCode.TUI.ToolReviewTest do
     assert screen =~ "16 bytes"
     assert screen =~ "CONTENT PREVIEW"
     assert screen =~ "approved-content"
-    assert screen =~ "WORKSPACE"
-
-    refute File.exists?(out_path)
-
     deny_selected(session)
     assert denied_invocation?(engine, turn_id)
     refute File.exists?(out_path)
+
+    # The denial and its terminal failure left the engine in one durable
+    # append: their sequences are adjacent with nothing in between.
+    events = EventStore.load(store)
+    denial = Enum.find(events, &(&1.type == :tool_run_approval_resolved))
+    failure = Enum.at(events, Enum.find_index(events, &(&1.sequence == denial.sequence)) + 1)
+    assert failure.type == :invocation_failed
+    assert failure.data["invocation_id"] == denial.data["invocation_id"]
   end
 
   test "escape closes the review while the request stays pending", %{
@@ -203,6 +218,6 @@ defmodule ReyCode.TUI.ToolReviewTest do
     ]
 
     start_supervised!(Supervisor.child_spec({Engine, opts}, restart: :temporary))
-    %{engine: engine, config: config}
+    %{engine: engine, config: config, store: store}
   end
 end

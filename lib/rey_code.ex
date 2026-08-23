@@ -28,11 +28,12 @@ defmodule ReyCode do
     Engine.add_squad_directive(turn_id, directive)
   end
 
-  @doc "Resolves a pending human squad gate review."
-  @spec resolve_gate(String.t(), atom() | String.t(), String.t() | nil, [String.t()]) ::
-          :ok | {:error, atom()}
-  def resolve_gate(turn_id, decision, target_phase \\ nil, reasons \\ []) do
-    Engine.resolve_gate(turn_id, decision, target_phase, reasons)
+  @doc "Resolves a pending human squad gate review by its review id."
+  @spec resolve_gate(String.t(), String.t() | nil, atom() | String.t(), String.t() | nil, [
+          String.t()
+        ]) :: :ok | {:error, atom()}
+  def resolve_gate(turn_id, review_id, decision, target_phase \\ nil, reasons \\ []) do
+    Engine.resolve_gate(turn_id, review_id, decision, target_phase, reasons)
   end
 
   @doc "Resolves a pending owner approval for a durable tool run."

@@ -255,7 +255,7 @@ defmodule ReyCode.EventStoreSQLiteTest do
     assert :ok = SQLite.close(imported)
   end
 
-  test "rejects an event tail larger than the replay policy" do
+  test "falls back to a full replay when the tail exceeds the replay policy" do
     path = tmp_path("replay-limit.sqlite3")
     {store, id} = start_store(path)
 
@@ -268,7 +268,54 @@ defmodule ReyCode.EventStoreSQLiteTest do
     stop_supervised!(id)
 
     {:ok, state} = SQLite.open(path)
-    assert {:error, {:replay_limit_exceeded, 0, 1}} = SQLite.load_projection(state, 1, 1_000_000)
+
+    # A replay limit that the un-checkpointed tail exceeds must not make the
+    # intact log unrecoverable: the store replays everything instead.
+    assert {:ok, nil, events} = SQLite.load_projection(state, 1, 1_000_000)
+    assert Enum.map(events, & &1.sequence) == [1, 2]
+    assert :ok = SQLite.close(state)
+  end
+
+  test "the full-replay fallback starts at the legacy snapshot barrier" do
+    path = tmp_path("replay-barrier.sqlite3")
+    {store, id} = start_store(path)
+
+    Enum.each(1..3, fn i ->
+      assert {:ok, _event} =
+               EventStore.append(
+                 :room_created,
+                 room_data("room-#{i}"),
+                 store,
+                 metadata("room-#{i}")
+               )
+    end)
+
+    stop_supervised!(id)
+
+    connection = open_sqlite(path)
+
+    :done =
+      sqlite_run(
+        connection,
+        "UPDATE events SET type = 'message_delta_appended' WHERE sequence = 1",
+        []
+      )
+
+    :done =
+      sqlite_run(
+        connection,
+        "UPDATE events SET type = 'snapshot_recorded' WHERE sequence = 2",
+        []
+      )
+
+    :ok = Exqlite.Sqlite3.close(connection)
+
+    {:ok, state} = SQLite.open(path)
+
+    # Sequence 1 carries a retired type that can no longer decode; the
+    # fallback must replay from the barrier at sequence 2, not from zero.
+    assert {:ok, nil, events} = SQLite.load_projection(state, 1, 1_000_000)
+    assert Enum.map(events, & &1.sequence) == [2, 3]
     assert :ok = SQLite.close(state)
   end
 

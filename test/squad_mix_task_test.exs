@@ -44,6 +44,15 @@ defmodule ReyCode.SquadMixTaskTest do
     assert output =~ "Monte Carlo: 25 runs"
   end
 
+  test "parses headless release-gate decisions leniently" do
+    assert SquadTask.parse_gate_decision("a\n") == {:ok, :approve}
+    assert SquadTask.parse_gate_decision("  Approve  ") == {:ok, :approve}
+    assert SquadTask.parse_gate_decision("R") == {:ok, :rework}
+    assert SquadTask.parse_gate_decision("abort\n") == {:ok, :abort}
+    assert SquadTask.parse_gate_decision("ship it") == :error
+    assert SquadTask.parse_gate_decision("") == :error
+  end
+
   test "live runs restore application configuration after startup failure" do
     keys = [:start_tui, :squad_release_gate_human, :squad_rework_budget]
     previous = Map.new(keys, &{&1, Application.fetch_env(:rey_code, &1)})

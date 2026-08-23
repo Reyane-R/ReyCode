@@ -9,9 +9,6 @@ defmodule ReyCode.Tool.Write do
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    path = Support.arg(arguments, :path)
-    content = Support.arg(arguments, :content, "")
-
     max_bytes =
       RuntimeConfig.policy(
         Keyword.fetch!(opts, :policy),
@@ -19,8 +16,9 @@ defmodule ReyCode.Tool.Write do
         @max_bytes_default
       )
 
-    with :ok <- Support.require_present(path, :missing_path),
-         true <- is_binary(content),
+    with {:ok, path} <- Support.require_arg(arguments, :path),
+         {:ok, content} <- Support.require_arg(arguments, :content),
+         :ok <- Support.require_present(path, :missing_path),
          :ok <- require_size(content, max_bytes),
          {:ok, canonical} <- Support.within_roots(path, request) do
       case File.write(canonical, content) do
@@ -34,7 +32,6 @@ defmodule ReyCode.Tool.Write do
       end
     else
       {:error, reason} -> Result.error(reason)
-      false -> Result.error(:invalid_content)
     end
   end
 
