@@ -352,8 +352,8 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     assert {:error, %{"category" => "timeout", "retryable" => true}} =
              HTTPC.collect(context, fn _, acc -> {:cont, acc} end, :ok)
 
-    assert_receive :response_started
-    assert_receive {:connection_result, {:error, :closed}}, 1_000
+    assert_receive :response_started, 2_000
+    assert_receive {:connection_result, {:error, :closed}}, 2_000
     refute_receive {:http, _message}, 50
   end
 

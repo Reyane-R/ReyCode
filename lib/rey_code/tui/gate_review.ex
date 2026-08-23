@@ -1,5 +1,10 @@
 defmodule ReyCode.TUI.GateReview do
-  @moduledoc "State transitions for owner review of a squad release gate."
+  @moduledoc """
+  State, input handling, and rendering for owner review of a squad release
+  gate.
+  """
+
+  use Breeze.Component
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
@@ -89,4 +94,67 @@ defmodule ReyCode.TUI.GateReview do
   defp resolution_notice(:approve), do: "Release approved"
   defp resolution_notice(:rework), do: "Release returned for rework"
   defp resolution_notice(:abort), do: "Release aborted"
+
+  @doc "Keeps global focus unchanged while the review is open."
+  @spec focus(map()) :: map()
+  def focus(term), do: term
+
+  @doc "Handles one key press while the review modal is active."
+  @spec handle_input(String.t(), map()) :: {:noreply, map()}
+  def handle_input(key, term) when key in ["ArrowUp", "ArrowDown", "j", "k"] do
+    offset = if key in ["ArrowUp", "k"], do: -1, else: 1
+    {:noreply, move(term, offset)}
+  end
+
+  def handle_input(key, term) when key in ["a", "A", "r", "R", "b", "B"], do: choose(term, key)
+  def handle_input("Enter", term), do: submit(term)
+  def handle_input("Escape", term), do: {:noreply, cancel(term)}
+  def handle_input(_key, term), do: {:noreply, term}
+
+  @doc "Handles component events; the review declares none."
+  @spec handle_event(term(), map(), map()) :: {:noreply, map()} | :unhandled
+  def handle_event(_event, _payload, _term), do: :unhandled
+
+  attr :term, :map, required: true
+
+  @doc "Renders the release-gate review modal."
+  def modal(assigns) do
+    ~H"""
+    <box class="w-screen h-screen bg px-4 pt-2">
+      <box class="w-full border-b border-muted pb-1">
+        <box class="font-bold text-primary">Release gate review</box>
+        <box class="text-muted">
+          The squad leader recommends a decision; the owner is authoritative.
+        </box>
+      </box>
+      <box class="pt-2 text-muted">LEADER RECOMMENDATION</box>
+      <box class="pt-1 font-bold text-warning">{@term.gate_review.review.decision}</box>
+      <box :if={@term.gate_review.review.reasons == []} class="pt-1 text-muted">
+        No reasons supplied.
+      </box>
+      <box
+        :for={reason <- @term.gate_review.review.reasons}
+        class="pt-1 text-muted w-full overflow-hidden"
+      >
+        - {reason}
+      </box>
+      <box class="pt-3 text-muted">OWNER DECISION</box>
+      <box
+        :for={{decision, index} <- Enum.with_index(@term.gate_review_options)}
+        class={row_class(index, @term.gate_review.index)}
+      >
+        {marker(index, @term.gate_review.index)} {decision}
+      </box>
+      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box class="pt-3 text-muted">A approve   R rework   B abort   Enter confirm   Esc close</box>
+    </box>
+    """
+  end
+
+  defp row_class(index, index), do: "w-full px-1 bg-panel font-bold text-primary"
+
+  defp row_class(_index, _selected), do: "w-full px-1 text-muted"
+
+  defp marker(index, index), do: ">"
+  defp marker(_index, _selected), do: " "
 end

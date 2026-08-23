@@ -1,7 +1,22 @@
 defmodule ReyCode.TUI.SlashPalette do
-  @moduledoc "Command-palette data and state transitions for the terminal UI."
+  @moduledoc """
+  Command-palette data, state transitions, and command execution for the
+  terminal UI.
+  """
 
   alias Breeze.{Component, View}
+  alias ReyCode.TUI.State
+
+  alias ReyCode.TUI.{
+    Cancellation,
+    Directive,
+    GateReview,
+    NewRoom,
+    Settings,
+    SquadStatus,
+    ToolReview,
+    Workspace
+  }
 
   @commands [
     %{command: "/agents", description: "Configure room agents", action: :settings},
@@ -20,6 +35,52 @@ defmodule ReyCode.TUI.SlashPalette do
     %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
     %{command: "/workspace", description: "Show the full workspace path", action: :workspace}
   ]
+
+  @doc "Completes the palette query when Tab is pressed while it is open."
+  @spec focus(map()) :: map()
+  def focus(term), do: complete(term)
+
+  @doc "Executes the highlighted palette command."
+  @spec submit(map()) :: {:noreply, map()}
+  def submit(term), do: execute_selected(term)
+
+  @doc "Handles one key press while the palette is open."
+  @spec handle_input(String.t(), map()) :: {:noreply, map()}
+  def handle_input(key, term) when key in ["ArrowUp", "ArrowDown"] do
+    offset = if key == "ArrowUp", do: -1, else: 1
+    {:noreply, move(term, offset)}
+  end
+
+  def handle_input("Enter", term), do: execute_selected(term)
+
+  def handle_input("Backspace", %{assigns: %{slash: slash}} = term) do
+    query = String.slice(slash.query, 0, max(String.length(slash.query) - 1, 0))
+    term = set_query(term, query)
+
+    if query == "" do
+      {:noreply, close(term)}
+    else
+      {:noreply, term}
+    end
+  end
+
+  def handle_input("Escape", term), do: {:noreply, cancel(term)}
+
+  def handle_input(key, %{assigns: %{slash: slash}} = term) do
+    if String.length(key) == 1 and key >= " " do
+      {:noreply, set_query(term, slash.query <> key)}
+    else
+      {:noreply, term}
+    end
+  end
+
+  @doc "Handles prompt changes while the palette owns the composer."
+  @spec handle_event(term(), map(), map()) :: {:noreply, map()} | :unhandled
+  def handle_event("prompt_changed", %{value: value}, term) do
+    {:noreply, set_query(term, value)}
+  end
+
+  def handle_event(_event, _payload, _term), do: :unhandled
 
   @doc "Returns the complete command registry in display order."
   @spec commands() :: [map()]
@@ -163,6 +224,59 @@ defmodule ReyCode.TUI.SlashPalette do
     drafts = Map.put(term.assigns.drafts, term.assigns.selected_room_id, "")
     Component.assign(term, drafts: drafts)
   end
+
+  @doc """
+  Runs a command typed exactly into the prompt, or flags it as unknown.
+  """
+  @spec run_typed(map(), String.t()) :: {:noreply, map()}
+  def run_typed(term, command) do
+    case command(command) do
+      nil ->
+        {:noreply,
+         Component.assign(term, notice: "Unknown command. Type / to see available commands.")}
+
+      entry ->
+        term |> clear_draft() |> run_action(entry.action)
+    end
+  end
+
+  @doc "Runs the currently highlighted palette match."
+  @spec execute_selected(map()) :: {:noreply, map()}
+  def execute_selected(%{assigns: %{slash: slash}} = term) do
+    term = clear_draft(term)
+
+    case Enum.at(matches(slash.query), slash.index) do
+      nil -> {:noreply, close(term, "Unknown command: #{slash.query}")}
+      match -> run_action(term, match.action)
+    end
+  end
+
+  defp run_action(term, :new_room), do: {:noreply, term |> NewRoom.open() |> clear()}
+
+  defp run_action(term, :cancel), do: {:noreply, Cancellation.open(term)}
+
+  defp run_action(term, :directive), do: {:noreply, Directive.open(term)}
+
+  defp run_action(term, :next_room),
+    do: {:noreply, term |> State.select_adjacent_room(1) |> close()}
+
+  defp run_action(term, :cycle_mode),
+    do: {:noreply, term |> close() |> ReyCode.TUI.cycle_mode_state()}
+
+  defp run_action(term, :squad), do: {:noreply, term |> close() |> Component.assign(mode: :squad)}
+
+  defp run_action(term, :squad_status), do: {:noreply, SquadStatus.open(term)}
+
+  defp run_action(term, :workspace), do: {:noreply, Workspace.open(term)}
+
+  defp run_action(term, :settings), do: {:noreply, term |> Settings.open() |> clear()}
+
+  defp run_action(term, :theme), do: ReyCode.TUI.cycle_theme(nil, close(term))
+
+  defp run_action(term, :quit), do: ReyCode.TUI.quit(nil, clear(term))
+
+  defp run_action(term, :gate_review), do: {:noreply, GateReview.open(term)}
+  defp run_action(term, :tool_review), do: {:noreply, ToolReview.open(term)}
 
   defp height(nil, _terminal_height), do: 1
 

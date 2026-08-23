@@ -1,5 +1,11 @@
 defmodule ReyCode.TUI.Directive do
-  @moduledoc "State transitions for steering a running squad."
+  @moduledoc """
+  State, input handling, and rendering for steering a running squad.
+  """
+
+  use Breeze.Component
+
+  import Breeze.Blocks, except: [modal: 1]
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
@@ -73,5 +79,46 @@ defmodule ReyCode.TUI.Directive do
     term
     |> Component.assign(modal: nil, directive: initial(), notice: nil)
     |> View.focus("prompt")
+  end
+
+  @doc "Handles one key press while the directive modal is active."
+  @spec handle_input(String.t(), map()) :: {:noreply, map()}
+  def handle_input("Escape", term), do: {:noreply, cancel(term)}
+  def handle_input(_key, term), do: {:noreply, term}
+  @doc "Handles the modal's textarea change and submit events."
+  @spec handle_event(term(), map(), map()) :: {:noreply, map()} | :unhandled
+  def handle_event("directive_changed", %{value: value}, term) do
+    {:noreply, change(term, value)}
+  end
+
+  def handle_event("directive_submitted", %{value: value}, term), do: submit_value(term, value)
+  def handle_event(_event, _payload, _term), do: :unhandled
+
+  attr :term, :map, required: true
+
+  @doc "Renders the squad-directive modal."
+  def modal(assigns) do
+    ~H"""
+    <box class="w-screen h-screen bg px-4 pt-3">
+      <box class="w-full border-b border-muted pb-1">
+        <box class="font-bold text-primary">Steer the running squad</box>
+        <box class="text-muted">Every subsequently scheduled role receives this directive.</box>
+      </box>
+      <box class="pt-3 text-muted">OWNER DIRECTIVE</box>
+      <box class="w-full pt-1">
+        <.textarea
+          id="directive-text"
+          textarea-value={@term.directive.text}
+          textarea-placeholder="Constrain scope, change priority, or add project context..."
+          textarea-submit-on-enter={true}
+          br-change="directive_changed"
+          br-submit="directive_submitted"
+          class="w-full h-5"
+        />
+      </box>
+      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box class="pt-2 text-muted">Enter send directive   Esc cancel</box>
+    </box>
+    """
   end
 end

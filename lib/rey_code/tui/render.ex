@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.Render do
   use Breeze.Component
 
   import ReyCode.TUI.Components.MainScreen, only: [main_screen: 1]
-  import ReyCode.TUI.Components.Modals, only: [modals: 1]
+  import ReyCode.TUI.Components.Modals, only: [active: 1]
 
   @doc "Renders the terminal UI from prepared view assigns."
   @spec render(map()) :: Breeze.Component.rendered()
@@ -28,24 +28,7 @@ defmodule ReyCode.TUI.Render do
       terminal_width={@breeze.terminal.width}
       terminal_height={@breeze.terminal.height}
     />
-    <.modals
-      modal={@modal}
-      new_room={@new_room}
-      settings={@settings}
-      room={@room}
-      mode={@mode}
-      providers={@providers}
-      terminal_width={@breeze.terminal.width}
-      terminal_height={@breeze.terminal.height}
-      notice={@notice}
-      cancel_turn_id={@cancel_turn_id}
-      dashboard={@dashboard}
-      directive={@directive}
-      gate_review={@gate_review}
-      gate_review_options={@gate_review_options}
-      tool_review={@tool_review}
-      tool_review_options={@tool_review_options}
-    />
+    <.active term={assigns}/>
     """
   end
 end
