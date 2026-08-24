@@ -111,6 +111,8 @@ defmodule ReyCode.Orchestration.ToolRuns do
     end
   end
 
+  defp call_from_wire(%ToolCall{} = call), do: call
+
   defp call_from_wire(%{"id" => id, "tool" => tool, "arguments" => arguments}) do
     %ToolCall{id: id, tool: tool, arguments: arguments}
   end

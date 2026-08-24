@@ -1,6 +1,8 @@
 defmodule ReyCode.Orchestration.Message do
   @moduledoc "A durable user or assistant message in the orchestration projection."
 
+  alias ReyCode.Failure
+
   @fields [
     :id,
     :room_id,
@@ -38,12 +40,16 @@ defmodule ReyCode.Orchestration.Message do
           body: String.t(),
           created_at: term(),
           created_sequence: non_neg_integer(),
-          error: map() | nil
+          error: Failure.t() | nil
         }
 
   @doc "Converts a decoded or legacy message map into the current record."
   @spec from_map(t() | map()) :: t()
   def from_map(message) when is_map(message) do
-    struct!(__MODULE__, Map.take(message, @fields))
+    message = struct!(__MODULE__, Map.take(message, @fields))
+    %{message | error: optional_failure(message.error)}
   end
+
+  defp optional_failure(nil), do: nil
+  defp optional_failure(value), do: Failure.from_map(value)
 end
