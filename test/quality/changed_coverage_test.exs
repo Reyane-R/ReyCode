@@ -33,7 +33,8 @@ defmodule ReyCode.Quality.ChangedCoverageTest do
              covered: 2,
              total: 3,
              percent: 66.7,
-             uncovered: [{"lib/example.ex", 11}]
+             uncovered: [{"lib/example.ex", 11}],
+             missing_sources: []
            }
   end
 
@@ -56,7 +57,13 @@ defmodule ReyCode.Quality.ChangedCoverageTest do
       |> ChangedCoverage.parse_lcov(@root)
       |> ChangedCoverage.evaluate(ChangedCoverage.parse_diff(diff))
 
-    assert report == %{covered: 1, total: 1, percent: 100.0, uncovered: []}
+    assert report == %{
+             covered: 1,
+             total: 1,
+             percent: 100.0,
+             uncovered: [],
+             missing_sources: []
+           }
   end
 
   test "check fails below the requested threshold and passes empty executable diffs" do
@@ -76,6 +83,13 @@ defmodule ReyCode.Quality.ChangedCoverageTest do
     """
 
     assert ChangedCoverage.parse_diff(diff) == %{}
+  end
+
+  test "fails closed when a changed source file has no LCOV record" do
+    diff = "+++ b/lib/missing.ex\n@@ -1,0 +1 @@\n"
+
+    assert {:error, %{percent: +0.0, total: 0, missing_sources: ["lib/missing.ex"]}} =
+             ChangedCoverage.check("", diff, 90, @root)
   end
 
   test "ignores malformed LCOV records and malformed or empty diff hunks" do

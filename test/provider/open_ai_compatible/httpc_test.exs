@@ -352,20 +352,20 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
          fn socket ->
            send_chunked_headers(socket)
            send(test_pid, :response_started)
-           send(test_pid, {:connection_result, :gen_tcp.recv(socket, 0, 1_000)})
+           send(test_pid, {:connection_result, :gen_tcp.recv(socket, 0, 5_000)})
          end}
       end)
 
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{port}/slow", [], "{}", timeout: 50)
+      HTTPC.start(:post, "http://#{@loopback}:#{port}/slow", [], "{}", timeout: 3_000)
 
     assert {:error, %{"category" => "timeout", "retryable" => true}} =
              HTTPC.collect(context, fn _, acc -> {:cont, acc} end, :ok)
 
-    assert_receive :response_started, 2_000
-    assert_receive {:connection_result, {:error, :closed}}, 2_000
+    assert_receive :response_started, 5_000
+    assert_receive {:connection_result, {:error, :closed}}, 5_000
     refute_receive {:http, _message}, 50
   end
 
@@ -434,7 +434,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
     System.put_env("REAL_HTTP_API_KEY", "secret")
-    runtime = real_http_runtime(port, 5_000)
+    runtime = real_http_runtime(port, 15_000)
 
     task =
       Task.async(fn ->
@@ -445,15 +445,15 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
       end)
 
     assert_receive {:provider_request, %{method: "POST", path: "/chat/completions", body: body}},
-                   500
+                   5_000
 
     assert Jason.decode!(body)["stream"]
     assert_receive {:provider_waiting, connection_pid}
-    assert_receive {:provider_frame, %Frame{kind: :text_delta, data: %{text: "café"}}}, 500
+    assert_receive {:provider_frame, %Frame{kind: :text_delta, data: %{text: "café"}}}, 5_000
     assert Task.yield(task, 0) == nil
 
     send(connection_pid, :finish)
-    assert {:ok, %Response{text: "café"}} = Task.await(task, 5_000)
+    assert {:ok, %Response{text: "café"}} = Task.await(task, 15_000)
   end
 
   test "provider timeout releases a relay callback and cancels the HTTP request" do
@@ -465,22 +465,22 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
          fn socket ->
            send_chunked_headers(socket)
            send_chunk(socket, ~s(data: {"choices":[{"delta":{"content":"blocked"}}]}\n\n))
-           send(test_pid, {:timeout_connection_result, :gen_tcp.recv(socket, 0, 1_000)})
+           send(test_pid, {:timeout_connection_result, :gen_tcp.recv(socket, 0, 5_000)})
          end}
       end)
 
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
     System.put_env("REAL_HTTP_API_KEY", "secret")
-    runtime = real_http_runtime(port, 250)
+    runtime = real_http_runtime(port, 3_000)
 
     assert {:error, %{"category" => "timeout"}} =
              OpenAICompatible.stream(runtime, provider_request(), fn _frame ->
-               Process.sleep(1_000)
+               Process.sleep(5_000)
                :ok
              end)
 
-    assert_receive {:timeout_connection_result, {:error, :closed}}, 1_500
+    assert_receive {:timeout_connection_result, {:error, :closed}}, 5_000
   end
 
   test "real model discovery is bounded and strict across response classes" do

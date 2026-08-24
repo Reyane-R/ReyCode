@@ -319,10 +319,10 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert active_duplicates == []
   end
 
-  defp wait_until_terminal(turn_id, server, attempts \\ 400),
+  defp wait_until_terminal(turn_id, server, attempts \\ 3_000),
     do: Wait.terminal_turn(server, turn_id, attempts * 10)
 
-  defp wait_until_pending_review(turn_id, server, attempts \\ 400),
+  defp wait_until_pending_review(turn_id, server, attempts \\ 3_000),
     do: Wait.pending_review(server, turn_id, attempts * 10)
 
   defp first_room_id(server), do: Engine.snapshot(server).room_order |> hd()

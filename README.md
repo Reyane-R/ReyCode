@@ -128,9 +128,9 @@ crashes, timeouts, malformed structured output, and failures after partial frame
 Use `--json` for machine-readable summaries.
 
 Each command batch is written as one SQLite transaction. Versioned, checksummed
-projection checkpoints bound startup tail replay; legacy schema-v2 NDJSON import
-still safely truncates only an incomplete final record. Complete malformed
-records fail loudly.
+ projection checkpoints bound startup tail replay; legacy schema-v2 NDJSON import
+ ignores an incomplete final record without modifying the preserved source.
+ Complete malformed records fail loudly.
 
 ## OpenCode
 

@@ -11,7 +11,8 @@ defmodule ReyCode.Quality.ChangedCoverage do
           covered: non_neg_integer(),
           total: non_neg_integer(),
           percent: float(),
-          uncovered: [{String.t(), pos_integer()}]
+          uncovered: [{String.t(), pos_integer()}],
+          missing_sources: [String.t()]
         }
 
   @doc "Parses LCOV source and line-hit records into repository-relative paths."
@@ -66,6 +67,14 @@ defmodule ReyCode.Quality.ChangedCoverage do
   @doc "Calculates coverage for changed executable lines represented in LCOV."
   @spec evaluate(coverage(), changed_lines()) :: report()
   def evaluate(coverage, changed) do
+    missing_sources =
+      changed
+      |> Enum.filter(fn {file, lines} ->
+        not MapSet.equal?(lines, MapSet.new()) and not Map.has_key?(coverage, file)
+      end)
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.sort()
+
     executable_lines =
       for {file, lines} <- changed,
           line <- lines,
@@ -76,13 +85,21 @@ defmodule ReyCode.Quality.ChangedCoverage do
     covered = Enum.count(executable_lines, fn {_file, _line, hits} -> hits > 0 end)
     total = length(executable_lines)
 
+    percent =
+      cond do
+        missing_sources != [] -> 0.0
+        total == 0 -> 100.0
+        true -> Float.round(covered / total * 100, 1)
+      end
+
     %{
       covered: covered,
       total: total,
-      percent: if(total == 0, do: 100.0, else: Float.round(covered / total * 100, 1)),
+      percent: percent,
       uncovered:
         for({file, line, 0} <- executable_lines, do: {file, line})
-        |> Enum.sort()
+        |> Enum.sort(),
+      missing_sources: missing_sources
     }
   end
 
@@ -92,7 +109,9 @@ defmodule ReyCode.Quality.ChangedCoverage do
   def check(lcov, diff, threshold, root \\ File.cwd!()) when is_number(threshold) do
     report = evaluate(parse_lcov(lcov, root), parse_diff(diff))
 
-    if report.percent >= threshold, do: {:ok, report}, else: {:error, report}
+    if report.missing_sources == [] and report.percent >= threshold,
+      do: {:ok, report},
+      else: {:error, report}
   end
 
   defp normalize_path(path, root) do

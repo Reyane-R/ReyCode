@@ -31,36 +31,49 @@ defmodule ReyCode.Tool.Grep do
   end
 
   defp search(root, regex, limits) do
-    acc = %{lines: [], matches: 0, files: 0, binary: 0, truncated?: false}
+    acc = %{lines: [], matches: 0, files: 0, binary: 0, skipped: 0, truncated?: false}
 
-    acc =
-      case File.lstat(root) do
-        {:ok, %File.Stat{type: :regular}} -> scan_file(root, regex, acc, limits)
-        _other -> walk(root, regex, acc, limits)
-      end
+    case File.lstat(root) do
+      {:ok, %File.Stat{type: :regular}} -> respond(scan_file(root, regex, acc, limits))
+      {:ok, %File.Stat{type: :directory}} -> respond(walk(root, regex, acc, limits))
+      {:ok, _other} -> Result.error(:unsupported_file_type)
+      {:error, reason} -> Result.error(reason)
+    end
+  end
 
+  defp respond(acc) do
     Result.ok(Enum.reverse(acc.lines) |> Enum.join("\n"),
       truncated: acc.truncated?,
       metadata: %{
         "matches" => acc.matches,
         "files_scanned" => acc.files,
-        "binary_files_skipped" => acc.binary
+        "binary_files_skipped" => acc.binary,
+        "files_skipped" => acc.skipped
       }
     )
   end
 
   # Depth-first walk that refuses to descend into symlinks, so a link out of
   # the workspace can never widen what is scanned.
+  defp walk(_dir, _regex, %{truncated?: true} = acc, _limits), do: acc
+
   defp walk(dir, regex, acc, limits) do
     case File.ls(dir) do
       {:ok, entries} ->
-        Enum.reduce(Enum.sort(entries), acc, fn entry, acc ->
-          visit(Path.join(dir, entry), regex, acc, limits)
-        end)
+        Enum.reduce_while(
+          Enum.sort(entries),
+          acc,
+          &walk_entry(&1, &2, dir, regex, limits)
+        )
 
       {:error, _reason} ->
-        acc
+        %{acc | skipped: acc.skipped + 1}
     end
+  end
+
+  defp walk_entry(entry, acc, dir, regex, limits) do
+    next = visit(Path.join(dir, entry), regex, acc, limits)
+    if next.truncated?, do: {:halt, next}, else: {:cont, next}
   end
 
   defp visit(path, regex, acc, limits) do
@@ -72,21 +85,20 @@ defmodule ReyCode.Tool.Grep do
         walk(path, regex, acc, limits)
 
       _other ->
-        acc
+        %{acc | skipped: acc.skipped + 1}
     end
   end
 
   defp scan_file(path, regex, acc, limits) do
-    case File.read(path) do
-      {:ok, content} when byte_size(content) <= limits.max_file_bytes ->
-        if String.contains?(content, <<0>>) do
-          %{acc | binary: acc.binary + 1}
-        else
-          append_matches(content, regex, path, %{acc | files: acc.files + 1}, limits)
-        end
-
-      _other ->
-        acc
+    with {:ok, %File.Stat{size: size}} when size <= limits.max_file_bytes <- File.stat(path),
+         {:ok, content} <- File.read(path) do
+      if String.contains?(content, <<0>>) do
+        %{acc | binary: acc.binary + 1}
+      else
+        append_matches(content, regex, path, %{acc | files: acc.files + 1}, limits)
+      end
+    else
+      _other -> %{acc | skipped: acc.skipped + 1}
     end
   end
 
@@ -111,7 +123,7 @@ defmodule ReyCode.Tool.Grep do
     matches = acc.matches + 1
 
     if matches > limits.max_matches do
-      {:halt, %{acc | matches: matches, truncated?: true}}
+      {:halt, %{acc | truncated?: true}}
     else
       {:cont, %{acc | matches: matches, lines: ["#{path}:#{number}:#{line}" | acc.lines]}}
     end

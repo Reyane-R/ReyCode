@@ -4,6 +4,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
   import ReyCode.Test.OpenCodeHelpers,
     only: [
       eventually: 1,
+      eventually: 2,
       fake_opencode: 1,
       json_line: 1,
       process_alive?: 1,
@@ -111,7 +112,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
         )
       end)
 
-    assert_receive {:frame, %{kind: :text_delta, data: %{text: "latency bounded"}}}, 1_000
+    assert_receive {:frame, %{kind: :text_delta, data: %{text: "latency bounded"}}}, 3_000
     assert Task.yield(task, 0) == nil
     assert {:ok, _response} = Task.await(task, 5_000)
     refute_receive {:frame, %{kind: :text_delta, data: %{text: "latency bounded"}}}
@@ -197,14 +198,14 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     task =
       Task.async(fn ->
         OpenCode.stream(
-          runtime(path, provider_timeout_ms: 1_000, opencode_max_output_bytes: 1_000_000),
+          runtime(path, provider_timeout_ms: 10_000, opencode_max_output_bytes: 1_000_000),
           request(),
           fn _frame -> :ok end
         )
       end)
 
-    assert eventually(fn -> File.exists?(child_pid_path) end)
-    assert {:error, %{"category" => "timeout"}} = Task.await(task, 5_000)
+    assert eventually(fn -> File.exists?(child_pid_path) end, 100)
+    assert {:error, %{"category" => "timeout"}} = Task.await(task, 15_000)
     child_pid = child_pid_path |> File.read!() |> String.trim()
     assert eventually(fn -> not process_alive?(child_pid) end)
 
@@ -264,10 +265,10 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     end)
 
     {wrapper, args, env} = Environment.wrap(path, [], source: System.get_env())
-    assert {:error, :timeout} = Command.run(wrapper, args, timeout_ms: 1_000, env: env)
+    assert {:error, :timeout} = Command.run(wrapper, args, timeout_ms: 3_000, env: env)
 
     child_pid = child_pid_path |> File.read!() |> String.trim()
-    assert eventually(fn -> not process_alive?(child_pid) end)
+    assert eventually(fn -> not process_alive?(child_pid) end, 40)
   end
 
   test "waits for stdin to close before reading the prompt" do

@@ -123,7 +123,7 @@ defmodule ReyCode.Provider.Catalog do
     providers =
       state.providers
       |> put_in([:opencode], opencode_entry)
-      |> merge_api_results(result[:api] || %{})
+      |> merge_api_results(result[:api] || %{}, state.config)
 
     delay =
       if refresh_retry?(providers),
@@ -205,9 +205,9 @@ defmodule ReyCode.Provider.Catalog do
     next
   end
 
-  defp merge_api_results(providers, api_results) do
+  defp merge_api_results(providers, api_results, config) do
     Enum.reduce(api_results, providers, fn {id, result}, acc ->
-      case normalize_api_result(id, result) do
+      case normalize_api_result(id, result, config) do
         nil -> acc
         entry -> put_in(acc, [id], entry)
       end
@@ -261,15 +261,15 @@ defmodule ReyCode.Provider.Catalog do
 
   defp normalize_open_code(other), do: normalize_open_code({:error, inspect(other)})
 
-  defp normalize_api_result(id, {:ok, discovery}) do
-    case ProviderRegistry.descriptor(id) do
+  defp normalize_api_result(id, {:ok, discovery}, config) do
+    case ProviderRegistry.descriptor(id, config) do
       %{id: :opencode} -> nil
       nil -> nil
       descriptor -> api_entry(descriptor, discovery)
     end
   end
 
-  defp normalize_api_result(_id, _result), do: nil
+  defp normalize_api_result(_id, _result, _config), do: nil
 
   defp api_entry(descriptor, discovery) do
     %{

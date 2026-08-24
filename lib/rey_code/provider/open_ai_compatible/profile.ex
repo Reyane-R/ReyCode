@@ -37,7 +37,10 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
   def all(config \\ nil) do
     config = config || RuntimeConfig.fresh()
     configured = RuntimeConfig.policy(config, :openai_compatible_providers, [])
-    (built_in() ++ configured) |> Enum.uniq_by(& &1.id) |> Enum.map(&normalize/1)
+
+    (built_in() ++ configured)
+    |> Enum.uniq_by(& &1.id)
+    |> Enum.map(&normalize(&1, config))
   end
 
   @spec ids(ReyCode.RuntimeConfig.t() | nil) :: [atom()]
@@ -63,9 +66,10 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
     ]
   end
 
-  defp normalize(%__MODULE__{} = profile), do: %{profile | base_url: resolved_base_url(profile)}
+  defp normalize(%__MODULE__{} = profile, config),
+    do: %{profile | base_url: resolved_base_url(profile, config)}
 
-  defp normalize(map) when is_map(map) do
+  defp normalize(map, config) when is_map(map) do
     struct!(
       __MODULE__,
       Map.take(map, [
@@ -78,11 +82,12 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
         :max_prompt_bytes
       ])
     )
-    |> normalize()
+    |> normalize(config)
   end
 
-  defp resolved_base_url(%__MODULE__{id: id, base_url: base_url}) do
-    override_env = "REYCODE_#{id |> Atom.to_string() |> String.upcase()}_BASE_URL"
-    System.get_env(override_env) || base_url
+  defp resolved_base_url(%__MODULE__{id: id, base_url: base_url}, config) do
+    config
+    |> RuntimeConfig.policy(:openai_compatible_base_url_overrides, %{})
+    |> Map.get(id, base_url)
   end
 end

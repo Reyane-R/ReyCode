@@ -66,6 +66,24 @@ defmodule ReyCode.ToolExecutionTest do
                run("read", %{path: path, offset: 2})
     end
 
+    test "never returns more than the configured byte cap for one long line" do
+      path = Path.join(@workspace, "long-line.txt")
+      File.write!(path, String.duplicate("x", 10_000))
+
+      assert %Result{ok: true, output: output, truncated: true} =
+               run("read", %{path: path}, tool_read_max_bytes: 32)
+
+      assert byte_size(output) == 32
+    end
+
+    test "does not split a UTF-8 code point at the byte cap" do
+      path = Path.join(@workspace, "unicode-line.txt")
+      File.write!(path, "éclair")
+
+      assert %Result{ok: true, output: "", truncated: true} =
+               run("read", %{path: path}, tool_read_max_bytes: 1)
+    end
+
     test "flags truncation when content remains beyond the window" do
       path = Path.join(@workspace, "lines.txt")
       File.write!(path, "a\nb\nc\n")
@@ -132,6 +150,42 @@ defmodule ReyCode.ToolExecutionTest do
 
       assert output == ""
     end
+
+    test "stops traversal once the global result cap is exceeded" do
+      Enum.each(1..20, fn index ->
+        directory = Path.join(@workspace, "dir-#{index}")
+        File.mkdir_p!(directory)
+        File.write!(Path.join(directory, "match.txt"), "")
+      end)
+
+      assert %Result{ok: true, output: output, truncated: true, metadata: %{"matches" => 3}} =
+               run("glob", %{path: @workspace, pattern: "**/*.txt"}, tool_glob_max_results: 3)
+
+      assert output |> String.split("\n", trim: true) |> length() == 3
+    end
+
+    test "recursive patterns skip hidden directories unless explicitly requested" do
+      hidden = Path.join(@workspace, ".hidden")
+      File.mkdir_p!(hidden)
+      File.write!(Path.join(hidden, "secret.txt"), "")
+
+      assert %Result{ok: true, output: ""} =
+               run("glob", %{path: @workspace, pattern: "**/*.txt"})
+
+      assert %Result{ok: true, output: output} =
+               run("glob", %{path: @workspace, pattern: ".hidden/*.txt"})
+
+      assert output =~ ".hidden/secret.txt"
+    end
+
+    test "marks results truncated when the traversal budget is exhausted" do
+      Enum.each(1..120, fn index ->
+        File.mkdir_p!(Path.join(@workspace, "empty-#{index}"))
+      end)
+
+      assert %Result{ok: true, output: "", truncated: true, metadata: %{"matches" => 0}} =
+               run("glob", %{path: @workspace, pattern: "**/*.missing"}, tool_glob_max_results: 1)
+    end
   end
 
   describe "grep" do
@@ -176,6 +230,28 @@ defmodule ReyCode.ToolExecutionTest do
     test "rejects an invalid regex" do
       assert %Result{ok: false, error: :invalid_pattern} =
                run("grep", %{path: @workspace, pattern: "["})
+    end
+
+    test "enforces one global match cap across files and reports skipped oversized files" do
+      Enum.each(1..5, fn index ->
+        File.write!(Path.join(@workspace, "#{index}.txt"), "needle\nneedle\n")
+      end)
+
+      File.write!(Path.join(@workspace, "0-oversized.txt"), String.duplicate("x", 100))
+
+      assert %Result{
+               ok: true,
+               truncated: true,
+               output: output,
+               metadata: %{"matches" => 3, "files_skipped" => skipped}
+             } =
+               run("grep", %{path: @workspace, pattern: "needle"},
+                 tool_grep_max_matches: 3,
+                 tool_grep_max_file_bytes: 32
+               )
+
+      assert output |> String.split("\n", trim: true) |> length() == 3
+      assert skipped >= 1
     end
   end
 
@@ -295,6 +371,15 @@ defmodule ReyCode.ToolExecutionTest do
 
     test "rejects a missing command" do
       assert %Result{ok: false, error: :missing_command} = run("bash", %{})
+    end
+
+    test "rejects a working directory outside the trusted roots" do
+      outside = escape_root("bash-cwd")
+      File.mkdir_p!(outside)
+      on_exit(fn -> File.rm_rf(outside) end)
+
+      assert %Result{ok: false, error: :workspace_outside_policy} =
+               run("bash", %{command: "pwd", cwd: outside})
     end
   end
 end

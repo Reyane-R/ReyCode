@@ -37,6 +37,8 @@ defmodule ReyCode.EventStore.SQLite.Checkpoint do
     ["tuple", value |> Tuple.to_list() |> Enum.map(&encode_term/1)]
   end
 
+  def encode_term(%_module{} = value), do: value |> Map.from_struct() |> encode_term()
+
   def encode_term(value) when is_map(value) do
     pairs =
       Enum.map(value, fn {key, item} -> [encode_term(key), encode_term(item)] end)

@@ -19,11 +19,13 @@ defmodule ReyCode.Orchestration.Engine do
     Configuration,
     Identity,
     Options,
-    Persistence
+    Persistence,
+    ProviderFrames,
+    WorkerExit
   }
 
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
-  alias ReyCode.Provider.{Catalog, Frame, Response}
+  alias ReyCode.Provider.{Catalog, Response}
   alias ReyCode.RuntimeConfig
   alias ReyCode.ToolRegistry
 
@@ -330,7 +332,7 @@ defmodule ReyCode.Orchestration.Engine do
         {:reply, {:error, :invalid_frames}, state}
 
       true ->
-        case collect_provider_frames(invocation, frames) do
+        case ProviderFrames.collect(invocation, frames) do
           {:ok, []} ->
             {:reply, :ok, state}
 
@@ -379,8 +381,7 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:tool_run_started, invocation_id, run_id}, _from, state) do
     with {:ok, invocation} <- fetch_invocation(state, invocation_id),
-         {:ok, run} <- fetch_run(invocation, run_id),
-         :ok <- ensure_status(run, :ready) do
+         {:ok, run} <- ToolRuns.fetch_for_transition(invocation, run_id, :ready) do
       entry = EventEntries.tool_run_started(invocation, run)
       {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
     else
@@ -390,8 +391,7 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:tool_run_completed, invocation_id, run_id, result}, _from, state) do
     with {:ok, invocation} <- fetch_invocation(state, invocation_id),
-         {:ok, run} <- fetch_run(invocation, run_id),
-         :ok <- ensure_status(run, :running),
+         {:ok, run} <- ToolRuns.fetch_for_transition(invocation, run_id, :running),
          :ok <- ensure_wire_map(result) do
       entry = EventEntries.tool_run_completed(invocation, run, result)
       {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
@@ -402,8 +402,7 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:tool_run_failed, invocation_id, run_id, error}, _from, state) do
     with {:ok, invocation} <- fetch_invocation(state, invocation_id),
-         {:ok, run} <- fetch_run(invocation, run_id),
-         :ok <- ensure_status(run, :running),
+         {:ok, run} <- ToolRuns.fetch_for_transition(invocation, run_id, :running),
          :ok <- ensure_wire_map(error) do
       entry = EventEntries.tool_run_failed(invocation, run, error)
       {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
@@ -469,16 +468,16 @@ defmodule ReyCode.Orchestration.Engine do
         state = %{state | agent_monitors: monitors}
         invocation = state.projection.invocations[invocation_id]
 
-        cond do
-          invocation == nil or invocation.status in [:completed, :failed, :cancelled] ->
+        case WorkerExit.classify(invocation, reason, &replayable?/1) do
+          :ignore ->
             {:noreply, state}
 
-          ToolRuns.awaiting?(invocation) or invocation.status == :waiting_tool_approval ->
+          :release ->
             # A paused approval is durable: release the execution slot without
             # failing so the resolution can resume the loop.
             state |> release_execution(invocation_id) |> pump_admission() |> noreply()
 
-          reason == :normal ->
+          :requeue ->
             # The loop stopped for a mid-flight handoff (for example an
             # approval that raced this exit and could not enqueue while the
             # worker still held its slot): re-arm scheduling instead of
@@ -489,13 +488,7 @@ defmodule ReyCode.Orchestration.Engine do
             |> pump_admission()
             |> noreply()
 
-          true ->
-            error = %{
-              "category" => "worker_exit",
-              "message" => "Provider worker exited before recording a result: #{inspect(reason)}",
-              "retryable" => replayable?(invocation.participant.provider)
-            }
-
+          {:fail, error} ->
             state = interrupt_started_runs(state, invocation)
             {:noreply, finalize_invocation(state, invocation.id, {:failed, error})}
         end
@@ -507,9 +500,8 @@ defmodule ReyCode.Orchestration.Engine do
   defp noreply(state), do: {:noreply, state}
 
   defp interrupt_started_runs(state, invocation) do
-    invocation.tool_run_order
-    |> Enum.map(&Map.get(invocation.tool_runs, &1))
-    |> Enum.filter(&(&1 && &1.status == :running))
+    invocation
+    |> ToolRuns.running()
     |> Enum.reduce(state, fn run, acc ->
       entry = EventEntries.tool_run_interrupted(invocation, run, "worker_exit")
       Persistence.append_and_apply!(acc, [entry])
@@ -549,8 +541,8 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   defp take_tool_run(state, invocation) do
-    case next_actionable_call(invocation) do
-      {:none, _calls} ->
+    case ToolRuns.next_action(invocation) do
+      :none ->
         {:reply, {:ok, :none}, state}
 
       {:new, call} ->
@@ -605,51 +597,12 @@ defmodule ReyCode.Orchestration.Engine do
 
   defp authorization_action(:allow), do: :execute
   defp authorization_action(:ask), do: :await
-  defp authorization_action(:denied), do: :denied
-
-  defp next_actionable_call(invocation) do
-    case List.last(invocation.rounds) do
-      nil ->
-        {:none, []}
-
-      round ->
-        calls = Enum.map(round.tool_calls || [], &call_from_wire/1)
-        Enum.find_value(calls, {:none, calls}, &actionable(invocation, &1))
-    end
-  end
-
-  defp actionable(invocation, call) do
-    case ToolRuns.run_for_call(invocation, call.id) do
-      nil -> {:new, call}
-      %{status: :ready} = run -> {:existing, :execute, run}
-      %{status: :awaiting_approval} = run -> {:existing, :await, run}
-      %{status: :running} = run -> {:existing, :busy, run}
-      _terminal -> nil
-    end
-  end
-
-  defp call_from_wire(%{"id" => id, "tool" => tool, "arguments" => arguments}) do
-    %ReyCode.Provider.ToolCall{id: id, tool: tool, arguments: arguments}
-  end
 
   defp fetch_invocation(state, invocation_id) do
     case state.projection.invocations[invocation_id] do
       nil -> {:error, :invocation_not_found}
       invocation -> {:ok, invocation}
     end
-  end
-
-  defp fetch_run(invocation, run_id) do
-    case Map.get(invocation.tool_runs, run_id) do
-      nil -> {:error, :tool_run_not_found}
-      run -> {:ok, run}
-    end
-  end
-
-  defp ensure_status(run, status) do
-    if run.status == status,
-      do: :ok,
-      else: {:error, :invalid_tool_run_transition}
   end
 
   defp ensure_wire_map(value) when is_map(value), do: :ok
@@ -671,32 +624,6 @@ defmodule ReyCode.Orchestration.Engine do
       "message" => "Tool request denied",
       "retryable" => false
     }
-  end
-
-  defp collect_provider_frames(invocation, frames) do
-    frames
-    |> Enum.reduce_while({:ok, [], invocation.last_frame_sequence}, &collect_provider_frame/2)
-    |> case do
-      {:ok, pending, _cursor} -> {:ok, Enum.reverse(pending)}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp collect_provider_frame(frame, {:ok, accepted, cursor}) do
-    if Frame.validate(frame) != :ok do
-      {:halt, {:error, :invalid_frame}}
-    else
-      cond do
-        frame.sequence <= cursor ->
-          {:cont, {:ok, accepted, cursor}}
-
-        frame.sequence == cursor + 1 ->
-          {:cont, {:ok, [frame | accepted], cursor + 1}}
-
-        true ->
-          {:halt, {:error, :invalid_frame_sequence}}
-      end
-    end
   end
 
   defp ensure_default_room(%{projection: %{room_order: []}} = state) do

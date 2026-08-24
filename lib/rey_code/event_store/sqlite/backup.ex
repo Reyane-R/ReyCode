@@ -44,38 +44,92 @@ defmodule ReyCode.EventStore.SQLite.Backup do
   @spec backup(term(), pos_integer(), Path.t()) :: {:ok, map()} | {:error, term()}
   def backup(connection, sequence, destination) do
     destination = Path.expand(destination)
+    suffix = System.unique_integer([:positive])
+    temporary_database = destination <> ".tmp-#{suffix}"
+    manifest_path = destination <> ".manifest.json"
+    temporary_manifest = manifest_path <> ".tmp-#{suffix}"
 
-    if File.exists?(destination) do
+    if File.exists?(destination) or File.exists?(manifest_path) do
       {:error, :destination_exists}
     else
-      with :ok <- File.mkdir_p(Path.dirname(destination)),
-           :ok <- wal_checkpoint(connection),
-           :ok <- vacuum_into(connection, destination),
-           :ok <- File.chmod(destination, 0o600),
-           :ok <- verify_backup(destination) do
-        write_manifest(destination, sequence)
+      result =
+        with :ok <- File.mkdir_p(Path.dirname(destination)),
+             :ok <- wal_checkpoint(connection),
+             :ok <- vacuum_into(connection, temporary_database),
+             :ok <- File.chmod(temporary_database, 0o600),
+             :ok <- verify_backup(temporary_database),
+             {:ok, manifest} <- manifest(temporary_database, destination, sequence),
+             :ok <- File.write(temporary_manifest, Jason.encode!(manifest, pretty: true)),
+             :ok <- File.chmod(temporary_manifest, 0o600),
+             :ok <-
+               publish_backup(temporary_database, destination, temporary_manifest, manifest_path) do
+          {:ok, Map.put(manifest, :manifest, manifest_path)}
+        end
+
+      if match?({:error, _reason}, result) do
+        Enum.each([temporary_database, temporary_manifest], &File.rm/1)
       end
+
+      result
     end
   end
 
   @doc "Writes the sidecar manifest describing a completed backup."
   @spec write_manifest(Path.t(), pos_integer(), pos_integer()) :: {:ok, map()} | {:error, term()}
   def write_manifest(destination, sequence, schema_version \\ Migrations.schema_version()) do
-    with {:ok, digest} <- Hashing.file_sha256_hex(destination) do
-      manifest = %{
-        database: destination,
-        sequence: sequence,
-        schema_version: schema_version,
-        sha256: digest,
-        created_at: Sql.now()
-      }
-
+    with {:ok, manifest} <- manifest(destination, destination, sequence, schema_version) do
       manifest_path = destination <> ".manifest.json"
 
       with :ok <- File.write(manifest_path, Jason.encode!(manifest, pretty: true)),
            :ok <- File.chmod(manifest_path, 0o600) do
         {:ok, Map.put(manifest, :manifest, manifest_path)}
       end
+    end
+  end
+
+  defp manifest(source, destination, sequence, schema_version \\ Migrations.schema_version()) do
+    with {:ok, digest} <- Hashing.file_sha256_hex(source) do
+      {:ok,
+       %{
+         database: destination,
+         sequence: sequence,
+         schema_version: schema_version,
+         sha256: digest,
+         created_at: Sql.now()
+       }}
+    end
+  end
+
+  defp publish_backup(temporary_database, destination, temporary_manifest, manifest_path) do
+    case publish_file(temporary_database, destination) do
+      :ok -> publish_manifest(temporary_manifest, manifest_path, destination)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp publish_manifest(temporary_manifest, manifest_path, destination) do
+    case publish_file(temporary_manifest, manifest_path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        File.rm(destination)
+        {:error, reason}
+    end
+  end
+
+  # A hard link publishes without replacing a file created by a competing backup.
+  defp publish_file(temporary, destination) do
+    case File.ln(temporary, destination) do
+      :ok ->
+        File.rm(temporary)
+        :ok
+
+      {:error, :eexist} ->
+        {:error, :destination_exists}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
