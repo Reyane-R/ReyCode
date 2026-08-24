@@ -8,7 +8,8 @@
 
 Accepted 2026-08-20 (Round 1–2 of design review), executed same day where noted.
 **Policy** = in effect now. **Planned** = accepted, not yet implemented; do not
-claim it in user-facing copy until it ships.
+claim it in user-facing copy until it ships. Executed and resolved decisions
+live in [History](#history).
 
 ## North Star
 
@@ -18,7 +19,9 @@ agents (compare/debate/fan-out/squad), and ReyCode-owned tool execution.
 OpenCode remains one provider among several during the transition, not the
 runtime. Personal-first scope (D1) still governs sequencing.
 
-## D1 — Personal-first scope (Policy)
+## Active decisions
+
+### D1 — Personal-first scope (Policy)
 
 Dogfood live squads before any distribution-shaped work. Signing, notarization,
 and docs polish stay deferred. `REYCODE_WORKSPACE_ROOTS` stays. **Endgame
@@ -27,7 +30,7 @@ confirmed personal-first (Round 4, 2026-08-20).**
 Acceptance: the first live squad cycles (D4) complete before any signing or
 distribution work starts.
 
-## D2 — OpenCode quarantine (Policy)
+### D2 — OpenCode quarantine (Policy)
 
 All OpenCode knowledge lives behind the `ReyCode.Provider` behaviour — one
 provider among several (D24), never the runtime. The simulator doubles as the
@@ -38,7 +41,7 @@ fails loudly on stale binaries (D21).
 Acceptance: doctor reports resolved path + validated version; provider-specific
 shapes do not cross the behaviour boundary.
 
-## D3 — Chat-only providers scoped and frozen (Policy — 2026-08-23)
+### D3 — Chat-only providers scoped and frozen (Policy — 2026-08-23)
 
 Chat-only API providers are restricted to compare/debate rooms and can never be
 selected for squad mode. The HTTP stack (httpc/SSE) was promoted to the
@@ -49,7 +52,7 @@ beyond bugfixes.
 
 Acceptance: squad configuration statically rejects chat-only runtimes.
 
-## D4 — Static squad FSM until evidence (Policy)
+### D4 — Static squad FSM until evidence (Policy)
 
 The 12-role, 16-phase squad-v2 FSM stays static until at least three live
 squads complete real tasks on real repositories.
@@ -64,7 +67,72 @@ Pre-registered change triggers (decided 2026-08-20, before run 1):
 Acceptance: three completed live squad runs recorded in the event store;
 triggers evaluated against them.
 
-## D5 — Unified release authority (Executed 2026-08-20)
+### D7 — Event sourcing stays, replay surfaces (Policy + Planned feature)
+
+The event store stays. The next feature is replay-facing: fork a room from a
+turn, or a `/history` replay view.
+
+Acceptance: a replay-consuming feature ships.
+
+### D11 — Transcript-grounded simulator (Planned)
+
+Every live squad run captures its OpenCode transcript as a golden fixture. New
+simulator scenarios must trace back to an observed failure.
+
+Privacy (D18): fixtures live under the app-data path, gitignored, never
+committed; scenarios derived from them use hand-written minimal reproductions,
+not verbatim transcripts.
+
+Acceptance: capture is wired before the first live-usage cycle; at least one
+scenario derives from a real transcript.
+
+### D12 — Quality apparatus freeze (Policy; trigger recorded)
+
+No new quality tooling until live usage produces a failure the existing
+apparatus would not have caught.
+
+**Trigger recorded 2026-08-20:** PR #39 merged with five P1 review findings
+open; `mix check` (364 tests, credo --strict, dialyzer) passed all of them.
+Corollary merge rule: no merge while unresolved P1 review comments exist.
+
+### D14 — Merge discipline (Policy)
+
+No merge while unresolved P1 review comments exist. Review-bot findings are
+triaged to fixed/wontfix-with-reason before merge, not after.
+
+### D15 — Frame-batching admission (Policy)
+
+Frame batching shipped unmeasured: PR #39 names no measurement and marks its
+driving issue (#35) partial. Its complexity cost was realized immediately
+(process-dictionary frame loss, swallowed persistence errors — see D13). Batching
+is retained post-fix (ETS buffer); re-evaluate against a measurement (event-store
+append rate, TUI frame latency) at the D4 gate. Re-introducing anything like it
+in the future requires a measurement first.
+
+### D18 — Fixture privacy (Policy)
+
+Golden transcripts and fixtures are local-only, gitignored, never committed.
+Scenarios derived from them are hand-written minimal reproductions.
+
+### D19 — Simulator fidelity (Planned)
+
+`emit_process: :task` (added 2026-08-20) lets the simulator mirror the OpenCode
+task-process emission topology; new cross-process scenarios should use it.
+Remaining: golden-fixture capture pipeline (D11).
+
+### D24 — OpenCode demoted, not deleted (Policy — 2026-08-20)
+
+The OpenCode adapter stays as one provider behind the `ReyCode.Provider` seam:
+it works today, gives a functioning squad path while the standalone loop is
+built, and D21's version pinning keeps it honest. Revisit removal only after
+the tool loop runs a squad end-to-end on direct providers.
+
+## History
+
+Executed, resolved, and verified decisions. Kept as the recorded *why* behind
+the current code; nothing here is in effect as forward-looking policy.
+
+### D5 — Unified release authority (Executed 2026-08-20)
 
 Release-gate authority is explicit and frozen at turn start:
 
@@ -85,16 +153,7 @@ Release-gate authority is explicit and frozen at turn start:
 Acceptance met: events carry the authority mode; the same run shape replays
 identically regardless of launch interface.
 
-## D6a — Durable budget extension (Executed 2026-08-20, folded into D5's pass)
-
-The D6 limitation is resolved: an owner-approved rework at an exhausted budget
-now appends a `squad_budget_extended` event (new event type) in the same
-transaction as the `gate_resolved` resolution, and the projection's rework
-budget updates durably. `SquadFSM.owner_grant/2` remains as the pure-function
-computation; the engine persists it. Verified by the updated budget-exhaustion
-engine test (final state: rework 4/4).
-
-## D6 — Rework exhaustion escalates (Executed 2026-08-20)
+### D6 — Rework exhaustion escalates (Executed 2026-08-20)
 
 When the rework budget is exhausted with the human gate enabled, the leader's
 rework recommendation is owner-reviewed (the existing pending-review surface),
@@ -121,14 +180,16 @@ Also learned: `ReyCode.Test.Wait` helpers fall back to queued broadcast
 snapshots, which go stale across resolves within one test — tests that loop
 resolve-and-wait must drain the mailbox first (see `flush_projection_snapshots/0`).
 
-## D7 — Event sourcing stays, replay surfaces (Policy + Planned feature)
+### D6a — Durable budget extension (Executed 2026-08-20, folded into D5's pass)
 
-The event store stays. The next feature is replay-facing: fork a room from a
-turn, or a `/history` replay view.
+The D6 limitation is resolved: an owner-approved rework at an exhausted budget
+now appends a `squad_budget_extended` event (new event type) in the same
+transaction as the `gate_resolved` resolution, and the projection's rework
+budget updates durably. `SquadFSM.owner_grant/2` remains as the pure-function
+computation; the engine persists it. Verified by the updated budget-exhaustion
+engine test (final state: rework 4/4).
 
-Acceptance: a replay-consuming feature ships.
-
-## D8 — Rewrite cleanup (Policy; executed 2026-08-20)
+### D8 — Rewrite cleanup (Policy; executed 2026-08-20)
 
 The frame-batching/provider rewrite merged to main via PR #39, then PR #40.
 
@@ -138,7 +199,7 @@ to `main` (`origin/HEAD` now resolves to `main`); stale plan doc
 
 Open item: retrospective justification for frame batching (see D15).
 
-## D9 — TTY probe at boot (Executed 2026-08-23)
+### D9 — TTY probe at boot (Executed 2026-08-23)
 
 Boot probes TTY-ness before Breeze writes anything. Non-TTY contexts get a
 one-line actionable error or route to headless squad mode. A crash dump is
@@ -148,7 +209,7 @@ Acceptance met: `ReyCode.Application` checks `:io.columns()` and prints
 "no terminal detected — starting headless" when no TTY is present; the Breeze
 server is not started and no crash dump results.
 
-## D10 — Engine chaos test (Verified existing, 2026-08-20)
+### D10 — Engine chaos test (Verified existing, 2026-08-20)
 
 Engine-kill recovery is already covered by
 `test/orchestration_engine_test.exs` ("recovers an active room turn after the
@@ -157,28 +218,7 @@ engine is killed") and squad-phase recovery by
 without duplicating logical work"). No new test required unless live usage
 shows a gap.
 
-## D11 — Transcript-grounded simulator (Planned)
-
-Every live squad run captures its OpenCode transcript as a golden fixture. New
-simulator scenarios must trace back to an observed failure.
-
-Privacy (D18): fixtures live under the app-data path, gitignored, never
-committed; scenarios derived from them use hand-written minimal reproductions,
-not verbatim transcripts.
-
-Acceptance: capture is wired before the first live-usage cycle; at least one
-scenario derives from a real transcript.
-
-## D12 — Quality apparatus freeze (Policy; trigger recorded)
-
-No new quality tooling until live usage produces a failure the existing
-apparatus would not have caught.
-
-**Trigger recorded 2026-08-20:** PR #39 merged with five P1 review findings
-open; `mix check` (364 tests, credo --strict, dialyzer) passed all of them.
-Corollary merge rule: no merge while unresolved P1 review comments exist.
-
-## D13 — P1 fixes on the OpenCode path (Executed 2026-08-20)
+### D13 — P1 fixes on the OpenCode path (Executed 2026-08-20)
 
 - `agent.ex`: frame buffer moved from the emitting process's dictionary to an
   ETS table owned by the Agent — frames emitted from helper-task processes
@@ -199,21 +239,7 @@ Corollary merge rule: no merge while unresolved P1 review comments exist.
 Not fixed (deliberate): chat-only httpc/SSE P1s (sync request buffering,
 charlist transcoding, tool-call fragment keys) — frozen under D3 pending D20.
 
-## D14 — Merge discipline (Policy)
-
-No merge while unresolved P1 review comments exist. Review-bot findings are
-triaged to fixed/wontfix-with-reason before merge, not after.
-
-## D15 — Frame-batching admission (Policy)
-
-Frame batching shipped unmeasured: PR #39 names no measurement and marks its
-driving issue (#35) partial. Its complexity cost was realized immediately
-(process-dictionary frame loss, swallowed persistence errors — see D13). Batching
-is retained post-fix (ETS buffer); re-evaluate against a measurement (event-store
-append rate, TUI frame latency) at the D4 gate. Re-introducing anything like it
-in the future requires a measurement first.
-
-## D16 — First live tasks (Resolved 2026-08-20: Round 4 fallback accepted)
+### D16 — First live tasks (Resolved 2026-08-20: Round 4 fallback accepted)
 
 The three D4 tasks, all real work in this repo:
 
@@ -226,7 +252,7 @@ The three D4 tasks, all real work in this repo:
 
 D4's pre-registered triggers apply to these runs.
 
-## D17 — Chat-only provider disposition (Resolved 2026-08-20: promoted)
+### D17 — Chat-only provider disposition (Resolved 2026-08-20: promoted)
 
 The OpenAI-compatible HTTP stack (httpc/SSE/profiles) is the foundation of the
 standalone-harness path (D22): direct provider access with ReyCode-owned tool
@@ -235,18 +261,7 @@ transcoding, tool-call fragment reassembly) become load-bearing bugs on the
 critical path once the direct provider is primary and must be fixed then —
 streaming is not optional for a harness that executes tools mid-generation.
 
-## D18 — Fixture privacy (Policy)
-
-Golden transcripts and fixtures are local-only, gitignored, never committed.
-Scenarios derived from them are hand-written minimal reproductions.
-
-## D19 — Simulator fidelity (Planned)
-
-`emit_process: :task` (added 2026-08-20) lets the simulator mirror the OpenCode
-task-process emission topology; new cross-process scenarios should use it.
-Remaining: golden-fixture capture pipeline (D11).
-
-## D20 — North-Star fork (RESOLVED 2026-08-20: standalone harness)
+### D20 — North-Star fork (RESOLVED 2026-08-20: standalone harness)
 
 **Decision: (b) — ReyCode is a standalone harness, not a wrapper.** ReyCode owns
 the agent loop and tool execution; providers stream; OpenCode stops being the
@@ -290,7 +305,7 @@ features — orchestrator-gated tool approval, abort, per-message tool scoping �
 are reachable via (a-serve) without building an execution plane. (b) is only
 forced if OpenCode itself becomes the constraint.
 
-## D21 — OpenCode binary drift hazard (Executed 2026-08-23)
+### D21 — OpenCode binary drift hazard (Executed 2026-08-23)
 
 The `ReyCode.Provider.Runtime` module now fingerprints each OpenCode executable
 via `identify_executable/1` (canonical path, device, inode, sha256) and
@@ -298,7 +313,7 @@ via `identify_executable/1` (canonical path, device, inode, sha256) and
 records the resolved executable path and identity. The doctor reports the
 resolved path and validated version.
 
-## D22 — Standalone execution (Executed 2026-08-23)
+### D22 — Standalone execution (Executed 2026-08-23)
 
 ReyCode owns execution. Concretely:
 
@@ -321,7 +336,7 @@ Delivered across five implementation batches (see [Plan.md](Plan.md)):
   4. Tool security and bounded execution semantics
   5. TUI, migration, diagnostics, and documentation
 
-## D23 — Tool layer v1 scope (Resolved 2026-08-20: Round 4)
+### D23 — Tool layer v1 scope (Resolved 2026-08-20: Round 4)
 
 **v1 tools:** per issue #30 — `read`, `write`, `edit`, `bash`, `grep`, `glob`,
 `list`. The issue (authored 2026-08-16, with resolved design decisions on
@@ -353,10 +368,3 @@ specific ToolRun ID; at most one owner review is active per invocation;
 waiting consumes no admission slot; recovery reuses completed results, fails
 running runs as indeterminate, and keeps awaiting runs dormant. The legacy
 `tool_ask_*` event types are retained for replay only.
-
-## D24 — OpenCode demoted, not deleted (Policy — 2026-08-20)
-
-The OpenCode adapter stays as one provider behind the `ReyCode.Provider` seam:
-it works today, gives a functioning squad path while the standalone loop is
-built, and D21's version pinning keeps it honest. Revisit removal only after
-the tool loop runs a squad end-to-end on direct providers.
