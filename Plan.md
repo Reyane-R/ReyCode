@@ -1,5 +1,10 @@
 # Plan: Durable, Provider-Independent Tool Execution Layer
 
+## Status
+
+**5 of 6 delivery batches complete (2026-08-23).** Remaining: step 6 (OpenCode
+serve/permission bridge) deferred to a separate project.
+
 ## Goal
 
 Build an OMP-quality, provider-independent agent loop while retaining ReyCode's

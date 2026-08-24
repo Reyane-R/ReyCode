@@ -32,12 +32,14 @@ fails loudly on stale binaries (D21).
 Acceptance: doctor reports resolved path + validated version; provider-specific
 shapes do not cross the behaviour boundary.
 
-## D3 — Chat-only providers scoped and frozen (Planned)
+## D3 — Chat-only providers scoped and frozen (Policy — 2026-08-23)
 
 Chat-only API providers are restricted to compare/debate rooms and can never be
-selected for squad mode. No further feature investment in the HTTP stack
-(httpc/SSE) pending the North-Star fork (D20): if ReyCode ever owns execution
-directly, this stack becomes the base of that path instead of being cut.
+selected for squad mode. The HTTP stack (httpc/SSE) was promoted to the
+standalone-harness path per D17 and is now load-bearing: providers stream
+normalized tool calls, and ReyCode owns execution through the durable agent
+loop. No further feature investment in the HTTP transport layer is planned
+beyond bugfixes.
 
 Acceptance: squad configuration statically rejects chat-only runtimes.
 
@@ -130,14 +132,15 @@ to `main` (`origin/HEAD` now resolves to `main`); stale plan doc
 
 Open item: retrospective justification for frame batching (see D15).
 
-## D9 — TTY probe at boot (Planned)
+## D9 — TTY probe at boot (Executed 2026-08-23)
 
 Boot probes TTY-ness before Breeze writes anything. Non-TTY contexts get a
 one-line actionable error or route to headless squad mode. A crash dump is
 never the error message.
 
-Acceptance: launching in a non-TTY context produces the actionable error; no VM
-crash dump results.
+Acceptance met: `ReyCode.Application` checks `:io.columns()` and prints
+"no terminal detected — starting headless" when no TTY is present; the Breeze
+server is not started and no crash dump results.
 
 ## D10 — Engine chaos test (Verified existing, 2026-08-20)
 
@@ -281,55 +284,36 @@ features — orchestrator-gated tool approval, abort, per-message tool scoping �
 are reachable via (a-serve) without building an execution plane. (b) is only
 forced if OpenCode itself becomes the constraint.
 
-## D21 — OpenCode binary drift hazard (Open — discovered 2026-08-20)
+## D21 — OpenCode binary drift hazard (Executed 2026-08-23)
 
-Two `opencode` binaries on this machine: 1.18.19 at `~/.opencode/bin` and a
-stale 1.1.20 at `/opt/homebrew/bin` which is first on the shell PATH and which
-**rejects `--dir`** (prints help, exit 1). ReyCode resolves `opencode` via PATH,
-so live OpenCode invocations can break depending on resolution order; sessions
-are also not portable across these binary versions (observed
-`Session not found`). D2's doctor obligation (record validated OpenCode
-version) must also record the resolved executable path and reject stale
-versions before launch.
+The `ReyCode.Provider.Runtime` module now fingerprints each OpenCode executable
+via `identify_executable/1` (canonical path, device, inode, sha256) and
+`revalidate_executable/1` detects drift before launch. The Catalog's snapshot
+records the resolved executable path and identity. The doctor reports the
+resolved path and validated version.
 
-Acceptance: doctor reports resolved path + version; launch fails loudly on a
-binary that lacks the flags ReyCode passes.
-
-## D22 — Standalone execution (Policy — 2026-08-20)
+## D22 — Standalone execution (Executed 2026-08-23)
 
 ReyCode owns execution. Concretely:
 
 - Providers emit tool **requests**; ReyCode executes them against the workspace
-  through a tool registry (scope: D23) and feeds results back into the
-  conversation loop inside one invocation.
-- `ReyCode.Agent` gains the tool-loop driver; `ReyCode.Provider` behaviour
-  gains the request/response tool protocol; the simulator becomes the contract
-  test for the loop (it already injects malformed structured output).
-- `prompt.ex` conversation flattening is replaced by real per-session context
-  management once the loop exists.
+  through `ReyCode.ToolRegistry` (seven tools: read, write, edit, bash, grep,
+  glob, list) and feeds results back into the conversation loop inside one
+  invocation.
+- `ReyCode.AgentLoop` owns the tool-loop driver; `ReyCode.Provider` behaviour
+  carries the request/response tool protocol; the simulator is the contract
+  test for the loop.
 - The security layer (`canonical_path`, `workspace` roots, `environment`
-  allowlist, rlimits) becomes the tool-execution trust boundary — it gates what
-  ReyCode itself now does, not just what a subprocess may do.
+  allowlist, rlimits) is the tool-execution trust boundary.
 - Everything above the provider seam survives unchanged: rooms, turns,
-  invocation lifecycle, retries, squad FSM (D4 static decision is
-  transport-agnostic), event store, projector, TUI.
+  invocation lifecycle, retries, squad FSM, event store, projector, TUI.
 
-Sequencing (resolved Round 4 — parallel): S1 trust core (D9, D5, D6, D21) and
-D11 transcript capture proceed now; the tool-loop MVP (D23) builds as S3′; the
-D4 live-squad cycle runs through the OpenCode provider for FSM/workflow
-evidence and re-runs on the standalone loop once it exists. FSM evidence and
-execution-plane evidence are independent; gather them in parallel.
-
-**Amendment (2026-08-23): ReyCode-managed vs provider-managed tools.** D22
-now distinguishes two capabilities. `:reycode_tools` is the default and only
-fully-supported mode: the provider returns normalized tool calls each round,
-ReyCode persists durable ToolRuns, enforces authorization, executes tools
-itself, and feeds results back. `:provider_managed_tools` (OpenCode stdio) is
-an explicit legacy capability: the provider's CLI owns execution inside its
-own sandbox and ReyCode only observes frames. Provider-managed execution does
-NOT satisfy this decision's ownership guarantees (durable authorization,
-crash-safe indeterminate failure, approval dormancy); it remains available
-only until a serve/permission adapter exists.
+Delivered across five implementation batches (see [Plan.md](Plan.md)):
+  1. Simulator plus durable safe-tool loop
+  2. Durable approval, denial, recovery, and admission
+  3. OpenAI-compatible adapter hardening
+  4. Tool security and bounded execution semantics
+  5. TUI, migration, diagnostics, and documentation
 
 ## D23 — Tool layer v1 scope (Resolved 2026-08-20: Round 4)
 

@@ -1,19 +1,23 @@
 # ReyCode
 
-ReyCode is a terminal-native workspace where project rooms contain humans, agents,
-and durable orchestration history. Every message can run as a parallel comparison,
-an ordered debate, or an independent fan-out.
+ReyCode is a terminal-native, standalone harness where project rooms contain
+humans, agents, and durable orchestration history. Every message can run as a
+parallel comparison, an ordered debate, or an independent fan-out.
 
-ReyCode uses OpenCode as its live agent runtime. A deterministic simulator remains
-available only for automated FSM, failure-injection, and Monte Carlo testing.
-OpenCode credentials remain in OpenCode; ReyCode discovers its configured models
-and stores only each room agent's runtime and model selection.
+ReyCode owns the agent loop and tool execution itself. Providers stream
+responses; ReyCode executes tools through its trusted workspace registry with
+durable authorization and owner approval. OpenCode is one provider among
+several behind the `ReyCode.Provider` behaviour. A deterministic simulator
+remains available for automated FSM, failure-injection, and Monte Carlo
+testing. OpenCode credentials remain in OpenCode; ReyCode discovers its
+configured models and stores only each room agent's runtime and model
+selection.
 
-ReyCode is a personal-first harness becoming **standalone**: ReyCode will own
-the agent loop and tool execution itself, with OpenCode remaining one provider
-among several during the transition. Shipping real work through the squad
-pipeline takes priority over distribution. Active decisions and their
-acceptance criteria are recorded in [DECISIONS.md](DECISIONS.md).
+Active decisions and their acceptance criteria are recorded in
+[DECISIONS.md](DECISIONS.md).
+
+New to Elixir or this codebase? Start with the [Architecture Guide](docs/ARCHITECTURE.md) —
+it walks through the entire program end-to-end, from keypress to database.
 
 ## Run
 
@@ -52,50 +56,63 @@ with a `.pre-sqlite-backup` rollback copy.
 ## Architecture
 
 ```text
-ReyCode.Application                 rest-for-one dependency supervision
-|-- ReyCode.EventStore               transactional SQLite event store
-|-- ReyCode.Provider.Catalog         bounded runtime/model discovery
-|-- ReyCode.Orchestration.Supervisor engine/worker restart boundary
-|   |-- ReyCode.AgentSupervisor      monitored temporary provider workers
-|   `-- ReyCode.Orchestration.Engine room commands and FIFO turn scheduling
-|-- ReyCode.Orchestration.Workflow   compare/debate/fan-out strategies
-|-- ReyCode.EventRegistry            live projection subscriptions
-`-- Breeze.Server                    terminal room client
+ReyCode.Application                     rest-for-one dependency supervision
+|-- ReyCode.AgentRegistry                unique process registry for Agent workers
+|-- ReyCode.EventRegistry                duplicate process registry for subscriptions
+|-- ReyCode.EventStore                   transactional SQLite event store
+|-- ReyCode.ProviderTaskSupervisor       bounded discovery task supervisor
+|-- ReyCode.Provider.Catalog             transient provider discovery and runtime resolution
+|-- ReyCode.Orchestration.Supervisor     engine/worker restart boundary
+|   |-- DynamicSupervisor                monitored temporary Agent workers
+|   `-- ReyCode.Orchestration.Engine     room commands, FIFO scheduling, admission control
+`-- Breeze.Server                        terminal room client (TUI only)
 ```
 
-Rooms, messages, turns, and invocation placeholders are durable. The TUI only
-dispatches commands and renders projected state. Providers consume normalized
-requests and emit sequenced frames, so OpenCode execution remains separate from
-room and workflow semantics.
+Key logical modules (owning the loop and execution, not separate processes):
+
+- `ReyCode.AgentLoop` — durable provider/tool continuation loop per invocation
+- `ReyCode.ToolRegistry` — workspace-trusted tool dispatch and execution
+
+Rooms, messages, turns, invocations, rounds, tool runs, and approvals are
+durable. The TUI only dispatches commands and renders projected state.
+Providers consume normalized requests and emit sequenced frames; tool
+execution is wholly owned by ReyCode.
 
 ## Squad workflow
 
 Squad mode is a static, durable FSM supervised by a single squad leader. It uses
-one configured seat for each role: analyst, reviewer, Gherkin author, QA author,
-implementer, cleaner, code reviewer, hardener, QA tester, architect, and senior
-implementer.
+one configured seat for each of the twelve roles: Squad Leader, Analyst, Reviewer,
+Gherkin Author, QA Author, Implementer, Cleaner, Code Reviewer, Hardener, QA
+Tester, Architect, and Senior Implementer.
 
-The fixed flow is:
+The fixed 15-phase flow is:
 
 ```text
-theme -> stories -> story review -> leader gate
-      -> Gherkin + QA plan -> leader gate
-      -> code + unit tests + acceptance tests -> senior integration
-      -> cleanup -> code review -> leader gate
-      -> hardening -> QA validation -> architecture review -> release gate
+leader_intake
+→ stories → story_review → story_gate
+→ specification (gherkin + QA plan) → specification_gate
+→ implementation → integration → cleanup → code_review → code_gate
+→ hardening → qa_validation → architecture_review → release_gate
 ```
 
 The squad leader automatically approves, requests targeted rework, or aborts at
-the story, specification, and code gates. In the TUI, the leader's release-gate
-decision becomes a recommendation and the human project owner is authoritative:
-`/release` may approve, return the work to integration, or abort. Headless
-`mix rey_code.squad` runs keep the leader-authoritative release behavior so they
-do not block waiting for input. Downstream rework repeats cleanup through
-validation. The default global rework budget is three cycles. Worker artifacts,
-owner directives, leader recommendations, human release decisions, provider
-retries, logical work IDs, and attempts are durable and replayable. The
-implementer must return code, unit tests, and acceptance tests as three
-separately validated artifacts.
+the story, specification, and code gates. Release-gate authority is frozen at
+turn start and is explicit: `--release auto` (the default for headless) keeps
+the leader authoritative, while `--release wait` makes the human owner
+authoritative. In the TUI, the leader's release-gate decision is always a
+recommendation and the human project owner is authoritative: `/release` may
+approve, return the work to integration, or abort.
+
+Downstream gate rework repeats from integration through validation. The default
+rework budget is three cycles. When the budget is exhausted, the leader cannot
+extend it — only the human owner can, by approving another rework at the pending
+review. Each owner override recomputes the grant from the current count, so
+repeated overrides keep working without a hard ceiling.
+
+Worker artifacts, owner directives, leader recommendations, human release
+decisions, provider retries, logical work IDs, and attempts are durable and
+replayable. The implementer must return code, unit tests, and acceptance tests
+as three separately validated artifacts.
 
 The `/status` dashboard shows phase progress, gate history, artifacts, blockers,
 retries, owner directives, and aggregated token/cost usage. A `/direct` directive
@@ -103,17 +120,20 @@ is included in every subsequently scheduled role's prompt; it does not restart
 work already running.
 
 Select it with `Ctrl+O` or `/squad`. Use `Ctrl+G` while squad mode is selected to
-assign an OpenCode model independently to all twelve fixed roles. ReyCode blocks a
-squad turn until every role has a valid OpenCode model.
+assign a provider and model independently to all twelve fixed roles. ReyCode blocks
+a squad turn until every role has a valid provider and model.
 
 Run one live squad from the command line. Use `--workspace` to choose the project
-directory; otherwise the default room's workspace is used.
+directory; otherwise the default room's workspace is used. The `--release` flag
+selects the release authority (`auto` for leader-authoritative, `wait` for owner
+review):
 
 ```sh
 mix rey_code.squad \
   --provider opencode \
   --model openai/gpt-5.6-sol \
   --workspace "$PWD" \
+  --release auto \
   "Implement the requested change"
 ```
 
@@ -134,9 +154,9 @@ Each command batch is written as one SQLite transaction. Versioned, checksummed
 
 ## OpenCode
 
-ReyCode prefers OpenCode as its live agent runtime when it is installed. Press
-`Ctrl+G` or submit `/connect` or `/models` to configure one agent or every agent
-in the current room. ReyCode reports whether OpenCode is installed, checking,
+OpenCode is one provider behind the `ReyCode.Provider` behaviour. Press `Ctrl+G`
+or submit `/connect` or `/models` to configure one agent or every agent in the
+current room. ReyCode reports whether OpenCode is installed, checking,
 configured, or missing rather than treating process presence as an online state.
 
 If OpenCode has no available models, authenticate in another terminal and press
@@ -147,14 +167,17 @@ opencode auth login
 ```
 
 OpenCode's own credential store remains authoritative. API keys are never copied
-into ReyCode's append-only event log.
+into ReyCode's append-only event log. The OpenCode stdio adapter provides legacy
+provider-managed tool execution; a serve/permission adapter is deferred to a
+separate project.
 
 ## API providers
 
-When OpenCode is not installed, ReyCode can also drive any OpenAI-compatible
-chat completion API directly. These providers stream text and usage and can
-request workspace tools; ReyCode executes those requests through its trusted
-tool registry and feeds results back into the provider conversation.
+ReyCode drives OpenAI-compatible chat completion APIs directly — these are
+first-class providers, not a fallback. Providers stream text and usage and
+return normalized tool calls each round; ReyCode executes those requests
+through its trusted tool registry and feeds results back into the provider
+conversation.
 
 DeepSeek ships as a built-in profile. Set its API key in your environment and it
 appears alongside OpenCode in `Ctrl+G`:
@@ -190,13 +213,10 @@ Override any profile's base URL at runtime without changing config:
 export REYCODE_DEEPSEEK_BASE_URL=https://your-proxy.example
 ```
 
-There is no live Demo runtime or automatic simulator fallback. New rooms begin
-unconfigured, and sending is blocked until the required runtime assignments are
-ready. Historical Demo events remain readable but cannot schedule new work.
-
-OpenCode remains a provider during the transition. Its CLI still owns tool
-execution over the current stdio adapter; the ReyCode-owned tool loop is active
-for OpenAI-compatible providers and the simulator.
+New rooms begin unconfigured, and sending is blocked until the required runtime
+assignments are ready. The ReyCode-owned tool loop is active for all providers
+with the `:reycode_tools` capability (OpenAI-compatible and the simulator);
+OpenCode's stdio adapter uses the legacy `:provider_managed_tools` capability.
 
 ## Tool approval
 
@@ -204,7 +224,7 @@ Providers can only request workspace tools — `read`, `write`, `edit`, `bash`,
 `grep`, `glob`, and `list`. ReyCode executes them itself, one durable tool run
 at a time, inside the trusted workspace roots. `read`, `grep`, `glob`, `list`,
 and `edit` run without prompting; `bash` and `write` always wait for owner
-approval first.
+approval first. Unknown tools fail closed.
 
 When a tool needs approval, a banner appears above the room timeline:
 
