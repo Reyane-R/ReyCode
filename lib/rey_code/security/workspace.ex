@@ -2,6 +2,7 @@ defmodule ReyCode.Security.Workspace do
   @moduledoc "Canonical workspace validation and local-root policy."
 
   alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Workspace, as: WorkspacePolicy
   alias ReyCode.Security.CanonicalPath
 
   @type reason ::
@@ -48,7 +49,7 @@ defmodule ReyCode.Security.Workspace do
   defp policy_roots(opts) do
     roots =
       Keyword.get_lazy(opts, :roots, fn ->
-        roots(Keyword.get(opts, :config) || RuntimeConfig.fresh())
+        roots(Keyword.get_lazy(opts, :policy, fn -> RuntimeConfig.fresh().workspace end))
       end)
 
     roots
@@ -70,10 +71,9 @@ defmodule ReyCode.Security.Workspace do
   end
 
   @doc "Returns the resolved, canonical trusted roots currently in effect."
-  @spec roots(RuntimeConfig.t()) :: [String.t()]
-  def roots(config \\ RuntimeConfig.fresh()) do
-    config
-    |> RuntimeConfig.policy(:workspace_roots, nil)
+  @spec roots(WorkspacePolicy.t()) :: [String.t()]
+  def roots(policy \\ RuntimeConfig.fresh().workspace) do
+    policy.roots
     |> Kernel.||(default_roots())
     |> then(&policy_roots(roots: &1))
   end

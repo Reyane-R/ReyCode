@@ -104,16 +104,14 @@ defmodule ReyCode.EventStore do
   def handle_call(:load, _from, state), do: {:reply, SQLite.load(state), state}
 
   def handle_call(:load_projection, _from, state) do
-    limit = RuntimeConfig.policy(state.config, :max_replay_events, 2_000)
-
-    max_checkpoint_bytes =
-      RuntimeConfig.policy(state.config, :max_checkpoint_bytes, 67_108_864)
+    limit = state.config.max_replay_events
+    max_checkpoint_bytes = state.config.max_checkpoint_bytes
 
     {:reply, SQLite.load_projection(state, limit, max_checkpoint_bytes), state}
   end
 
   def handle_call({:checkpoint, projection}, _from, state) do
-    max_bytes = RuntimeConfig.policy(state.config, :max_checkpoint_bytes, 67_108_864)
+    max_bytes = state.config.max_checkpoint_bytes
     {:reply, SQLite.checkpoint(state, projection, max_bytes), state}
   end
 
@@ -178,7 +176,10 @@ defmodule ReyCode.EventStore do
             {:ok,
              state
              |> Map.put(:ownership_key, ownership_key)
-             |> Map.put(:config, Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0))}
+             |> Map.put(
+               :config,
+               Keyword.get_lazy(opts, :config, fn -> RuntimeConfig.fresh().persistence end)
+             )}
 
           {:error, reason} ->
             _ = SQLite.close(state)

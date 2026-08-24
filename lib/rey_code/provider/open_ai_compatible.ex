@@ -16,6 +16,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, Stream}
   alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.OpenAICompatible, as: OpenAIPolicy
   alias ReyCode.ToolRegistry
 
   @behaviour ReyCode.Provider
@@ -42,10 +43,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
   @impl true
   @spec stream(Runtime.t(), Request.t(), (Frame.t() -> :ok)) ::
           {:ok, Response.t()} | {:error, map()}
-  def stream(%Runtime{provider_id: provider_id, config: config}, request, emit) do
-    transport = transport(config)
+  def stream(%Runtime{provider_id: provider_id, config: %OpenAIPolicy{} = policy}, request, emit) do
+    transport = transport(policy)
 
-    with {:ok, profile} <- Profile.fetch(provider_id, config),
+    with {:ok, profile} <- Profile.fetch(provider_id, policy),
          {:ok, key} <- fetch_key(profile),
          {:ok, body} <- build_body(request, profile) do
       Stream.run(%Stream.Context{
@@ -55,13 +56,14 @@ defmodule ReyCode.Provider.OpenAICompatible do
         request: request,
         body: body,
         emit: emit,
-        config: config
+        config: policy
       })
     end
   end
 
   defp fetch_models(profile, opts) do
-    transport = Keyword.get(opts, :transport) || transport(Keyword.get(opts, :config))
+    policy = Keyword.get_lazy(opts, :policy, fn -> RuntimeConfig.fresh().open_ai end)
+    transport = Keyword.get(opts, :transport) || transport(policy)
     url = base_url(profile) <> "/models"
     headers = authorization(System.get_env(profile.key_env)) ++ [{"Accept", "application/json"}]
     opts_list = [timeout: Keyword.get(opts, :timeout, profile.request_timeout_ms)]
@@ -224,16 +226,9 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp base_url(profile), do: String.trim_trailing(profile.base_url, "/")
 
-  defp transport(config) do
-    config = config || RuntimeConfig.fresh()
-
-    RuntimeConfig.policy(
-      config,
-      :openai_compatible_transport,
-      nil
-    )
-    |> Kernel.||(ReyCode.Provider.OpenAICompatible.HTTPC)
-  end
+  defp transport(policy)
+  defp transport(%OpenAIPolicy{transport: nil}), do: ReyCode.Provider.OpenAICompatible.HTTPC
+  defp transport(%OpenAIPolicy{transport: transport}), do: transport
 
   defp blank?(nil), do: true
   defp blank?(""), do: true

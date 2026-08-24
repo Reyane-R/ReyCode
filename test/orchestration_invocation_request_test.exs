@@ -1,11 +1,21 @@
 defmodule ReyCode.Orchestration.InvocationRequestTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.InvocationRequest
+  alias ReyCode.Orchestration.{
+    Invocation,
+    InvocationRequest,
+    Participant,
+    Projection,
+    Room,
+    ToolRun,
+    Turn
+  }
+
+  alias ReyCode.Orchestration.Message, as: ProjectionMessage
   alias ReyCode.Provider.{Message, Request, ToolCall}
 
   test "builds the complete provider request from durable projection state" do
-    participant = %{
+    participant = %Participant{
       id: "builder",
       name: "Builder",
       perspective: "implementation",
@@ -13,7 +23,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
       model: nil
     }
 
-    invocation = %{
+    invocation = %Invocation{
       id: "inv-1",
       turn_id: "turn-1",
       room_id: "room-1",
@@ -37,7 +47,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
         }
       ],
       tool_runs: %{
-        "toolrun-1" => %{
+        "toolrun-1" => %ToolRun{
           id: "toolrun-1",
           tool_call_id: "call-1",
           round_index: 0,
@@ -51,23 +61,23 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
       tool_run_order: ["toolrun-1"]
     }
 
-    projection = %{
+    projection = %Projection{
       rooms: %{
-        "room-1" => %{
+        "room-1" => %Room{
           id: "room-1",
           workspace: "/workspace",
           message_order: ["msg-user"]
         }
       },
       turns: %{
-        "turn-1" => %{
+        "turn-1" => %Turn{
           id: "turn-1",
           mode: :compare,
           context_through_sequence: 4
         }
       },
       messages: %{
-        "msg-user" => %{
+        "msg-user" => %ProjectionMessage{
           role: :user,
           body: "Please revise it",
           author: %{name: "You"},

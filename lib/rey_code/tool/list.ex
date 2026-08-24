@@ -8,17 +8,14 @@ defmodule ReyCode.Tool.List do
   """
   @behaviour ReyCode.Tool
 
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Tools.List, as: ListPolicy
   alias ReyCode.Tool.{DirectoryEntries, Request, Result, Support}
-
-  @default_max_entries 2_000
-  @default_timeout_ms 10_000
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    policy = Keyword.fetch!(opts, :policy)
-    max_entries = RuntimeConfig.policy(policy, :tool_list_max_entries, @default_max_entries)
-    timeout_ms = RuntimeConfig.policy(policy, :tool_list_timeout_ms, @default_timeout_ms)
+    %ListPolicy{} = policy = Keyword.fetch!(opts, :policy)
+    max_entries = policy.max_entries
+    timeout_ms = policy.timeout_ms
 
     case Support.require_path(arguments, :path, request) do
       {:ok, canonical} -> list_entries(canonical, max_entries, timeout_ms)

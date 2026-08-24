@@ -95,7 +95,7 @@ defmodule ReyCode.Orchestration.Engine.Persistence do
   end
 
   defp maybe_checkpoint(projection, state) do
-    interval = ReyCode.RuntimeConfig.policy(state.config, :projection_checkpoint_interval, 500)
+    interval = state.config.persistence.checkpoint_interval
 
     if projection.sequence > 0 and rem(projection.sequence, interval) == 0 do
       projection

@@ -2,6 +2,7 @@ defmodule ReyCode.Orchestration.InvocationRequest do
   @moduledoc "Builds the provider request for one durable invocation round."
 
   alias ReyCode.Orchestration.Context
+  alias ReyCode.Orchestration.{Invocation, Projection}
   alias ReyCode.Provider.Request
 
   @type request_policy :: %{
@@ -9,7 +10,7 @@ defmodule ReyCode.Orchestration.InvocationRequest do
           required(:simulator_opts) => keyword() | nil
         }
 
-  @spec build(map(), map(), request_policy()) :: Request.t()
+  @spec build(Invocation.t(), Projection.t(), request_policy()) :: Request.t()
   def build(invocation, projection, request_policy) do
     turn = projection.turns[invocation.turn_id]
     room = projection.rooms[invocation.room_id]
@@ -24,7 +25,7 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       messages: Context.messages(room, turn, invocation, projection),
       workspace: room.workspace,
       resume_from: invocation.last_frame_sequence,
-      round_index: length(Map.get(invocation, :rounds, [])),
+      round_index: length(invocation.rounds),
       attempt: invocation.attempt,
       label: invocation.label,
       phase: invocation.phase,

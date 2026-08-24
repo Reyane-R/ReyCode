@@ -2,11 +2,15 @@ defmodule ReyCode.Orchestration.Projection do
   @moduledoc """
   The durable orchestration read model exposed to the engine and TUI.
 
-  Construction and cross-record queries live here so callers do not duplicate
-  knowledge of the projection's top-level representation.
+  Construction, legacy normalization, and cross-record queries live here so
+  callers do not duplicate knowledge of the projection representation.
   """
 
   @behaviour Access
+
+  alias ReyCode.Orchestration.{Invocation, Message, Room, Turn}
+
+  @fields [:sequence, :rooms, :room_order, :messages, :turns, :invocations]
 
   defstruct sequence: 0,
             rooms: %{},
@@ -17,24 +21,29 @@ defmodule ReyCode.Orchestration.Projection do
 
   @type t :: %__MODULE__{
           sequence: non_neg_integer(),
-          rooms: map(),
+          rooms: %{optional(String.t()) => Room.t()},
           room_order: [String.t()],
-          messages: map(),
-          turns: map(),
-          invocations: map()
+          messages: %{optional(String.t()) => Message.t()},
+          turns: %{optional(String.t()) => Turn.t()},
+          invocations: %{optional(String.t()) => Invocation.t()}
         }
 
-  @doc "Converts a legacy map projection into the current explicit record."
-  @spec from_map(map()) :: t()
-  def from_map(%__MODULE__{} = projection), do: projection
-
+  @doc "Converts a decoded or legacy projection map into the current typed records."
+  @spec from_map(t() | map()) :: t()
   def from_map(projection) when is_map(projection) do
-    fields = Map.keys(%__MODULE__{}) -- [:__struct__]
-    struct!(__MODULE__, Map.take(projection, fields))
+    projection = struct!(__MODULE__, Map.take(projection, @fields))
+
+    %{
+      projection
+      | rooms: normalize_records(projection.rooms, &Room.from_map/1),
+        messages: normalize_records(projection.messages, &Message.from_map/1),
+        turns: normalize_records(projection.turns, &Turn.from_map/1),
+        invocations: normalize_records(projection.invocations, &Invocation.from_map/1)
+    }
   end
 
   @doc "Returns the invocation awaiting a tool decision in a turn, if any."
-  @spec pending_tool_invocation(t(), String.t() | nil) :: map() | nil
+  @spec pending_tool_invocation(t(), String.t() | nil) :: Invocation.t() | nil
   def pending_tool_invocation(_projection, nil), do: nil
 
   def pending_tool_invocation(projection, turn_id) do
@@ -62,5 +71,9 @@ defmodule ReyCode.Orchestration.Projection do
   def pop(projection, key) do
     current = Map.fetch!(projection, key)
     {current, Map.put(projection, key, nil)}
+  end
+
+  defp normalize_records(records, convert) do
+    Map.new(records || %{}, fn {id, record} -> {id, convert.(record)} end)
   end
 end

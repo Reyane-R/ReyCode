@@ -2,9 +2,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   @moduledoc "Owns turn recovery, scheduling, cancellation, and finalization transitions."
 
   alias ReyCode.Orchestration.Engine.{Admission, Identity, Options, Persistence}
-  alias ReyCode.Orchestration.{EventEntries, Squad, ToolRuns, Validation}
+  alias ReyCode.Orchestration.{EventEntries, ToolRuns, Validation}
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
-  alias ReyCode.RuntimeConfig
 
   def interrupt_started_runs(state, invocation) do
     invocation
@@ -24,7 +23,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
         "reycode",
         "ReyCode",
         File.cwd!(),
-        Options.default_participants(state.config)
+        Options.default_participants(state.config.providers)
       )
 
     Persistence.append_and_project!(state, [{type, payload, metadata}])
@@ -218,10 +217,9 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     state =
       if turn.mode == :squad do
         squad_config = [
-          rework_budget:
-            RuntimeConfig.policy(state.config, :squad_rework_budget, Squad.max_rework()),
+          rework_budget: state.config.squad.rework_budget,
           release_authority:
-            if(RuntimeConfig.policy(state.config, :squad_release_gate_human, true),
+            if(state.config.squad.release_gate_human?,
               do: "human",
               else: "leader"
             )

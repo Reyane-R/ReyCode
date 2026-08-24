@@ -14,14 +14,14 @@ defmodule ReyCode.LoggingTest do
   end
 
   test "does not install a file handler when file logging is disabled" do
-    assert :ok = Logging.install!(RuntimeConfig.fresh(file_logging: false))
+    assert :ok = Logging.install!(RuntimeConfig.fresh(file_logging: false).logging)
     assert {:error, {:not_found, :rey_code_file}} = :logger.get_handler_config(:rey_code_file)
   end
 
   test "installs the file handler idempotently in an owner-only directory" do
     log_dir = Path.join(System.tmp_dir!(), "rey-code-logs-#{System.unique_integer([:positive])}")
     on_exit(fn -> File.rm_rf(log_dir) end)
-    config = RuntimeConfig.fresh(file_logging: true, log_dir: log_dir)
+    config = RuntimeConfig.fresh(file_logging: true, log_dir: log_dir).logging
 
     assert :ok = Logging.install!(config)
     assert :ok = Logging.install!(config)

@@ -1,6 +1,8 @@
 defmodule ReyCode.Orchestration.Engine.Identity do
   @moduledoc "Pure helpers for generating aggregate IDs and room slugs."
 
+  alias ReyCode.Orchestration.Projection
+
   @doc "Generates a prefixed, timestamped aggregate ID."
   @spec new_id(String.t()) :: String.t()
   def new_id(prefix) do
@@ -23,7 +25,7 @@ defmodule ReyCode.Orchestration.Engine.Identity do
   end
 
   @doc "Disambiguates a base slug against the room slugs in a projection."
-  @spec unique_slug(String.t(), map()) :: String.t()
+  @spec unique_slug(String.t(), Projection.t()) :: String.t()
   def unique_slug(base, projection) do
     used = MapSet.new(projection.rooms, fn {_id, room} -> room.slug end)
 

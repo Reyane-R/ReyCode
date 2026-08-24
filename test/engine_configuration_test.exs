@@ -5,17 +5,13 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
   alias ReyCode.RuntimeConfig
 
   test "plans participant configuration in selected order with duplicate IDs removed" do
-    projection = projection()
-
     assert {:ok, entries} =
              Configuration.participants(
-               projection,
+               state(),
                "room-1",
                ["critic", "builder", "critic"],
                :simulator,
-               "ignored",
-               nil,
-               config()
+               "ignored"
              )
 
     assert Enum.map(entries, fn {_type, data, _metadata} -> data["participant_id"] end) == [
@@ -31,13 +27,11 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
   test "plans squad-role events through the same provider and model rules" do
     assert {:ok, [entry]} =
              Configuration.squad_roles(
-               projection(),
+               state(),
                "room-1",
                "architect",
                :simulator,
-               nil,
-               nil,
-               config()
+               nil
              )
 
     assert {:squad_role_configured, data, _metadata} = entry
@@ -49,47 +43,43 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
   test "preserves target, selection, and provider error precedence for both targets" do
     assert {:error, :room_not_found} =
              Configuration.participants(
-               %{rooms: %{}},
+               state(%{rooms: %{}}),
                "missing",
                [],
                :unknown,
-               nil,
-               nil,
-               config()
+               nil
              )
 
     assert {:error, :participant_required} =
              Configuration.squad_roles(
-               projection(),
+               state(),
                "room-1",
                [],
                :unknown,
-               nil,
-               nil,
-               config()
+               nil
              )
 
     assert {:error, :participant_not_found} =
              Configuration.participants(
-               projection(),
+               state(),
                "room-1",
                ["missing"],
                :unknown,
-               nil,
-               nil,
-               config()
+               nil
              )
 
     assert {:error, :unknown_provider} =
              Configuration.squad_roles(
-               projection(),
+               state(),
                "room-1",
                ["architect"],
                :unknown,
-               nil,
-               nil,
-               config()
+               nil
              )
+  end
+
+  defp state(projection \\ projection()) do
+    %{projection: projection, provider_catalog: nil, config: config()}
   end
 
   defp projection do

@@ -5,12 +5,10 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
   A profile binds a display name, a base URL, and the environment variable that
   holds the API key. The key itself is read from the environment at invocation
   time and is never stored on the profile, in the catalog, or in the event log.
-
-  Profiles resolve against an injected runtime configuration. Callers that do
-  not provide one receive the validated schema defaults.
   """
 
   alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.OpenAICompatible, as: OpenAIPolicy
 
   @enforce_keys [:id, :name, :base_url, :key_env]
   defstruct [
@@ -33,23 +31,19 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
           max_prompt_bytes: pos_integer()
         }
 
-  @spec all(ReyCode.RuntimeConfig.t() | nil) :: [t()]
-  def all(config \\ nil) do
-    config = config || RuntimeConfig.fresh()
-    configured = RuntimeConfig.policy(config, :openai_compatible_providers, [])
-
-    (built_in() ++ configured)
+  @spec all(OpenAIPolicy.t()) :: [t()]
+  def all(policy \\ RuntimeConfig.fresh().open_ai) do
+    (built_in() ++ policy.profiles)
     |> Enum.uniq_by(& &1.id)
-    |> Enum.map(&normalize(&1, config))
+    |> Enum.map(&normalize(&1, policy))
   end
 
-  @spec ids(ReyCode.RuntimeConfig.t() | nil) :: [atom()]
-  def ids(config \\ nil), do: Enum.map(all(config), & &1.id)
+  @spec ids(OpenAIPolicy.t()) :: [atom()]
+  def ids(policy \\ RuntimeConfig.fresh().open_ai), do: Enum.map(all(policy), & &1.id)
 
-  @spec fetch(atom(), ReyCode.RuntimeConfig.t() | nil) ::
-          {:ok, t()} | {:error, :unknown_provider}
-  def fetch(id, config \\ nil) do
-    case Enum.find(all(config), &(&1.id == id)) do
+  @spec fetch(atom(), OpenAIPolicy.t()) :: {:ok, t()} | {:error, :unknown_provider}
+  def fetch(id, policy \\ RuntimeConfig.fresh().open_ai) do
+    case Enum.find(all(policy), &(&1.id == id)) do
       nil -> {:error, :unknown_provider}
       profile -> {:ok, profile}
     end
@@ -66,10 +60,10 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
     ]
   end
 
-  defp normalize(%__MODULE__{} = profile, config),
-    do: %{profile | base_url: resolved_base_url(profile, config)}
+  defp normalize(%__MODULE__{} = profile, policy),
+    do: %{profile | base_url: resolved_base_url(profile, policy)}
 
-  defp normalize(map, config) when is_map(map) do
+  defp normalize(map, policy) when is_map(map) do
     struct!(
       __MODULE__,
       Map.take(map, [
@@ -82,12 +76,10 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
         :max_prompt_bytes
       ])
     )
-    |> normalize(config)
+    |> normalize(policy)
   end
 
-  defp resolved_base_url(%__MODULE__{id: id, base_url: base_url}, config) do
-    config
-    |> RuntimeConfig.policy(:openai_compatible_base_url_overrides, %{})
-    |> Map.get(id, base_url)
+  defp resolved_base_url(%__MODULE__{id: id, base_url: base_url}, policy) do
+    Map.get(policy.base_url_overrides, id, base_url)
   end
 end

@@ -1,14 +1,14 @@
 defmodule ReyCode.Orchestration.Squad.Output do
   @moduledoc "Parses and validates provider-independent squad artifact and gate envelopes."
 
-  alias ReyCode.Orchestration.Squad
+  alias ReyCode.Orchestration.{Invocation, Message, Squad}
 
-  @spec parse(map(), map()) :: {:ok, map()} | {:error, atom()}
+  @spec parse(Invocation.t(), Message.t()) :: {:ok, map()} | {:error, atom()}
   def parse(invocation, message) do
     metadata = invocation.completion_metadata || %{}
 
     with {:ok, output} <- output(metadata, message.body),
-         {:ok, output} <- validate(output, invocation.participant.id, invocation[:phase]) do
+         {:ok, output} <- validate(output, invocation.participant.id, invocation.phase) do
       {:ok, Map.put(output, "role_id", invocation.participant.id)}
     end
   end

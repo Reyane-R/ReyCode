@@ -3,7 +3,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
   use ExUnitProperties
 
   alias ReyCode.Event
-  alias ReyCode.Orchestration.Projector
+  alias ReyCode.Orchestration.{Invocation, Message, Participant, Projector, Room, Turn}
 
   test "replay rebuilds room messages, turns, and streamed invocations" do
     participant = %{
@@ -82,6 +82,11 @@ defmodule ReyCode.Orchestration.ProjectorTest do
 
     state = Projector.replay(events)
 
+    assert %Room{} = state.rooms["room-1"]
+    assert %Participant{} = hd(state.rooms["room-1"].participants)
+    assert %Message{} = state.messages["msg-agent"]
+    assert %Turn{} = state.turns["turn-1"]
+    assert %Invocation{} = state.invocations["inv-1"]
     assert state.sequence == 10
     assert state.room_order == ["room-1"]
     assert state.rooms["room-1"].message_order == ["msg-agent", "msg-user"]

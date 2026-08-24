@@ -435,7 +435,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                 max_output_bytes: 8
               }
             ]
-          )
+          ).open_ai
       }
 
       assert {:error, %{"category" => "output_too_large", "retryable" => false}} =
@@ -461,7 +461,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     test "a base url environment override takes precedence" do
       System.put_env("REYCODE_DEEPSEEK_BASE_URL", "https://proxy.example.test")
 
-      {:ok, profile} = Profile.fetch(:deepseek, RuntimeConfig.load!())
+      {:ok, profile} = Profile.fetch(:deepseek, RuntimeConfig.load!().open_ai)
       assert profile.base_url == "https://proxy.example.test"
     after
       System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
@@ -472,7 +472,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       config = RuntimeConfig.load!()
       System.put_env("REYCODE_DEEPSEEK_BASE_URL", "https://second.example.test")
 
-      assert {:ok, %{base_url: "https://first.example.test"}} = Profile.fetch(:deepseek, config)
+      assert {:ok, %{base_url: "https://first.example.test"}} =
+               Profile.fetch(:deepseek, config.open_ai)
     after
       System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
     end
@@ -480,13 +481,13 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
   defp runtime(overrides \\ []) do
     config =
-      RuntimeConfig.fresh(
+      [
         openai_compatible_transport: FakeTransport,
         openai_compatible_chunk_latency_ms: 0
-      )
-      |> Map.from_struct()
-      |> Map.merge(Map.new(overrides))
-      |> then(&struct!(RuntimeConfig, &1))
+      ]
+      |> Keyword.merge(overrides)
+      |> RuntimeConfig.fresh()
+      |> Map.fetch!(:open_ai)
 
     %Runtime{
       module: OpenAICompatible,

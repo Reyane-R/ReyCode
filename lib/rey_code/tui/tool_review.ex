@@ -8,7 +8,6 @@ defmodule ReyCode.TUI.ToolReview do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, Projection}
-  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Environment
   alias ReyCode.TUI.SlashPalette
 
@@ -198,7 +197,7 @@ defmodule ReyCode.TUI.ToolReview do
     names =
       Environment.allowlisted(
         source: System.get_env(),
-        additional_names: RuntimeConfig.policy(config, :tool_bash_env_allowlist, [])
+        additional_names: config.tools.bash.env_allowlist
       )
       |> Map.keys()
       |> Enum.sort()

@@ -1,6 +1,4 @@
 {
-  "functions": {
-    "ReyCode.Orchestration.Engine.handle_call/3": 32.6
-  },
+  "functions": {},
   "threshold": 30
 }

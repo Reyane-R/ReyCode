@@ -183,7 +183,8 @@ defmodule ReyCode.EventStoreSQLiteTest do
              EventStore.append(:room_created, room_data("room-2"), store, metadata("room-2"))
 
     assert {:ok, loaded_checkpoint, [tail]} = EventStore.load_projection(store)
-    assert loaded_checkpoint == Map.from_struct(checkpoint)
+    refute Map.has_key?(loaded_checkpoint.rooms["room-1"], :__struct__)
+    assert Projector.replay([], loaded_checkpoint) == checkpoint
     assert tail == second
 
     assert Projector.replay([tail], loaded_checkpoint) ==

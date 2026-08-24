@@ -1,12 +1,11 @@
 defmodule ReyCode.TUI.Components.Modals do
   @moduledoc """
-  Registry and selector pairing each modal with its owning feature module.
+  Registry and selector pairing each modal with its interaction owner and renderer.
 
-  A feature module owns its state transitions, `focus/1`, `submit/1`,
-  `handle_input/2`, optional `handle_event/3`, and its `modal/1` render
-  component. This module only maps a modal name to that module and renders
-  whichever modal is currently active. Adding a modal means adding one
-  registry entry plus the feature module itself.
+  Feature modules own state transitions, focus, submission, and event/input
+  handling. Small features render themselves; larger renderers may live under
+  `ReyCode.TUI.Components`. This module maps modal names to interaction owners
+  and renders whichever modal is currently active.
   """
 
   use Breeze.Component
@@ -22,6 +21,8 @@ defmodule ReyCode.TUI.Components.Modals do
     ToolReview,
     Workspace
   }
+
+  alias ReyCode.TUI.Components.SettingsModal
 
   @registry %{
     new_room: NewRoom,
@@ -52,7 +53,7 @@ defmodule ReyCode.TUI.Components.Modals do
   end
 
   defp dispatch(:new_room, assigns), do: NewRoom.modal(assigns)
-  defp dispatch(:settings, assigns), do: Settings.modal(assigns)
+  defp dispatch(:settings, assigns), do: SettingsModal.modal(assigns)
   defp dispatch(:workspace, assigns), do: Workspace.modal(assigns)
   defp dispatch(:cancel, assigns), do: Cancellation.modal(assigns)
   defp dispatch(:squad_dashboard, assigns), do: SquadStatus.modal(assigns)

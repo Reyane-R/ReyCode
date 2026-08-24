@@ -312,6 +312,27 @@ defmodule ReyCode.Orchestration.EngineTest do
     end
   end
 
+  test "rejects malformed commands at the clause boundary without touching state" do
+    %{engine: engine} = start_isolated_engine([])
+    room_id = default_room_id(engine)
+
+    assert {:error, :room_not_found} =
+             Engine.post_message("room-missing", "Hello", :compare, engine)
+
+    assert {:error, :invalid_mode} = Engine.post_message(room_id, "Hello", :unknown_mode, engine)
+
+    assert {:error, :invocation_not_found} =
+             Engine.Client.record_round(engine, "inv-missing", 0, %{"text" => ""})
+
+    assert {:error, :invocation_not_found} = Engine.Client.take_tool_run(engine, "inv-missing")
+
+    assert {:error, :invocation_not_found} =
+             Engine.Client.record_frame(engine, "inv-missing", Frame.text_delta(1, "late"))
+
+    assert {:error, :invocation_not_found} =
+             Engine.Client.tool_run_started(engine, "inv-missing", "run-missing")
+  end
+
   defp wait_for_running(engine, turn_id, timeout \\ 3_000) do
     Wait.projection(
       engine,
@@ -440,7 +461,9 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   defp start_stack_dependencies(stack) do
     store =
-      start_supervised!({EventStore, name: nil, path: stack.store_path, config: stack.config})
+      start_supervised!(
+        {EventStore, name: nil, path: stack.store_path, config: stack.config.persistence}
+      )
 
     start_supervised!({Registry, keys: :unique, name: stack.agent_registry})
     start_supervised!({Registry, keys: :duplicate, name: stack.event_registry})

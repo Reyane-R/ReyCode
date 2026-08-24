@@ -1,19 +1,17 @@
 defmodule ReyCode.Logging do
   @moduledoc false
 
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Logging, as: LoggingPolicy
 
   @max_bytes 10 * 1024 * 1024
   @max_files 5
 
-  @spec install!(RuntimeConfig.t()) :: :ok
-  def install!(%RuntimeConfig{} = config) do
-    if config.file_logging do
-      log_dir = config.log_dir
-
-      log_path = Path.join(log_dir, "rey_code.log")
-      File.mkdir_p!(log_dir)
-      File.chmod!(log_dir, 0o700)
+  @spec install!(LoggingPolicy.t()) :: :ok
+  def install!(%LoggingPolicy{} = policy) do
+    if policy.enabled? do
+      log_path = Path.join(policy.log_dir, "rey_code.log")
+      File.mkdir_p!(policy.log_dir)
+      File.chmod!(policy.log_dir, 0o700)
 
       config = %{
         level: :info,

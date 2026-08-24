@@ -10,17 +10,17 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
 
   @ansi ~r/\e\[[0-?]*[ -\/]*[@-~]/
   @model ~r/^[^\s\/]+\/.+$/
-  @default_discovery_timeout_ms 5_000
-  @default_discovery_output_bytes 256_000
 
   @spec discover(keyword()) :: {:ok, map()} | {:error, term()}
   def discover(opts \\ []) do
-    config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
-    executable = discovery_executable(opts, config)
+    defaults = RuntimeConfig.fresh()
+    open_code = Keyword.get(opts, :open_code, defaults.open_code)
+    providers = Keyword.get(opts, :providers, defaults.providers)
+    executable = discovery_executable(opts, open_code)
     {executable, executable_identity} = executable_details(executable)
-    environment_opts = Process.environment_opts(config)
+    environment_opts = Process.environment_opts(open_code)
     runner = discovery_runner(opts, environment_opts)
-    command_opts = discovery_command_opts(opts, config)
+    command_opts = discovery_command_opts(opts, open_code, providers)
 
     discover_provider(executable, executable_identity, runner, command_opts)
   end
@@ -44,10 +44,8 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
     end
   end
 
-  defp discovery_executable(opts, config) do
-    Keyword.get(opts, :executable) ||
-      RuntimeConfig.policy(config, :opencode_path, nil) ||
-      System.find_executable("opencode")
+  defp discovery_executable(opts, policy) do
+    Keyword.get(opts, :executable) || policy.path || System.find_executable("opencode")
   end
 
   defp discovery_runner(opts, environment_opts) do
@@ -59,29 +57,11 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
     end)
   end
 
-  defp discovery_command_opts(opts, config) do
+  defp discovery_command_opts(opts, open_code, providers) do
     [
-      env: Environment.launch_env(Process.environment_opts(config)),
-      timeout_ms:
-        Keyword.get(
-          opts,
-          :timeout_ms,
-          RuntimeConfig.policy(
-            config,
-            :provider_discovery_command_timeout_ms,
-            @default_discovery_timeout_ms
-          )
-        ),
-      max_output_bytes:
-        Keyword.get(
-          opts,
-          :max_output_bytes,
-          RuntimeConfig.policy(
-            config,
-            :provider_discovery_output_bytes,
-            @default_discovery_output_bytes
-          )
-        )
+      env: Environment.launch_env(Process.environment_opts(open_code)),
+      timeout_ms: Keyword.get(opts, :timeout_ms, providers.discovery_command_timeout_ms),
+      max_output_bytes: Keyword.get(opts, :max_output_bytes, providers.discovery_output_bytes)
     ]
   end
 

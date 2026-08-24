@@ -13,7 +13,6 @@ defmodule ReyCode.Provider.Simulator do
   alias ReyCode.Orchestration.Squad
   alias ReyCode.Provider.{Frame, Response, ToolCall}
   alias ReyCode.Provider.Simulator.Scenario
-  alias ReyCode.RuntimeConfig
 
   @impl true
   def stream(runtime, request, emit) do
@@ -232,18 +231,15 @@ defmodule ReyCode.Provider.Simulator do
   defp scenario_for(_request, runtime), do: scenario_from_config(runtime)
 
   defp scenario_from_config(runtime) do
-    delay = RuntimeConfig.policy(runtime.config, :agent_delay_ms, 0)
-
-    runtime.config
-    |> RuntimeConfig.policy(:squad_simulator, [])
-    |> Keyword.put_new(:delay_ms, delay)
+    runtime.config.options
+    |> Keyword.put_new(:delay_ms, runtime.config.agent_delay_ms)
     |> Scenario.new()
   end
 
   defp regular_delay(%{mode: :squad}, _runtime, sample), do: sample
 
   defp regular_delay(request, runtime, sample) do
-    delay = request.agent_delay_ms || RuntimeConfig.policy(runtime.config, :agent_delay_ms, 0)
+    delay = request.agent_delay_ms || runtime.config.agent_delay_ms
     %{sample | delay_ms: delay, failure: nil}
   end
 

@@ -9,7 +9,7 @@ defmodule ReyCode.Provider.CatalogTest do
   @task_supervisor __MODULE__.TaskSupervisor
   @catalog __MODULE__.Catalog
 
-  test "live catalog exposes only OpenCode" do
+  test "live catalog exposes only supported providers" do
     start_supervised!({Registry, keys: :duplicate, name: @registry})
     start_supervised!({Task.Supervisor, name: @task_supervisor})
 
@@ -23,7 +23,7 @@ defmodule ReyCode.Provider.CatalogTest do
     )
 
     providers = Catalog.snapshot(@catalog)
-    assert Map.keys(providers) == [:opencode, :deepseek]
+    assert MapSet.new(Map.keys(providers)) == MapSet.new([:opencode, :deepseek])
     refute Map.has_key?(providers, :demo)
     refute Map.has_key?(providers, :simulator)
   end
@@ -219,6 +219,8 @@ defmodule ReyCode.Provider.CatalogTest do
         ]
       )
 
+    policy = config.open_ai
+
     api_discover = fn ->
       %{
         local_api:
@@ -242,7 +244,7 @@ defmodule ReyCode.Provider.CatalogTest do
               provider_id: :local_api,
               module: ReyCode.Provider.OpenAICompatible,
               models: ["local-model"],
-              config: ^config
+              config: ^policy
             }} = Catalog.resolve_when_ready(:local_api, "local-model", @catalog)
   end
 

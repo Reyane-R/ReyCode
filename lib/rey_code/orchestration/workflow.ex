@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Workflow do
   @moduledoc "Scheduling contract for room turn strategies."
 
-  alias ReyCode.Orchestration.EventEntries
+  alias ReyCode.Orchestration.{EventEntries, Invocation, Message, Projection, Room, Turn}
 
   @type spec :: %{
           participant_id: String.t(),
@@ -15,9 +15,11 @@ defmodule ReyCode.Orchestration.Workflow do
           {:advance, [EventEntries.event_entry()]}
           | {:retry, [EventEntries.event_entry()], spec()}
 
-  @callback plan(map(), map(), map()) :: [spec()]
-  @callback advance(map(), map(), map()) :: :wait | {:continue, [spec()]} | {:complete, atom()}
-  @callback finalize(map(), map(), invocation_outcome(), keyword()) :: finalization()
+  @callback plan(Room.t(), Turn.t(), Projection.t()) :: [spec()]
+  @callback advance(Room.t(), Turn.t(), Projection.t()) ::
+              :wait | {:continue, [spec()]} | {:complete, atom()}
+  @callback finalize(Invocation.t(), Message.t(), invocation_outcome(), keyword()) ::
+              finalization()
 
   @doc false
   defmacro __using__(_opts) do
@@ -57,7 +59,7 @@ defmodule ReyCode.Orchestration.Workflow do
   end
 
   @doc "Builds the default terminal action for a completed or failed invocation."
-  @spec finalize_invocation(map(), invocation_outcome()) :: finalization()
+  @spec finalize_invocation(Invocation.t(), invocation_outcome()) :: finalization()
   def finalize_invocation(invocation, outcome) do
     {:advance, [EventEntries.invocation_terminal(invocation, outcome)]}
   end
