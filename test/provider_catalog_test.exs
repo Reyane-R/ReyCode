@@ -32,10 +32,18 @@ defmodule ReyCode.Provider.CatalogTest do
     start_supervised!({Registry, keys: :duplicate, name: @registry})
     start_supervised!({Task.Supervisor, name: @task_supervisor})
 
+    identity = %{
+      path: "/usr/local/bin/opencode",
+      device: {1, 2},
+      inode: 3,
+      sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+
     discover = fn ->
       {:ok,
        %{
          executable: "/usr/local/bin/opencode",
+         executable_identity: identity,
          version: "1.18.11",
          credential_count: 2,
          models: ["openai/gpt-5.6-sol"]
@@ -62,6 +70,7 @@ defmodule ReyCode.Provider.CatalogTest do
             %Runtime{
               module: ReyCode.Provider.OpenCode,
               executable: "/usr/local/bin/opencode",
+              executable_identity: ^identity,
               version: "1.18.11",
               models: ["openai/gpt-5.6-sol"],
               status: :configured

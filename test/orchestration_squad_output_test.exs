@@ -6,28 +6,89 @@ defmodule ReyCode.Orchestration.Squad.OutputTest do
 
   test "accepts an authorized worker artifact" do
     invocation =
-      invocation("analyst", %{
-        "squad_output" => %{
-          "kind" => "artifact",
-          "artifact_type" => "stories",
-          "summary" => "Stories ready",
-          "blockers" => []
-        }
-      })
+      invocation(
+        "analyst",
+        %{
+          "squad_output" => %{
+            "kind" => "artifact",
+            "artifact_type" => "stories",
+            "summary" => "Stories ready",
+            "blockers" => []
+          }
+        },
+        "stories"
+      )
 
     assert {:ok, %{"role_id" => "analyst"}} = Output.parse(invocation, %{body: ""})
   end
 
+  test "rejects an artifact the role owns in a different phase" do
+    invocation =
+      invocation(
+        "analyst",
+        %{
+          "squad_output" => %{
+            "kind" => "artifact",
+            "artifact_type" => "stories",
+            "summary" => "Stories from the wrong phase",
+            "blockers" => []
+          }
+        },
+        "specification"
+      )
+
+    assert {:error, :invalid_artifact} = Output.parse(invocation, %{body: ""})
+  end
+
+  test "accepts the legacy implementation envelope in the implementation phase" do
+    invocation =
+      invocation(
+        "implementer",
+        %{
+          "squad_output" => %{
+            "kind" => "artifact",
+            "artifact_type" => "implementation",
+            "summary" => "Schema-v2 envelope",
+            "blockers" => []
+          }
+        },
+        "implementation"
+      )
+
+    assert {:ok, %{"artifact_type" => "implementation"}} = Output.parse(invocation, %{body: ""})
+  end
+
   test "rejects worker gate decisions" do
     invocation =
-      invocation("reviewer", %{
-        "squad_output" => %{
-          "kind" => "gate",
-          "decision" => "rework",
-          "target_phase" => "stories",
-          "reasons" => []
-        }
-      })
+      invocation(
+        "reviewer",
+        %{
+          "squad_output" => %{
+            "kind" => "gate",
+            "decision" => "rework",
+            "target_phase" => "stories",
+            "reasons" => []
+          }
+        },
+        "story_gate"
+      )
+
+    assert {:error, :invalid_gate} = Output.parse(invocation, %{body: ""})
+  end
+
+  test "rejects a leader gate decision outside a gate phase" do
+    invocation =
+      invocation(
+        "squad_leader",
+        %{
+          "squad_output" => %{
+            "kind" => "gate",
+            "decision" => "approve",
+            "reasons" => []
+          }
+        },
+        "leader_intake"
+      )
 
     assert {:error, :invalid_gate} = Output.parse(invocation, %{body: ""})
   end
@@ -83,7 +144,7 @@ defmodule ReyCode.Orchestration.Squad.OutputTest do
   end
 
   test "parses a strict JSON leader gate from provider text" do
-    invocation = invocation("squad_leader", %{})
+    invocation = invocation("squad_leader", %{}, "release_gate")
     body = Jason.encode!(%{"kind" => "gate", "decision" => "approve", "reasons" => []})
 
     assert {:ok, %{"decision" => "approve", "target_phase" => nil}} =
@@ -103,7 +164,7 @@ defmodule ReyCode.Orchestration.Squad.OutputTest do
               %{"artifact_type" => "unit_tests", "summary" => "Tests", "blockers" => []},
               %{
                 "artifact_type" => "acceptance_tests",
-                "summary" => "Acceptance",
+                "summary" => "Acceptance tests",
                 "blockers" => []
               }
             ]

@@ -64,11 +64,17 @@ defmodule ReyCode.Orchestration.Validation do
     end
   end
 
-  @doc "Checks gate preconditions and normalizes a human gate decision."
-  @spec gate_resolution(map() | nil, term(), term(), term()) ::
+  @doc """
+  Checks gate preconditions and normalizes a human gate decision.
+
+  The decision must carry the review id of the gate that was displayed, so a
+  stale modal can never resolve a newer gate opened by the same turn.
+  """
+  @spec gate_resolution(map() | nil, term(), term(), term(), term()) ::
           {:ok, map(), atom(), String.t() | nil, [String.t()]} | {:error, atom()}
-  def gate_resolution(turn, raw_decision, raw_target_phase, raw_reasons) do
+  def gate_resolution(turn, raw_review_id, raw_decision, raw_target_phase, raw_reasons) do
     with {:ok, review} <- pending_gate_review(turn),
+         :ok <- require_requested_review(review, raw_review_id),
          {:ok, decision} <- normalize_gate_decision(raw_decision),
          {:ok, target_phase} <- normalize_gate_target(decision, raw_target_phase),
          {:ok, reasons} <- normalize_gate_reasons(raw_reasons) do
@@ -97,6 +103,12 @@ defmodule ReyCode.Orchestration.Validation do
        do: if(raw_run_id == request_id, do: :ok, else: {:error, :tool_run_not_found})
 
   defp require_requested_run(_review, _raw_run_id), do: {:error, :tool_run_not_found}
+
+  defp require_requested_review(%{review_id: review_id}, raw_review_id)
+       when is_binary(raw_review_id),
+       do: if(raw_review_id == review_id, do: :ok, else: {:error, :gate_review_not_found})
+
+  defp require_requested_review(_review, _raw_review_id), do: {:error, :gate_review_not_found}
 
   defp directive_turn_ready(nil), do: {:error, :turn_not_found}
 

@@ -60,9 +60,11 @@ defmodule ReyCode.TUI.GateReview do
   @spec submit(map()) :: {:noreply, map()}
   def submit(term) do
     decision = Enum.at(@options, term.assigns.gate_review.index)
+    review_id = Map.get(term.assigns.gate_review.review, :review_id)
 
     case Engine.resolve_gate(
            term.assigns.gate_review.turn_id,
+           review_id,
            decision,
            nil,
            [],

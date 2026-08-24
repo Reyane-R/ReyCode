@@ -129,6 +129,9 @@ defmodule Mix.Tasks.Quality.Crap do
     end
   end
 
+  # Only "the baseline did not exist at that revision" may skip the ratchet;
+  # every other git failure (bad revision, missing object, not a repository)
+  # fails closed instead of silently disabling baseline enforcement.
   defp base_baseline(base, baseline_path) do
     case System.cmd("git", ["show", "#{base}:#{baseline_path}"], stderr_to_stdout: true) do
       {contents, 0} ->
@@ -137,10 +140,15 @@ defmodule Mix.Tasks.Quality.Crap do
           {:error, reason} -> {:error, reason}
         end
 
-      {_output, _status} ->
-        :skip
+      {output, _status} ->
+        if missing_at_base?(output),
+          do: :skip,
+          else: {:error, {:git_show_failed, String.trim(output)}}
     end
   end
+
+  defp missing_at_base?(output),
+    do: output =~ "does not exist in" or output =~ "exists on disk, but not in"
 
   defp violation_message(violations) do
     details = Enum.map_join(violations, "\n", &violation_detail/1)

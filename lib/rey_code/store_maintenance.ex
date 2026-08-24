@@ -32,10 +32,10 @@ defmodule ReyCode.StoreMaintenance do
     destination = Path.expand(destination)
 
     with :ok <- require_replace(destination, opts[:replace]),
-         :ok <- verify_manifest(source),
+         {:ok, expected_sha} <- verify_manifest(source),
          {:ok, source_report} <- SQLite.verify_path(source),
          :ok <- ensure_destination_offline(destination),
-         :ok <- install_copy(source, destination),
+         :ok <- install_copy(source, destination, expected_sha, opts[:replace] == true),
          {:ok, restored_report} <- SQLite.verify_path(destination) do
       {:ok,
        %{
@@ -91,7 +91,9 @@ defmodule ReyCode.StoreMaintenance do
          {:ok, manifest} <- Jason.decode(payload),
          expected when is_binary(expected) <- manifest["sha256"],
          {:ok, actual} <- hash_source(source) do
-      if secure_compare(expected, actual), do: :ok, else: {:error, :backup_checksum_mismatch}
+      if secure_compare(expected, actual),
+        do: {:ok, expected},
+        else: {:error, :backup_checksum_mismatch}
     else
       {:error, :enoent} -> {:error, :backup_manifest_missing}
       {:error, {:source_unreadable, _}} = error -> error
@@ -140,8 +142,9 @@ defmodule ReyCode.StoreMaintenance do
     end
   end
 
-  defp install_copy(source, destination) do
+  defp install_copy(source, destination, expected_sha, replace?) do
     directory = Path.dirname(destination)
+    fresh_directory? = not File.exists?(directory)
 
     with :ok <- File.mkdir_p(directory),
          {:ok, canonical_destination} <- CanonicalPath.resolve_identity(destination) do
@@ -149,11 +152,12 @@ defmodule ReyCode.StoreMaintenance do
         canonical_destination <>
           ".restore-#{System.unique_integer([:positive, :monotonic])}.sqlite3"
 
-      with :ok <- File.chmod(Path.dirname(canonical_destination), 0o700),
+      with :ok <- harden_directory(directory, fresh_directory?),
            {:ok, _bytes} <- File.copy(source, temporary),
            :ok <- File.chmod(temporary, 0o600),
+           :ok <- verify_copied_bytes(temporary, expected_sha),
            {:ok, _report} <- SQLite.verify_path(temporary),
-           :ok <- File.rename(temporary, canonical_destination) do
+           :ok <- publish(temporary, canonical_destination, replace?) do
         :ok
       else
         error ->
@@ -162,6 +166,50 @@ defmodule ReyCode.StoreMaintenance do
       end
     else
       error -> error
+    end
+  end
+
+  # Only a parent directory this restore created is hardened; an existing
+  # one keeps whatever permissions its owner chose.
+  defp harden_directory(_directory, false), do: :ok
+  defp harden_directory(directory, true), do: File.chmod(directory, 0o700)
+
+  # The copied bytes must match the manifest hash the source was verified
+  # against, so a torn or partial copy can never be published.
+  defp verify_copied_bytes(path, expected_sha) do
+    case Hashing.file_sha256_hex(path) do
+      {:ok, ^expected_sha} -> :ok
+      {:ok, _other} -> {:error, :backup_checksum_mismatch}
+      {:error, reason} -> {:error, {:copy_unreadable, reason}}
+    end
+  end
+
+  # Non-replacing restores publish through a hard link, which fails with
+  # :eexist when the destination appeared after the offline check; a plain
+  # rename would silently clobber it.
+  defp publish(temporary, destination, replace?) do
+    if replace?,
+      do: publish_by_rename(temporary, destination),
+      else: publish_by_link(temporary, destination)
+  end
+
+  defp publish_by_rename(temporary, destination) do
+    case File.rename(temporary, destination) do
+      :ok -> :ok
+      {:error, reason} -> {:error, {:restore_publish_failed, reason}}
+    end
+  end
+
+  defp publish_by_link(temporary, destination) do
+    case File.ln(temporary, destination) do
+      :ok ->
+        File.rm(temporary)
+
+      {:error, :eexist} ->
+        {:error, :destination_created_during_restore}
+
+      {:error, reason} ->
+        {:error, {:restore_publish_failed, reason}}
     end
   end
 

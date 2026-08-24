@@ -692,8 +692,11 @@ defmodule ReyCode.Orchestration.Projector do
 
   defp put_sequence(state, sequence), do: %{state | sequence: sequence}
 
+  # The review id is derived from the gate's coordinates so replays of old
+  # events synthesize the same identity the TUI captured when it opened.
   defp gate_decision(data, recorded_at, actor) do
     %{
+      review_id: "#{data["turn_id"]}:#{data["phase"]}:#{data["cycle"]}",
       role_id: data["seat_id"],
       decision: data["decision"],
       phase: data["phase"],

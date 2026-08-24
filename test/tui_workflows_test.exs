@@ -69,7 +69,7 @@ defmodule ReyCode.TUI.WorkflowsTest do
 
   test "gate review preserves decision order and shortcut submission" do
     {:ok, engine} = EngineStub.start_link(self(), %{resolve_gate: :ok})
-    review = %{decision: :approve, reasons: []}
+    review = %{review_id: "turn-1:release_gate:1", decision: :approve, reasons: []}
     turn = put_in(active_turn(), [:squad, :pending_review], review)
     opened = term(engine: engine) |> with_turn(turn) |> GateReview.open()
 
@@ -78,7 +78,10 @@ defmodule ReyCode.TUI.WorkflowsTest do
     assert GateReview.move(opened, -1).assigns.gate_review.index == 2
 
     assert {:noreply, submitted} = GateReview.choose(opened, "R")
-    assert_receive {:engine_call, {:resolve_gate, "turn-1", :rework, nil, []}}
+
+    assert_receive {:engine_call,
+                    {:resolve_gate, "turn-1", "turn-1:release_gate:1", :rework, nil, []}}
+
     assert submitted.assigns.gate_review == GateReview.initial()
     assert submitted.assigns.notice == "Release returned for rework"
     assert submitted.focused == "prompt"

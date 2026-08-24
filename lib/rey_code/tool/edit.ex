@@ -17,10 +17,6 @@ defmodule ReyCode.Tool.Edit do
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    path = Support.arg(arguments, :path)
-    old = Support.arg(arguments, :old_string)
-    new = Support.arg(arguments, :new_string, "")
-
     max_bytes =
       RuntimeConfig.policy(
         Keyword.fetch!(opts, :policy),
@@ -28,7 +24,10 @@ defmodule ReyCode.Tool.Edit do
         @max_bytes_default
       )
 
-    with :ok <- Support.require_present(path, :missing_path),
+    with {:ok, path} <- Support.require_arg(arguments, :path),
+         {:ok, old} <- Support.require_arg(arguments, :old_string),
+         {:ok, new} <- Support.require_arg(arguments, :new_string),
+         :ok <- Support.require_present(path, :missing_path),
          :ok <- Support.require_present(old, :missing_old_string),
          :ok <- require_size(old, new, max_bytes),
          {:ok, canonical} <- Support.within_roots(path, request) do

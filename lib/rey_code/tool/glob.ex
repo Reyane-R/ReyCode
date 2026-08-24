@@ -6,6 +6,12 @@ defmodule ReyCode.Tool.Glob do
   are rejected), and every expanded result is re-validated against the trust
   boundary after symlink resolution, so links pointing outside the workspace
   never appear in results.
+
+  Traversal is bounded: collection halts at the result budget, directory
+  visits are capped, and each directory contributes at most the budget's
+  worth of candidate entries. The platform readdir API returns a whole
+  directory per call, so one enormous directory still costs that single
+  listing; nothing beyond it is accumulated.
   """
   @behaviour ReyCode.Tool
 
@@ -17,8 +23,6 @@ defmodule ReyCode.Tool.Glob do
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    pattern = Support.arg(arguments, :pattern)
-
     max_results =
       RuntimeConfig.policy(
         Keyword.fetch!(opts, :policy),
@@ -27,6 +31,7 @@ defmodule ReyCode.Tool.Glob do
       )
 
     with {:ok, canonical} <- Support.require_path(arguments, :path, request),
+         {:ok, pattern} <- Support.require_arg(arguments, :pattern),
          :ok <- Support.require_present(pattern, :missing_pattern),
          :ok <- require_contained_pattern(pattern) do
       expand(canonical, pattern, request, max_results)
