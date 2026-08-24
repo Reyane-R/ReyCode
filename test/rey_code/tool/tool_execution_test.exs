@@ -308,8 +308,10 @@ defmodule ReyCode.ToolExecutionTest do
     end
 
     test "is denied outside the root" do
+      outside = escape_root("write")
+
       assert %Result{ok: false, error: :workspace_outside_policy} =
-               run("write", %{path: "/tmp/escape.txt", content: "x"})
+               run("write", %{path: outside, content: "x"})
     end
 
     test "caps oversized content before touching the filesystem" do
