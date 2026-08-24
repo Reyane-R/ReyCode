@@ -9,22 +9,27 @@ defmodule ReyCode.Tool.Glob do
   """
   @behaviour ReyCode.Tool
 
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Workspace
   alias ReyCode.Tool.{Request, Result, Support}
 
   @default_max_results 10_000
 
-  defp max_results,
-    do: Application.get_env(:rey_code, :tool_glob_max_results, @default_max_results)
-
   @impl true
-  def run(%Request{arguments: arguments} = request, _opts) do
+  def run(%Request{arguments: arguments} = request, opts) do
     pattern = Support.arg(arguments, :pattern)
+
+    max_results =
+      RuntimeConfig.policy(
+        Keyword.fetch!(opts, :policy),
+        :tool_glob_max_results,
+        @default_max_results
+      )
 
     with {:ok, canonical} <- Support.require_path(arguments, :path, request),
          :ok <- Support.require_present(pattern, :missing_pattern),
          :ok <- require_contained_pattern(pattern) do
-      expand(canonical, pattern, request)
+      expand(canonical, pattern, request, max_results)
     else
       {:error, reason} -> Result.error(reason)
     end
@@ -38,30 +43,30 @@ defmodule ReyCode.Tool.Glob do
     if escapes?, do: {:error, :invalid_pattern}, else: :ok
   end
 
-  defp expand(canonical, pattern, request) do
+  defp expand(canonical, pattern, request, max_results) do
     canonical
     |> Path.join(pattern)
     |> Path.wildcard()
     |> Enum.sort()
     |> Enum.filter(&contained?(&1, request))
-    |> split_at_cap()
-    |> respond()
+    |> split_at_cap(max_results)
+    |> respond(max_results)
   end
 
   defp contained?(path, request) do
     match?({:ok, _canonical}, Workspace.contained?(path, roots: Request.roots(request)))
   end
 
-  defp split_at_cap(paths), do: Enum.split(paths, max_results())
+  defp split_at_cap(paths, max_results), do: Enum.split(paths, max_results)
 
-  defp respond({paths, []}) do
+  defp respond({paths, []}, _max_results) do
     Result.ok(Enum.join(paths, "\n"), metadata: %{"matches" => length(paths)})
   end
 
-  defp respond({paths, _overflow}) do
+  defp respond({paths, _overflow}, max_results) do
     Result.ok(Enum.join(paths, "\n"),
       truncated: true,
-      metadata: %{"matches" => max_results()}
+      metadata: %{"matches" => max_results}
     )
   end
 end

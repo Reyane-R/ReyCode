@@ -9,6 +9,7 @@ defmodule ReyCode.Provider.Registry do
 
   alias ReyCode.Provider.{OpenAICompatible, OpenCode}
   alias ReyCode.Provider.OpenAICompatible.Profile
+  alias ReyCode.RuntimeConfig
 
   @historical_ids [:demo, :unconfigured]
 
@@ -22,39 +23,41 @@ defmodule ReyCode.Provider.Registry do
   @doc "Returns provider IDs available for new runtime configuration."
   @spec live_provider_ids(keyword()) :: [atom()]
   def live_provider_ids(opts \\ []) do
-    ids = Enum.map(descriptors(), & &1.id)
+    ids = Enum.map(descriptors(Keyword.get(opts, :config)), & &1.id)
 
     if simulator_enabled?(opts), do: ids ++ [:simulator], else: ids
   end
 
   @doc "Normalizes a known string ID without creating atoms from external input."
-  @spec normalize_provider_id(term()) :: term()
-  def normalize_provider_id(value) when is_binary(value) do
-    Enum.find(known_ids(), value, &(Atom.to_string(&1) == value))
+  @spec normalize_provider_id(term(), ReyCode.RuntimeConfig.t() | nil) :: term()
+  def normalize_provider_id(value, config \\ nil)
+
+  def normalize_provider_id(value, config) when is_binary(value) do
+    Enum.find(known_ids(config), value, &(Atom.to_string(&1) == value))
   end
 
-  def normalize_provider_id(value), do: value
+  def normalize_provider_id(value, _config), do: value
 
   @doc "Returns the user-facing name for a provider identity."
-  @spec display_name(atom() | String.t()) :: String.t()
-  def display_name(provider) do
-    case descriptor(provider) do
+  @spec display_name(atom() | String.t(), ReyCode.RuntimeConfig.t() | nil) :: String.t()
+  def display_name(provider, config \\ nil) do
+    case descriptor(provider, config) do
       %{name: name} -> name
-      nil -> special_display_name(normalize_provider_id(provider), provider)
+      nil -> special_display_name(normalize_provider_id(provider, config), provider)
     end
   end
 
   @doc "Returns the supported OpenAI-compatible provider profiles."
-  @spec api_profiles() :: [Profile.t()]
-  def api_profiles, do: Profile.all()
+  @spec api_profiles(ReyCode.RuntimeConfig.t() | nil) :: [Profile.t()]
+  def api_profiles(config \\ nil), do: Profile.all(config)
 
   @doc "Fetches an OpenAI-compatible profile by atom or known string ID."
-  @spec fetch_api_profile(atom() | String.t()) ::
+  @spec fetch_api_profile(atom() | String.t(), ReyCode.RuntimeConfig.t() | nil) ::
           {:ok, Profile.t()} | {:error, :unknown_provider}
-  def fetch_api_profile(provider) do
-    id = normalize_provider_id(provider)
+  def fetch_api_profile(provider, config \\ nil) do
+    id = normalize_provider_id(provider, config)
 
-    case Enum.find(api_profiles(), &(&1.id == id)) do
+    case Enum.find(api_profiles(config), &(&1.id == id)) do
       nil -> {:error, :unknown_provider}
       profile -> {:ok, profile}
     end
@@ -63,16 +66,16 @@ defmodule ReyCode.Provider.Registry do
   @doc "Checks whether a provider may be selected for new configuration."
   @spec configurable_provider?(term(), keyword()) :: boolean()
   def configurable_provider?(provider, opts \\ []) do
-    id = normalize_provider_id(provider)
+    id = normalize_provider_id(provider, Keyword.get(opts, :config))
 
     id == :opencode or
       (id == :simulator and simulator_enabled?(opts)) or
-      Enum.any?(api_profiles(), &(&1.id == id))
+      Enum.any?(api_profiles(Keyword.get(opts, :config)), &(&1.id == id))
   end
 
   @doc "Returns metadata for providers backed by live runtime modules."
-  @spec descriptors() :: [descriptor()]
-  def descriptors do
+  @spec descriptors(ReyCode.RuntimeConfig.t() | nil) :: [descriptor()]
+  def descriptors(config \\ nil) do
     [
       %{
         id: :opencode,
@@ -80,7 +83,7 @@ defmodule ReyCode.Provider.Registry do
         description: "CLI runtime",
         module: OpenCode
       }
-      | Enum.map(api_profiles(), fn profile ->
+      | Enum.map(api_profiles(config), fn profile ->
           %{
             id: profile.id,
             name: profile.name,
@@ -92,22 +95,23 @@ defmodule ReyCode.Provider.Registry do
   end
 
   @doc "Looks up live provider metadata by atom or known string ID."
-  @spec descriptor(atom() | String.t()) :: descriptor() | nil
-  def descriptor(provider) do
-    id = normalize_provider_id(provider)
-    Enum.find(descriptors(), &(&1.id == id))
+  @spec descriptor(atom() | String.t(), ReyCode.RuntimeConfig.t() | nil) :: descriptor() | nil
+  def descriptor(provider, config \\ nil) do
+    id = normalize_provider_id(provider, config)
+    Enum.find(descriptors(config), &(&1.id == id))
   end
 
-  defp known_ids do
-    Enum.map(descriptors(), & &1.id) ++ [:simulator | @historical_ids]
+  defp known_ids(config) do
+    Enum.map(descriptors(config), & &1.id) ++ [:simulator | @historical_ids]
   end
 
   defp simulator_enabled?(opts) do
-    Keyword.get(
-      opts,
-      :allow_simulator?,
-      Application.get_env(:rey_code, :allow_simulator_provider, false)
-    )
+    Keyword.get_lazy(opts, :allow_simulator?, fn ->
+      case Keyword.fetch(opts, :config) do
+        {:ok, config} -> RuntimeConfig.policy(config, :allow_simulator_provider, false)
+        :error -> false
+      end
+    end)
   end
 
   defp special_display_name(:simulator, _provider), do: "Simulator"

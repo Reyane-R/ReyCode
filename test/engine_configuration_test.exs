@@ -2,6 +2,7 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Orchestration.Engine.Configuration
+  alias ReyCode.RuntimeConfig
 
   test "plans participant configuration in selected order with duplicate IDs removed" do
     projection = projection()
@@ -13,7 +14,8 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
                ["critic", "builder", "critic"],
                :simulator,
                "ignored",
-               nil
+               nil,
+               config()
              )
 
     assert Enum.map(entries, fn {_type, data, _metadata} -> data["participant_id"] end) == [
@@ -34,7 +36,8 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
                "architect",
                :simulator,
                nil,
-               nil
+               nil,
+               config()
              )
 
     assert {:squad_role_configured, data, _metadata} = entry
@@ -45,10 +48,26 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
 
   test "preserves target, selection, and provider error precedence for both targets" do
     assert {:error, :room_not_found} =
-             Configuration.participants(%{rooms: %{}}, "missing", [], :unknown, nil, nil)
+             Configuration.participants(
+               %{rooms: %{}},
+               "missing",
+               [],
+               :unknown,
+               nil,
+               nil,
+               config()
+             )
 
     assert {:error, :participant_required} =
-             Configuration.squad_roles(projection(), "room-1", [], :unknown, nil, nil)
+             Configuration.squad_roles(
+               projection(),
+               "room-1",
+               [],
+               :unknown,
+               nil,
+               nil,
+               config()
+             )
 
     assert {:error, :participant_not_found} =
              Configuration.participants(
@@ -57,7 +76,8 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
                ["missing"],
                :unknown,
                nil,
-               nil
+               nil,
+               config()
              )
 
     assert {:error, :unknown_provider} =
@@ -67,7 +87,8 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
                ["architect"],
                :unknown,
                nil,
-               nil
+               nil,
+               config()
              )
   end
 
@@ -84,4 +105,6 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
       }
     }
   end
+
+  defp config, do: RuntimeConfig.fresh(allow_simulator_provider: true)
 end

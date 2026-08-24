@@ -1,6 +1,7 @@
 defmodule ReyCode.Security.Workspace do
   @moduledoc "Canonical workspace validation and local-root policy."
 
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.CanonicalPath
 
   @type reason ::
@@ -47,7 +48,7 @@ defmodule ReyCode.Security.Workspace do
   defp policy_roots(opts) do
     roots =
       Keyword.get_lazy(opts, :roots, fn ->
-        Application.get_env(:rey_code, :workspace_roots, default_roots())
+        roots(Keyword.get(opts, :config) || RuntimeConfig.fresh())
       end)
 
     roots
@@ -69,8 +70,13 @@ defmodule ReyCode.Security.Workspace do
   end
 
   @doc "Returns the resolved, canonical trusted roots currently in effect."
-  @spec roots() :: [String.t()]
-  def roots, do: policy_roots([])
+  @spec roots(RuntimeConfig.t()) :: [String.t()]
+  def roots(config \\ RuntimeConfig.fresh()) do
+    config
+    |> RuntimeConfig.policy(:workspace_roots, nil)
+    |> Kernel.||(default_roots())
+    |> then(&policy_roots(roots: &1))
+  end
 
   @doc """
   Resolves `path`'s real identity and confirms it lies within the trusted roots.

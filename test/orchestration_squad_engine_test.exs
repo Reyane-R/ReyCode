@@ -5,30 +5,17 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   alias ReyCode.Orchestration.{Engine, Projector, Squad}
   alias ReyCode.Test.Wait
 
-  setup do
-    previous = Application.get_env(:rey_code, :squad_simulator)
-    Application.put_env(:rey_code, :squad_simulator, delay_ms: 0, seed: 123)
-    room_id = ReyCode.snapshot().room_order |> hd()
-    role_ids = Enum.map(Squad.roles(), & &1.id)
-    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil)
-
-    on_exit(fn ->
-      if previous do
-        Application.put_env(:rey_code, :squad_simulator, previous)
-      else
-        Application.delete_env(:rey_code, :squad_simulator)
-      end
-    end)
-
-    :ok
-  end
-
   test "leader supervises the fixed workflow through architecture and release" do
-    room_id = ReyCode.snapshot().room_order |> hd()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Deliver the squad workflow", :squad)
+    %{engine: engine, store: store} =
+      start_isolated_engine(simulator_opts: [delay_ms: 0, seed: 123])
 
-    turn = wait_until_terminal(turn_id, Engine)
-    snapshot = ReyCode.snapshot()
+    room_id = configure_squad(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Deliver the squad workflow", :squad, engine)
+
+    turn = wait_until_terminal(turn_id, engine)
+    snapshot = Engine.snapshot(engine)
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
     assert turn.status == :completed
@@ -51,45 +38,47 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
                architecture_review
              ))
 
-    replayed = EventStore.load() |> Projector.replay()
+    replayed = EventStore.load(store) |> Projector.replay()
     assert replayed.turns[turn_id] == snapshot.turns[turn_id]
   end
 
   test "leader rework returns to senior integration and completes" do
-    Application.put_env(:rey_code, :squad_simulator,
-      delay_ms: 0,
-      seed: 456,
-      leader_rework_rounds: 1
-    )
+    %{engine: engine, store: store} =
+      start_isolated_engine(simulator_opts: [delay_ms: 0, seed: 456, leader_rework_rounds: 1])
 
-    room_id = ReyCode.snapshot().room_order |> hd()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Exercise bounded rework", :squad)
+    room_id = configure_squad(engine)
 
-    turn = wait_until_terminal(turn_id, Engine)
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Exercise bounded rework", :squad, engine)
+
+    turn = wait_until_terminal(turn_id, engine)
 
     assert turn.status == :completed
     assert turn.squad.rework_count == 1
     assert turn.squad.cycle == 1
     assert Enum.count(turn.squad.artifacts, &(&1.kind == "integrated_implementation")) == 2
 
-    assert Enum.any?(EventStore.load(), fn event ->
+    assert Enum.any?(EventStore.load(store), fn event ->
              event.type == :squad_retry_scheduled and event.data["kind"] == "rework" and
                event.data["turn_id"] == turn_id
            end)
   end
 
   test "transient worker failures create a durable second attempt without duplicate work" do
-    Application.put_env(:rey_code, :squad_simulator,
-      delay_ms: 0,
-      seed: 789,
-      failure_plan: %{{"stories", "analyst", 1} => :retryable}
-    )
+    %{engine: engine} =
+      start_isolated_engine(
+        simulator_opts: [
+          delay_ms: 0,
+          seed: 789,
+          failure_plan: %{{"stories", "analyst", 1} => :retryable}
+        ]
+      )
 
-    room_id = ReyCode.snapshot().room_order |> hd()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Exercise retry", :squad)
+    room_id = configure_squad(engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Exercise retry", :squad, engine)
 
-    turn = wait_until_terminal(turn_id, Engine)
-    snapshot = ReyCode.snapshot()
+    turn = wait_until_terminal(turn_id, engine)
+    snapshot = Engine.snapshot(engine)
 
     analyst_attempts =
       turn.invocation_order
@@ -102,17 +91,22 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   end
 
   test "permanent worker failure terminates after one attempt without hanging" do
-    Application.put_env(:rey_code, :squad_simulator,
-      delay_ms: 0,
-      seed: 790,
-      failure_plan: %{{"stories", "analyst", 1} => :permanent}
-    )
+    %{engine: engine, store: store} =
+      start_isolated_engine(
+        simulator_opts: [
+          delay_ms: 0,
+          seed: 790,
+          failure_plan: %{{"stories", "analyst", 1} => :permanent}
+        ]
+      )
 
-    room_id = ReyCode.snapshot().room_order |> hd()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Do not retry permanent errors", :squad)
+    room_id = configure_squad(engine)
 
-    turn = wait_until_terminal(turn_id, Engine)
-    snapshot = ReyCode.snapshot()
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Do not retry permanent errors", :squad, engine)
+
+    turn = wait_until_terminal(turn_id, engine)
+    snapshot = Engine.snapshot(engine)
 
     analyst_attempts =
       turn.invocation_order
@@ -123,7 +117,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert Enum.map(analyst_attempts, & &1.attempt) == [1]
     assert hd(analyst_attempts).error["retryable"] == false
 
-    refute Enum.any?(EventStore.load(), fn event ->
+    refute Enum.any?(EventStore.load(store), fn event ->
              event.type == :squad_retry_scheduled and event.data["turn_id"] == turn_id and
                event.data["kind"] == "provider_retry"
            end)
@@ -140,25 +134,31 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   end
 
   test "records an owner directive on a running squad turn" do
-    Application.put_env(:rey_code, :squad_simulator, delay_ms: 1_000, seed: 321)
-    room_id = ReyCode.snapshot().room_order |> hd()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Steer this squad", :squad)
+    %{engine: engine, store: store} =
+      start_isolated_engine(simulator_opts: [delay_ms: 1_000, seed: 321])
 
-    on_exit(fn -> ReyCode.cancel_turn(turn_id) end)
+    room_id = configure_squad(engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Steer this squad", :squad, engine)
 
-    assert :ok = ReyCode.direct_squad(turn_id, "Keep the first release read-only.")
+    on_exit(fn ->
+      if GenServer.whereis(engine), do: Engine.cancel_turn(turn_id, "test cleanup", engine)
+    end)
 
-    assert [directive] = ReyCode.snapshot().turns[turn_id].squad.directives
+    assert :ok = Engine.add_squad_directive(turn_id, "Keep the first release read-only.", engine)
+
+    assert [directive] = Engine.snapshot(engine).turns[turn_id].squad.directives
     assert directive.text == "Keep the first release read-only."
     assert directive.phase == "leader_intake"
 
-    assert Enum.any?(EventStore.load(), fn event ->
+    assert Enum.any?(EventStore.load(store), fn event ->
              event.type == :squad_directive_added and event.data["turn_id"] == turn_id
            end)
 
-    assert {:error, :empty_directive} = ReyCode.direct_squad(turn_id, "   ")
-    assert :ok = ReyCode.cancel_turn(turn_id)
-    assert {:error, :squad_not_running} = ReyCode.direct_squad(turn_id, "Too late")
+    assert {:error, :empty_directive} = Engine.add_squad_directive(turn_id, "   ", engine)
+    assert :ok = Engine.cancel_turn(turn_id, "test", engine)
+
+    assert {:error, :squad_not_running} =
+             Engine.add_squad_directive(turn_id, "Too late", engine)
   end
 
   test "holds the release gate for the owner and advances after approval" do
@@ -198,13 +198,12 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   end
 
   test "owner rework resolutions keep the squad alive when the budget is exhausted" do
-    Application.put_env(:rey_code, :squad_simulator,
-      delay_ms: 0,
-      seed: 246,
-      leader_rework_rounds: 4
-    )
+    %{engine: engine, store: _store} =
+      start_isolated_engine(
+        squad_release_gate_human: true,
+        simulator_opts: [delay_ms: 0, seed: 246, leader_rework_rounds: 4]
+      )
 
-    %{engine: engine, store: _store} = start_isolated_engine(squad_release_gate_human: true)
     room_id = first_room_id(engine)
     role_ids = Enum.map(Squad.roles(), & &1.id)
     :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
@@ -212,7 +211,12 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert {:ok, turn_id} =
              Engine.post_message(room_id, "Exhaust the rework budget", :squad, engine)
 
-    on_exit(fn -> ReyCode.cancel_turn(turn_id) end)
+    on_exit(fn ->
+      case GenServer.whereis(engine) do
+        pid when is_pid(pid) -> Engine.cancel_turn(turn_id, "test cleanup", engine)
+        _ -> :ok
+      end
+    end)
 
     # Three rework cycles inside the budget plus one beyond it: each release-gate
     # rework recommendation is owner-reviewed, and the owner-approved rework
@@ -288,17 +292,19 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   end
 
   test "recovers an active squad phase without duplicating logical work" do
-    Application.put_env(:rey_code, :squad_simulator, delay_ms: 20, seed: 999)
-    room_id = ReyCode.snapshot().room_order |> hd()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Recover this squad", :squad)
+    %{engine: engine} =
+      start_isolated_supervised_engine(simulator_opts: [delay_ms: 20, seed: 999])
 
-    old_engine = Process.whereis(Engine)
+    room_id = configure_squad(engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Recover this squad", :squad, engine)
+
+    old_engine = Process.whereis(engine)
     assert is_pid(old_engine)
     Process.exit(old_engine, :kill)
-    wait_for_new_engine(old_engine, 200)
+    wait_for_new_engine(engine, old_engine, 200)
 
-    turn = wait_until_terminal(turn_id, Engine)
-    snapshot = ReyCode.snapshot()
+    turn = wait_until_terminal(turn_id, engine)
+    snapshot = Engine.snapshot(engine)
 
     assert turn.status == :completed
 
@@ -321,7 +327,16 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
 
   defp first_room_id(server), do: Engine.snapshot(server).room_order |> hd()
 
+  defp configure_squad(server) do
+    room_id = first_room_id(server)
+    role_ids = Enum.map(Squad.roles(), & &1.id)
+    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, server)
+    room_id
+  end
+
   defp start_isolated_engine(config_overrides) do
+    {simulator_opts, config_overrides} = Keyword.pop(config_overrides, :simulator_opts)
+
     path =
       Path.join(
         System.tmp_dir!(),
@@ -355,10 +370,61 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
       event_registry: event_registry,
       provider_catalog: ReyCode.Provider.Catalog,
       agent_delay_ms: 0,
+      simulator_opts: simulator_opts,
       config: config
     ]
 
     start_supervised!(Supervisor.child_spec({Engine, opts}, restart: :temporary))
+
+    %{engine: server, store: store}
+  end
+
+  defp start_isolated_supervised_engine(config_overrides) do
+    {simulator_opts, config_overrides} = Keyword.pop(config_overrides, :simulator_opts)
+    suffix = System.unique_integer([:positive])
+
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_squad_restart_#{System.pid()}_#{suffix}.sqlite3"
+      )
+
+    store = start_supervised!({EventStore, name: nil, path: path})
+    agent_registry = :"squad_restart_agents_#{suffix}"
+    event_registry = :"squad_restart_events_#{suffix}"
+    agent_supervisor = :"squad_restart_agent_sup_#{suffix}"
+    server = :"squad_restart_engine_#{suffix}"
+
+    start_supervised!({Registry, keys: :unique, name: agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: event_registry})
+
+    config =
+      RuntimeConfig.load!()
+      |> Map.from_struct()
+      |> Map.merge(Map.new(config_overrides))
+      |> then(&struct!(RuntimeConfig, &1))
+
+    supervisor_opts = [
+      name: :"squad_restart_supervisor_#{suffix}",
+      agent_supervisor: agent_supervisor,
+      config: config,
+      engine_opts: [
+        name: server,
+        event_store: store,
+        agent_registry: agent_registry,
+        event_registry: event_registry,
+        provider_catalog: ReyCode.Provider.Catalog,
+        agent_delay_ms: 20,
+        simulator_opts: simulator_opts
+      ]
+    ]
+
+    start_supervised!(
+      Supervisor.child_spec(
+        {ReyCode.Orchestration.Supervisor, supervisor_opts},
+        restart: :temporary
+      )
+    )
 
     %{engine: server, store: store}
   end
@@ -371,16 +437,16 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     end
   end
 
-  defp wait_for_new_engine(_old_engine, 0), do: flunk("engine did not restart")
+  defp wait_for_new_engine(_server, _old_engine, 0), do: flunk("engine did not restart")
 
-  defp wait_for_new_engine(old_engine, attempts) do
-    case Process.whereis(Engine) do
+  defp wait_for_new_engine(server, old_engine, attempts) do
+    case Process.whereis(server) do
       pid when is_pid(pid) and pid != old_engine ->
         :ok
 
       _pid ->
         Process.sleep(10)
-        wait_for_new_engine(old_engine, attempts - 1)
+        wait_for_new_engine(server, old_engine, attempts - 1)
     end
   end
 end

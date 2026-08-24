@@ -10,11 +10,12 @@ defmodule ReyCode.Orchestration.Supervisor do
   @impl true
   def init(opts) do
     agent_supervisor = Keyword.get(opts, :agent_supervisor, ReyCode.AgentSupervisor)
+    config = Keyword.get_lazy(opts, :config, &ReyCode.RuntimeConfig.fresh/0)
 
     engine_opts =
       opts
       |> Keyword.get(:engine_opts, [])
-      |> Keyword.put_new(:config, Keyword.get(opts, :config))
+      |> Keyword.put_new(:config, config)
 
     children = [
       {DynamicSupervisor, strategy: :one_for_one, name: agent_supervisor},

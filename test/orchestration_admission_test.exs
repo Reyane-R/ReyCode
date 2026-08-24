@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.AdmissionTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.EventStore
+  alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Test.Wait
 
@@ -91,6 +91,11 @@ defmodule ReyCode.Orchestration.AdmissionTest do
          agent_registry: @agent_registry,
          event_registry: @event_registry,
          provider_catalog: ReyCode.Provider.Catalog,
+         config:
+           RuntimeConfig.fresh(
+             allow_simulator_provider: true,
+             default_provider: :simulator
+           ),
          agent_delay_ms: 100
        ] ++ limits}
     )

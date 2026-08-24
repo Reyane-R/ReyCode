@@ -15,6 +15,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   alias ReyCode.Provider.{Frame, Request, Response, Runtime, TextBuffer, ToolCall}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, SSE}
+  alias ReyCode.RuntimeConfig
   alias ReyCode.ToolRegistry
 
   @behaviour ReyCode.Provider
@@ -23,7 +24,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
     @moduledoc false
 
     @enforce_keys [:transport, :profile, :key, :request, :body, :emit]
-    defstruct [:transport, :profile, :key, :request, :body, :emit]
+    defstruct [:transport, :profile, :key, :request, :body, :emit, :config]
   end
 
   @default_chunk_bytes 8_192
@@ -51,10 +52,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
   @impl true
   @spec stream(Runtime.t(), Request.t(), (Frame.t() -> :ok)) ::
           {:ok, Response.t()} | {:error, map()}
-  def stream(%Runtime{provider_id: provider_id}, request, emit) do
-    transport = transport()
+  def stream(%Runtime{provider_id: provider_id, config: config}, request, emit) do
+    transport = transport(config)
 
-    with {:ok, profile} <- Profile.fetch(provider_id),
+    with {:ok, profile} <- Profile.fetch(provider_id, config),
          {:ok, key} <- fetch_key(profile),
          {:ok, body} <- build_body(request, profile) do
       run(%StreamContext{
@@ -63,7 +64,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
         key: key,
         request: request,
         body: body,
-        emit: emit
+        emit: emit,
+        config: config
       })
     end
   end
@@ -73,7 +75,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
     owner = Process.alias()
     tag = make_ref()
     deadline = monotonic_ms() + timeout
-    state = initial_state(profile, context.request)
+    state = initial_state(profile, context.request, context.config)
     task = Task.async(fn -> stream_task(context, owner, tag) end)
 
     try do
@@ -476,16 +478,20 @@ defmodule ReyCode.Provider.OpenAICompatible do
     %{state | sequence: sequence, text: state.text <> text}
   end
 
-  defp initial_state(profile, request) do
+  defp initial_state(profile, request, config) do
     %{
       parser: SSE.new(),
       text_buffer:
         TextBuffer.new(
           chunk_bytes:
-            Application.get_env(:rey_code, :openai_compatible_chunk_bytes, @default_chunk_bytes),
+            RuntimeConfig.policy(
+              config,
+              :openai_compatible_chunk_bytes,
+              @default_chunk_bytes
+            ),
           chunk_latency_ms:
-            Application.get_env(
-              :rey_code,
+            RuntimeConfig.policy(
+              config,
               :openai_compatible_chunk_latency_ms,
               @default_chunk_latency_ms
             ),
@@ -515,7 +521,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
     do: {:error, HTTP.error("protocol_error", @protocol_error_message, false)}
 
   defp fetch_models(profile, opts) do
-    transport = Keyword.get(opts, :transport, transport())
+    transport = Keyword.get(opts, :transport) || transport(Keyword.get(opts, :config))
     url = base_url(profile) <> "/models"
     headers = authorization(System.get_env(profile.key_env)) ++ [{"Accept", "application/json"}]
     opts_list = [timeout: Keyword.get(opts, :timeout, profile.request_timeout_ms)]
@@ -678,12 +684,15 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp base_url(profile), do: String.trim_trailing(profile.base_url, "/")
 
-  defp transport do
-    Application.get_env(
-      :rey_code,
+  defp transport(config) do
+    config = config || RuntimeConfig.fresh()
+
+    RuntimeConfig.policy(
+      config,
       :openai_compatible_transport,
-      ReyCode.Provider.OpenAICompatible.HTTPC
+      nil
     )
+    |> Kernel.||(ReyCode.Provider.OpenAICompatible.HTTPC)
   end
 
   defp blank?(nil), do: true

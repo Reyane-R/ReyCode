@@ -5,22 +5,34 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
   alias ReyCode.Provider.OpenAICompatible.HTTP
   alias ReyCode.Provider.OpenAICompatible.HTTPC
   alias ReyCode.Provider.OpenAICompatible.Profile
+  alias ReyCode.RuntimeConfig
 
   @loopback "127.0.0.1"
 
   setup do
-    previous_transport = Application.get_env(:rey_code, :openai_compatible_transport)
-    previous_profiles = Application.get_env(:rey_code, :openai_compatible_providers)
-    previous_latency = Application.get_env(:rey_code, :openai_compatible_chunk_latency_ms)
-
-    on_exit(fn ->
-      restore_env(:openai_compatible_transport, previous_transport)
-      restore_env(:openai_compatible_providers, previous_profiles)
-      restore_env(:openai_compatible_chunk_latency_ms, previous_latency)
-      System.delete_env("REAL_HTTP_API_KEY")
-    end)
+    on_exit(fn -> System.delete_env("REAL_HTTP_API_KEY") end)
 
     :ok
+  end
+
+  defp real_http_runtime(port, request_timeout_ms) do
+    %Runtime{
+      module: OpenAICompatible,
+      provider_id: :real_http,
+      status: :configured,
+      config:
+        RuntimeConfig.fresh(
+          openai_compatible_providers: [
+            %{
+              id: :real_http,
+              name: "Real HTTP",
+              base_url: "http://#{@loopback}:#{port}",
+              key_env: "REAL_HTTP_API_KEY",
+              request_timeout_ms: request_timeout_ms
+            }
+          ]
+        )
+    }
   end
 
   test "parses charlist Location headers, resolves relative redirects, and preserves credentials on same-origin redirects" do
@@ -421,21 +433,8 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
 
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
-    Application.delete_env(:rey_code, :openai_compatible_transport)
-    Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
-
-    Application.put_env(:rey_code, :openai_compatible_providers, [
-      %{
-        id: :real_http,
-        name: "Real HTTP",
-        base_url: "http://#{@loopback}:#{port}",
-        key_env: "REAL_HTTP_API_KEY",
-        request_timeout_ms: 5_000
-      }
-    ])
-
     System.put_env("REAL_HTTP_API_KEY", "secret")
-    runtime = %Runtime{module: OpenAICompatible, provider_id: :real_http, status: :configured}
+    runtime = real_http_runtime(port, 5_000)
 
     task =
       Task.async(fn ->
@@ -472,21 +471,8 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
 
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
-    Application.delete_env(:rey_code, :openai_compatible_transport)
-    Application.put_env(:rey_code, :openai_compatible_chunk_latency_ms, 0)
-
-    Application.put_env(:rey_code, :openai_compatible_providers, [
-      %{
-        id: :real_http,
-        name: "Real HTTP",
-        base_url: "http://#{@loopback}:#{port}",
-        key_env: "REAL_HTTP_API_KEY",
-        request_timeout_ms: 250
-      }
-    ])
-
     System.put_env("REAL_HTTP_API_KEY", "secret")
-    runtime = %Runtime{module: OpenAICompatible, provider_id: :real_http, status: :configured}
+    runtime = real_http_runtime(port, 250)
 
     assert {:error, %{"category" => "timeout"}} =
              OpenAICompatible.stream(runtime, provider_request(), fn _frame ->
@@ -498,7 +484,6 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
   end
 
   test "real model discovery is bounded and strict across response classes" do
-    Application.delete_env(:rey_code, :openai_compatible_transport)
     System.put_env("REAL_HTTP_API_KEY", "secret")
 
     cases = [
@@ -544,7 +529,6 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
       end)
 
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
-    Application.delete_env(:rey_code, :openai_compatible_transport)
     System.put_env("REAL_HTTP_API_KEY", "secret")
 
     profile = %Profile{
@@ -565,9 +549,6 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
       String.downcase(header_name) == String.downcase(name)
     end)
   end
-
-  defp restore_env(key, nil), do: Application.delete_env(:rey_code, key)
-  defp restore_env(key, value), do: Application.put_env(:rey_code, key, value)
 
   defp provider_request do
     %Request{

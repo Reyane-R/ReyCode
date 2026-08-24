@@ -1,8 +1,6 @@
 defmodule ReyCode.Tool.Request do
   @moduledoc "A normalized tool execution request emitted by a provider."
 
-  alias ReyCode.Security.Workspace
-
   @enforce_keys [:tool, :arguments, :workspace]
   defstruct [:tool, :arguments, :workspace, :roots, :request_id]
 
@@ -25,8 +23,8 @@ defmodule ReyCode.Tool.Request do
     }
   end
 
-  @doc "Resolves the trusted roots for this request, falling back to policy defaults."
+  @doc "Returns the trusted roots stamped onto this request by the tool registry."
   @spec roots(t()) :: [String.t()]
   def roots(%__MODULE__{roots: roots}) when is_list(roots), do: roots
-  def roots(%__MODULE__{}), do: Workspace.roots()
+  def roots(%__MODULE__{}), do: raise(ArgumentError, "tool request is missing trusted roots")
 end

@@ -135,6 +135,28 @@ defmodule ReyCode.RuntimeConfig do
   end
 
   @doc """
+  Builds a validated configuration from explicit overrides alone.
+
+  Unlike `load!/0`, missing keys resolve to their declared defaults rather
+  than the application environment, and nothing is read from or written to
+  the environment. Isolated component stacks use this to pin exactly the
+  policy under test.
+  """
+  @spec fresh(keyword() | map()) :: t()
+  def fresh(overrides \\ []) do
+    defaults = declared_defaults()
+    overrides = Map.new(overrides)
+
+    values =
+      Map.new(settings(), fn {key, _default, kind} ->
+        value = Map.get(overrides, key, Map.fetch!(defaults, key))
+        {key, validate_kind!(key, value, kind)}
+      end)
+
+    struct!(__MODULE__, values)
+  end
+
+  @doc """
   Loads and validates the runtime configuration, returning an immutable
   struct. Raises an ArgumentError naming the offending setting when invalid.
   """
@@ -157,12 +179,8 @@ defmodule ReyCode.RuntimeConfig do
 
   @doc """
   Reads one setting from an injected config struct.
-
-  A nil injected value falls back to the application environment so
-  components can run un-injected (tests, scripts) during migration.
   """
-  @spec policy(t() | nil, atom(), term()) :: term()
-  def policy(nil, key, default), do: Application.get_env(:rey_code, key, default)
+  @spec policy(t(), atom(), term()) :: term()
   def policy(config, key, _default) when is_map(config), do: Map.fetch!(config, key)
 
   ## Validation

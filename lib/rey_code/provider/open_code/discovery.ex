@@ -3,6 +3,7 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
 
   alias ReyCode.Provider.{Command, Runtime}
   alias ReyCode.Provider.OpenCode.Process
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Environment
 
   require Logger
@@ -14,11 +15,12 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
 
   @spec discover(keyword()) :: {:ok, map()} | {:error, term()}
   def discover(opts \\ []) do
-    executable = discovery_executable(opts)
+    config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
+    executable = discovery_executable(opts, config)
     {executable, executable_identity} = executable_details(executable)
-    environment_opts = Process.environment_opts()
+    environment_opts = Process.environment_opts(config)
     runner = discovery_runner(opts, environment_opts)
-    command_opts = discovery_command_opts(opts, environment_opts)
+    command_opts = discovery_command_opts(opts, config)
 
     discover_provider(executable, executable_identity, runner, command_opts)
   end
@@ -42,9 +44,9 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
     end
   end
 
-  defp discovery_executable(opts) do
+  defp discovery_executable(opts, config) do
     Keyword.get(opts, :executable) ||
-      Application.get_env(:rey_code, :opencode_path) ||
+      RuntimeConfig.policy(config, :opencode_path, nil) ||
       System.find_executable("opencode")
   end
 
@@ -57,15 +59,15 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
     end)
   end
 
-  defp discovery_command_opts(opts, environment_opts) do
+  defp discovery_command_opts(opts, config) do
     [
-      env: Environment.launch_env(environment_opts),
+      env: Environment.launch_env(Process.environment_opts(config)),
       timeout_ms:
         Keyword.get(
           opts,
           :timeout_ms,
-          Application.get_env(
-            :rey_code,
+          RuntimeConfig.policy(
+            config,
             :provider_discovery_command_timeout_ms,
             @default_discovery_timeout_ms
           )
@@ -74,8 +76,8 @@ defmodule ReyCode.Provider.OpenCode.Discovery do
         Keyword.get(
           opts,
           :max_output_bytes,
-          Application.get_env(
-            :rey_code,
+          RuntimeConfig.policy(
+            config,
             :provider_discovery_output_bytes,
             @default_discovery_output_bytes
           )

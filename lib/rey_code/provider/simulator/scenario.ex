@@ -45,13 +45,6 @@ defmodule ReyCode.Provider.Simulator.Scenario do
     }
   end
 
-  @spec from_application() :: t()
-  def from_application do
-    opts = Application.get_env(:rey_code, :squad_simulator, [])
-    opts = Keyword.put_new(opts, :delay_ms, Application.get_env(:rey_code, :agent_delay_ms, 0))
-    new(opts)
-  end
-
   @spec sample(t(), map()) :: %{delay_ms: non_neg_integer(), failure: failure_kind() | nil}
   def sample(scenario, request) do
     key = {scenario.seed, request.turn_id, request.logical_work_id, request.attempt}

@@ -178,7 +178,7 @@ defmodule ReyCode.EventStore do
             {:ok,
              state
              |> Map.put(:ownership_key, ownership_key)
-             |> Map.put(:config, Keyword.get(opts, :config))}
+             |> Map.put(:config, Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0))}
 
           {:error, reason} ->
             _ = SQLite.close(state)

@@ -4,11 +4,12 @@ defmodule ReyCode.ToolRegistry do
 
   The approval model is rooted in workspace trust (D23):
 
-    - `read`, `grep`, `glob`, `list`, `edit` are allowed inside `REYCODE_WORKSPACE_ROOTS`.
+    - `read`, `grep`, `glob`, `list`, `edit` are allowed inside configured workspace roots.
     - `bash` and `write` require owner approval (`ask`) before execution.
     - Anything outside the trusted roots is denied before any tool runs.
   """
 
+  alias ReyCode.Security.Workspace
   alias ReyCode.Tool.{Request, Result}
 
   @tools %{
@@ -34,8 +35,9 @@ defmodule ReyCode.ToolRegistry do
     - `{:ok, result}` when the tool is allowed and has been executed.
     - `{:deny, reason}` when the tool is unknown.
   """
-  @spec dispatch(Request.t()) :: decision()
-  def dispatch(%Request{} = request) do
+  @spec dispatch(Request.t(), ReyCode.RuntimeConfig.t()) :: decision()
+  def dispatch(%Request{} = request, policy) do
+    request = with_policy_roots(request, policy)
     name = to_string(request.tool)
 
     case Map.fetch(@tools, name) do
@@ -43,7 +45,7 @@ defmodule ReyCode.ToolRegistry do
         if MapSet.member?(@ask_tools, name) do
           {:ask, request}
         else
-          {:ok, execute(request)}
+          {:ok, execute(request, policy)}
         end
 
       :error ->
@@ -51,16 +53,19 @@ defmodule ReyCode.ToolRegistry do
     end
   end
 
-  @doc "Executes a previously approved (or allow-listed) tool request."
-  @spec execute(Request.t()) :: Result.t()
-  def execute(%Request{} = request) do
+  @doc "Executes a previously approved (or allow-listed) tool request under frozen policy."
+  @spec execute(Request.t(), ReyCode.RuntimeConfig.t()) :: Result.t()
+  def execute(%Request{} = request, policy) do
+    request = with_policy_roots(request, policy)
     name = to_string(request.tool)
 
     case Map.fetch(@tools, name) do
-      {:ok, module} -> module.run(request, [])
+      {:ok, module} -> module.run(request, policy: policy)
       :error -> Result.error(:unknown_tool)
     end
   end
+
+  defp with_policy_roots(request, policy), do: %{request | roots: Workspace.roots(policy)}
 
   @doc "Whether a tool name requires owner approval before execution."
   @spec requires_approval?(Request.t() | String.t() | atom()) :: boolean()

@@ -2,6 +2,7 @@ defmodule ReyCode.Test.OpenCodeHelpers do
   @moduledoc false
 
   alias ReyCode.Provider.{OpenCode, Request, Runtime}
+  alias ReyCode.RuntimeConfig
 
   def request do
     %Request{
@@ -24,15 +25,20 @@ defmodule ReyCode.Test.OpenCodeHelpers do
     }
   end
 
-  def runtime(path) do
+  @doc "Builds a runtime for `path` whose policy pins the given config overrides."
+  def runtime(path, overrides \\ []) do
     %Runtime{
       module: OpenCode,
       executable: path,
       version: "test",
       models: ["openai/gpt-5.6-sol"],
-      status: :configured
+      status: :configured,
+      config: RuntimeConfig.fresh(overrides)
     }
   end
+
+  @doc "Builds a validated config from explicit overrides alone (no environment)."
+  def config(overrides), do: RuntimeConfig.fresh(overrides)
 
   def text_record(text) do
     Jason.encode!(%{type: "text", sessionID: "session-1", part: %{text: text}}) <> "\n"

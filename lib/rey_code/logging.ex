@@ -1,13 +1,15 @@
 defmodule ReyCode.Logging do
   @moduledoc false
 
+  alias ReyCode.RuntimeConfig
+
   @max_bytes 10 * 1024 * 1024
   @max_files 5
 
-  def install! do
-    if Application.get_env(:rey_code, :file_logging, false) do
-      log_dir =
-        Application.get_env(:rey_code, :log_dir, Path.expand("~/Library/Logs/ReyCode"))
+  @spec install!(RuntimeConfig.t()) :: :ok
+  def install!(%RuntimeConfig{} = config) do
+    if config.file_logging do
+      log_dir = config.log_dir
 
       log_path = Path.join(log_dir, "rey_code.log")
       File.mkdir_p!(log_dir)

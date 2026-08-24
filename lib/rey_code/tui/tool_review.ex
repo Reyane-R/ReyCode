@@ -8,6 +8,7 @@ defmodule ReyCode.TUI.ToolReview do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Environment
   alias ReyCode.TUI.SlashPalette
 
@@ -135,7 +136,7 @@ defmodule ReyCode.TUI.ToolReview do
       <box class="pt-2 text-muted">TOOL</box>
       <box class="pt-1 font-bold text-warning">{@term.tool_review.review.tool}</box>
       <box
-        :for={{label, value} <- details(@term.tool_review.review)}
+        :for={{label, value} <- details(@term.tool_review.review, Map.get(@term, :config))}
         class="pt-2 w-full overflow-hidden"
       >
         <box class="text-muted">{label}</box>
@@ -156,16 +157,16 @@ defmodule ReyCode.TUI.ToolReview do
     """
   end
 
-  defp details(%{tool: "bash", arguments: arguments}) do
+  defp details(%{tool: "bash", arguments: arguments}, config) do
     [
       {"COMMAND", argument(arguments, "command", "(none)")},
       {"CWD", argument(arguments, "cwd", "(workspace)")},
-      {"ENV NAMES", bash_env_names()},
+      {"ENV NAMES", bash_env_names(config)},
       {"SCOPE", "host execution — not sandboxed to the workspace"}
     ]
   end
 
-  defp details(%{tool: "write", arguments: arguments}) do
+  defp details(%{tool: "write", arguments: arguments}, _config) do
     content = argument(arguments, "content", "")
 
     [
@@ -175,7 +176,7 @@ defmodule ReyCode.TUI.ToolReview do
     ]
   end
 
-  defp details(%{tool: "edit", arguments: arguments}) do
+  defp details(%{tool: "edit", arguments: arguments}, _config) do
     old = argument(arguments, "old_string", "")
     new = argument(arguments, "new_string", "")
 
@@ -187,7 +188,7 @@ defmodule ReyCode.TUI.ToolReview do
     ]
   end
 
-  defp details(%{tool: tool, arguments: arguments}) do
+  defp details(%{tool: tool, arguments: arguments}, _config) do
     [{"ARGUMENTS", compact_arguments(tool, arguments)}]
   end
 
@@ -200,11 +201,11 @@ defmodule ReyCode.TUI.ToolReview do
 
   defp argument(_arguments, _key, default), do: default
 
-  defp bash_env_names do
+  defp bash_env_names(config) do
     names =
       Environment.allowlisted(
         source: System.get_env(),
-        additional_names: Application.get_env(:rey_code, :tool_bash_env_allowlist, [])
+        additional_names: RuntimeConfig.policy(config, :tool_bash_env_allowlist, [])
       )
       |> Map.keys()
       |> Enum.sort()

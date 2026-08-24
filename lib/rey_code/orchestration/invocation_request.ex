@@ -4,8 +4,13 @@ defmodule ReyCode.Orchestration.InvocationRequest do
   alias ReyCode.Orchestration.Context
   alias ReyCode.Provider.Request
 
-  @spec build(map(), map(), non_neg_integer() | nil) :: Request.t()
-  def build(invocation, projection, agent_delay_ms) do
+  @type request_policy :: %{
+          required(:agent_delay_ms) => non_neg_integer() | nil,
+          required(:simulator_opts) => keyword() | nil
+        }
+
+  @spec build(map(), map(), request_policy()) :: Request.t()
+  def build(invocation, projection, request_policy) do
     turn = projection.turns[invocation.turn_id]
     room = projection.rooms[invocation.room_id]
 
@@ -25,7 +30,8 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       phase: invocation.phase,
       cycle: invocation.cycle,
       logical_work_id: invocation.logical_work_id,
-      agent_delay_ms: agent_delay_ms,
+      agent_delay_ms: request_policy.agent_delay_ms,
+      simulator_opts: request_policy.simulator_opts,
       dependencies: invocation.dependencies
     }
   end

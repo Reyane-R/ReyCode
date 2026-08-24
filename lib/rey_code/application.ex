@@ -8,33 +8,33 @@ defmodule ReyCode.Application do
   @impl true
   def start(_type, _args) do
     runtime_config = ReyCode.RuntimeConfig.load!()
-    _ = runtime_config
-    :ok = ReyCode.Logging.install!()
+    :ok = ReyCode.Logging.install!(runtime_config)
     event_store_options = event_store_options()
     :ok = event_store_options |> Keyword.fetch!(:path) |> Path.dirname() |> File.mkdir_p()
 
     children = [
       {Registry, keys: :unique, name: ReyCode.AgentRegistry},
       {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
-      {ReyCode.EventStore, [config: runtime_config] ++ event_store_options()},
+      {ReyCode.EventStore, [config: runtime_config] ++ event_store_options},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
       {ReyCode.Provider.Catalog, [config: runtime_config]},
       {ReyCode.Orchestration.Supervisor, config: runtime_config}
     ]
 
-    children = children ++ tui_children()
+    children = children ++ tui_children(runtime_config)
 
     opts = [strategy: :rest_for_one, name: ReyCode.Supervisor]
     Supervisor.start_link(children, opts)
   end
 
-  defp tui_children do
+  defp tui_children(runtime_config) do
     if Application.get_env(:rey_code, :start_tui, true) do
       if terminal_attached?() do
         [
           Supervisor.child_spec(
             {Breeze.Server,
              view: ReyCode.TUI,
+             start_opts: [config: runtime_config],
              theme: ReyCode.Theme.default(),
              logger: :attach,
              global_keybindings: ReyCode.TUI.global_keybindings()},

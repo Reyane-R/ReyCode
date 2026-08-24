@@ -9,7 +9,8 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       process_alive?: 1,
       request: 0,
       restore_env: 2,
-      runtime: 1
+      runtime: 1,
+      runtime: 2
     ]
 
   alias ReyCode.Provider.{Command, OpenCode, Runtime}
@@ -61,17 +62,19 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
            |> Enum.member?(["--dir", canonical_workspace])
   end
 
-  test "uses the executable captured by discovery rather than the current environment" do
-    discovered = fake_opencode(json_line("discovered executable"))
-    configured_later = fake_opencode(json_line("environment executable"))
+  test "streams with the runtime's frozen policy even when ambient policy disagrees" do
+    discovered = fake_opencode(json_line("frozen policy"))
     test_pid = self()
-    previous = Application.get_env(:rey_code, :opencode_path)
-    Application.put_env(:rey_code, :opencode_path, configured_later)
+
+    # Ambient application policy would reject this prompt outright; the
+    # runtime's injected config must win because providers never read the
+    # environment.
+    previous = Application.get_env(:rey_code, :opencode_max_prompt_bytes)
+    Application.put_env(:rey_code, :opencode_max_prompt_bytes, 10)
 
     on_exit(fn ->
-      restore_env(:opencode_path, previous)
+      restore_env(:opencode_max_prompt_bytes, previous)
       File.rm(discovered)
-      File.rm(configured_later)
     end)
 
     assert {:ok, _metadata} =
@@ -80,8 +83,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
                :ok
              end)
 
-    assert_receive {:frame, %{kind: :text_delta, data: %{text: "discovered executable"}}}
-    refute_receive {:frame, %{data: %{text: "environment executable"}}}
+    assert_receive {:frame, %{kind: :text_delta, data: %{text: "frozen policy"}}}
   end
 
   test "flushes a short text delta while OpenCode remains silent" do
@@ -91,33 +93,30 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       sleep 2
       """)
 
-    previous_timeout = Application.get_env(:rey_code, :provider_timeout_ms)
-    previous_bytes = Application.get_env(:rey_code, :opencode_text_chunk_bytes)
-    previous_latency = Application.get_env(:rey_code, :opencode_text_chunk_latency_ms)
-    Application.put_env(:rey_code, :provider_timeout_ms, 5_000)
-    Application.put_env(:rey_code, :opencode_text_chunk_bytes, 1_000)
-    Application.put_env(:rey_code, :opencode_text_chunk_latency_ms, 50)
     test_pid = self()
-
-    on_exit(fn ->
-      restore_env(:provider_timeout_ms, previous_timeout)
-      restore_env(:opencode_text_chunk_bytes, previous_bytes)
-      restore_env(:opencode_text_chunk_latency_ms, previous_latency)
-      File.rm(path)
-    end)
 
     task =
       Task.async(fn ->
-        OpenCode.stream(runtime(path), request(), fn frame ->
-          send(test_pid, {:frame, frame})
-          :ok
-        end)
+        OpenCode.stream(
+          runtime(path,
+            provider_timeout_ms: 5_000,
+            opencode_text_chunk_bytes: 1_000,
+            opencode_text_chunk_latency_ms: 50
+          ),
+          request(),
+          fn frame ->
+            send(test_pid, {:frame, frame})
+            :ok
+          end
+        )
       end)
 
     assert_receive {:frame, %{kind: :text_delta, data: %{text: "latency bounded"}}}, 1_000
     assert Task.yield(task, 0) == nil
     assert {:ok, _response} = Task.await(task, 5_000)
     refute_receive {:frame, %{kind: :text_delta, data: %{text: "latency bounded"}}}
+
+    on_exit(fn -> File.rm(path) end)
   end
 
   test "total deadline bounds a slow reducer" do
@@ -171,23 +170,18 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       done
       """)
 
-    previous = Application.get_env(:rey_code, :provider_timeout_ms)
-    previous_output = Application.get_env(:rey_code, :opencode_max_output_bytes)
-    Application.put_env(:rey_code, :provider_timeout_ms, 60)
-    Application.put_env(:rey_code, :opencode_max_output_bytes, 100_000_000)
-
-    on_exit(fn ->
-      restore_env(:provider_timeout_ms, previous)
-      restore_env(:opencode_max_output_bytes, previous_output)
-      File.rm(path)
-    end)
-
     started_at = System.monotonic_time(:millisecond)
 
     assert {:error, %{"category" => "timeout"}} =
-             OpenCode.stream(runtime(path), request(), fn _frame -> :ok end)
+             OpenCode.stream(
+               runtime(path, provider_timeout_ms: 60, opencode_max_output_bytes: 100_000_000),
+               request(),
+               fn _frame -> :ok end
+             )
 
     assert System.monotonic_time(:millisecond) - started_at < 500
+
+    on_exit(fn -> File.rm(path) end)
   end
 
   test "invocation timeout terminates resistant provider descendants" do
@@ -200,25 +194,24 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       while true; do sleep 1; done
       """)
 
-    previous_timeout = Application.get_env(:rey_code, :provider_timeout_ms)
-    previous_output = Application.get_env(:rey_code, :opencode_max_output_bytes)
-    Application.put_env(:rey_code, :provider_timeout_ms, 1_000)
-    Application.put_env(:rey_code, :opencode_max_output_bytes, 1_000_000)
-
-    on_exit(fn ->
-      restore_env(:provider_timeout_ms, previous_timeout)
-      restore_env(:opencode_max_output_bytes, previous_output)
-      File.rm(path)
-      File.rm(child_pid_path)
-    end)
-
     task =
-      Task.async(fn -> OpenCode.stream(runtime(path), request(), fn _frame -> :ok end) end)
+      Task.async(fn ->
+        OpenCode.stream(
+          runtime(path, provider_timeout_ms: 1_000, opencode_max_output_bytes: 1_000_000),
+          request(),
+          fn _frame -> :ok end
+        )
+      end)
 
     assert eventually(fn -> File.exists?(child_pid_path) end)
     assert {:error, %{"category" => "timeout"}} = Task.await(task, 5_000)
     child_pid = child_pid_path |> File.read!() |> String.trim()
     assert eventually(fn -> not process_alive?(child_pid) end)
+
+    on_exit(fn ->
+      File.rm(path)
+      File.rm(child_pid_path)
+    end)
   end
 
   test "rejects an oversized prompt before launching the executable" do
@@ -226,19 +219,18 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       Path.join(System.tmp_dir!(), "opencode_launched_#{System.unique_integer([:positive])}")
 
     path = fake_opencode("printf launched > '#{marker}'")
-    previous = Application.get_env(:rey_code, :opencode_max_prompt_bytes)
-    Application.put_env(:rey_code, :opencode_max_prompt_bytes, 10)
+
+    assert {:error, %{"category" => "prompt_too_large"}} =
+             OpenCode.stream(runtime(path, opencode_max_prompt_bytes: 10), request(), fn _frame ->
+               :ok
+             end)
+
+    refute File.exists?(marker)
 
     on_exit(fn ->
-      restore_env(:opencode_max_prompt_bytes, previous)
       File.rm(path)
       File.rm(marker)
     end)
-
-    assert {:error, %{"category" => "prompt_too_large"}} =
-             OpenCode.stream(runtime(path), request(), fn _frame -> :ok end)
-
-    refute File.exists?(marker)
   end
 
   test "command runner times out and caps output" do
@@ -285,22 +277,21 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       #{json_line("response after stdin EOF")}
       """)
 
-    previous = Application.get_env(:rey_code, :provider_timeout_ms)
-    Application.put_env(:rey_code, :provider_timeout_ms, 10_000)
     test_pid = self()
 
-    on_exit(fn ->
-      restore_env(:provider_timeout_ms, previous)
-      File.rm(path)
-    end)
-
     assert {:ok, %{}} =
-             OpenCode.stream(runtime(path), request(), fn frame ->
-               send(test_pid, {:frame, frame})
-               :ok
-             end)
+             OpenCode.stream(
+               runtime(path, provider_timeout_ms: 10_000),
+               request(),
+               fn frame ->
+                 send(test_pid, {:frame, frame})
+                 :ok
+               end
+             )
 
     assert_receive {:frame, %{kind: :text_delta, data: %{text: "response after stdin EOF"}}}
+
+    on_exit(fn -> File.rm(path) end)
   end
 
   test "sends the prompt over stdin and keeps it out of process arguments" do
@@ -350,9 +341,6 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     System.put_env(denied_name, "must-not-leak")
     System.put_env(allowed_name, "configured-value")
 
-    previous = Application.get_env(:rey_code, :opencode_env_allowlist)
-    Application.put_env(:rey_code, :opencode_env_allowlist, [allowed_name])
-
     path =
       fake_opencode("""
       printf '%s\\n' "$PATH" "${#{denied_name}+present}" "${#{allowed_name}}" "$NO_COLOR" > '#{env_file}'
@@ -360,7 +348,6 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       """)
 
     on_exit(fn ->
-      restore_env(:opencode_env_allowlist, previous)
       System.delete_env(denied_name)
       System.delete_env(allowed_name)
       File.rm(path)
@@ -368,10 +355,14 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     end)
 
     assert {:ok, _metadata} =
-             OpenCode.stream(runtime(path), request(), fn frame ->
-               send(test_pid, {:frame, frame})
-               :ok
-             end)
+             OpenCode.stream(
+               runtime(path, opencode_env_allowlist: [allowed_name]),
+               request(),
+               fn frame ->
+                 send(test_pid, {:frame, frame})
+                 :ok
+               end
+             )
 
     assert_receive {:frame, %{kind: :text_delta, data: %{text: "environment restricted"}}}
 

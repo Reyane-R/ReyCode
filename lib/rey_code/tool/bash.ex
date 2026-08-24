@@ -12,6 +12,7 @@ defmodule ReyCode.Tool.Bash do
   """
 
   alias ReyCode.Provider.TextBuffer
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.{Environment, Workspace}
   alias ReyCode.Tool.{Request, Result, Support}
 
@@ -21,51 +22,50 @@ defmodule ReyCode.Tool.Bash do
   @kill_grace_ms 5_000
   @reap_grace_ms 5_000
 
-  defp timeout_ms, do: Application.get_env(:rey_code, :tool_bash_timeout_ms, 30_000)
-  defp max_output_bytes, do: Application.get_env(:rey_code, :tool_bash_max_output_bytes, 256_000)
-  defp max_error_bytes, do: Application.get_env(:rey_code, :tool_bash_max_error_bytes, 64_000)
-
   @impl true
-  def run(%Request{arguments: arguments, workspace: workspace}, _opts) do
+  def run(%Request{arguments: arguments} = request, opts) do
     command = Support.arg(arguments, :command)
+    policy = Keyword.fetch!(opts, :policy)
 
     case command do
       command when command in [nil, ""] ->
         Result.error(:missing_command)
 
       command ->
-        execute(command, cwd(arguments, workspace))
+        execute(command, cwd(arguments, request), policy, limits(policy))
     end
   end
 
-  defp cwd(arguments, workspace) do
-    case Workspace.contained?(Support.arg(arguments, :cwd, workspace)) do
+  defp cwd(arguments, %Request{workspace: workspace} = request) do
+    requested = Support.arg(arguments, :cwd, workspace)
+
+    case Workspace.contained?(requested, roots: Request.roots(request)) do
       {:ok, canonical} -> canonical
-      {:error, _reason} -> Support.arg(arguments, :cwd, workspace)
+      {:error, _reason} -> requested
     end
   end
 
-  defp execute(command, cwd) do
+  defp execute(command, cwd, policy, limits) do
     {wrapper, wrapped_args, env} =
-      Environment.wrap("bash", ["-c", command], environment_opts())
+      Environment.wrap("bash", ["-c", command], environment_opts(policy))
 
     started_at = System.monotonic_time(:millisecond)
 
     with {:ok, proc} <- start(wrapper, wrapped_args, env, cwd),
-         {:ok, capture, status, timed_out?} <- collect(proc, timeout_ms()) do
+         {:ok, capture, status, timed_out?} <- collect(proc, limits.timeout_ms, limits) do
       wall_ms = System.monotonic_time(:millisecond) - started_at
-      build_result(capture, status, timed_out?, wall_ms)
+      build_result(capture, status, timed_out?, wall_ms, limits)
     else
       {:error, reason} -> Result.error(reason)
     end
   end
 
-  defp environment_opts do
+  defp environment_opts(policy) do
     [
       source: System.get_env(),
-      additional_names: Application.get_env(:rey_code, :tool_bash_env_allowlist, []),
-      cpu_seconds: Application.get_env(:rey_code, :tool_bash_cpu_seconds, 120),
-      open_files: Application.get_env(:rey_code, :tool_bash_open_files, 1_024)
+      additional_names: RuntimeConfig.policy(policy, :tool_bash_env_allowlist, []),
+      cpu_seconds: RuntimeConfig.policy(policy, :tool_bash_cpu_seconds, 120),
+      open_files: RuntimeConfig.policy(policy, :tool_bash_open_files, 1_024)
     ]
   end
 
@@ -93,8 +93,8 @@ defmodule ReyCode.Tool.Bash do
   # this process stays the Exile process owner so it alone controls
   # termination. Stdin is left to Exile's exit sequence; commands that wait
   # on it simply run until the timeout tears them down.
-  defp collect(proc, timeout_ms) do
-    reader = Task.async(fn -> own_and_drain(proc) end)
+  defp collect(proc, timeout_ms, limits) do
+    reader = Task.async(fn -> own_and_drain(proc, limits) end)
 
     try do
       capture = Task.await(reader, timeout_ms)
@@ -106,10 +106,10 @@ defmodule ReyCode.Tool.Bash do
     end
   end
 
-  defp own_and_drain(proc) do
+  defp own_and_drain(proc, limits) do
     with :ok <- Exile.Process.change_pipe_owner(proc, :stdout, self()),
          :ok <- Exile.Process.change_pipe_owner(proc, :stderr, self()) do
-      drain(proc)
+      drain(proc, limits)
     else
       {:error, _reason} -> %{new_capture() | broken?: true, truncated?: true}
     end
@@ -140,24 +140,31 @@ defmodule ReyCode.Tool.Bash do
       %{new_capture() | truncated?: true}
   end
 
-  defp drain(proc) do
-    drain(proc, new_capture())
+  defp drain(proc, limits) do
+    drain(proc, new_capture(), limits)
   end
 
-  defp drain(proc, capture) do
+  defp drain(proc, capture, limits) do
     case Exile.Process.read_any(proc, @chunk_bytes) do
-      {:ok, {:stdout, data}} -> drain(proc, append(capture, :stdout, data))
-      {:ok, {:stderr, data}} -> drain(proc, append(capture, :stderr, data))
-      :eof -> capture
-      {:error, _reason} -> %{capture | broken?: true}
+      {:ok, {:stdout, data}} ->
+        drain(proc, append(capture, :stdout, data, limits), limits)
+
+      {:ok, {:stderr, data}} ->
+        drain(proc, append(capture, :stderr, data, limits), limits)
+
+      :eof ->
+        capture
+
+      {:error, _reason} ->
+        %{capture | broken?: true}
     end
   end
 
   defp new_capture,
     do: %{stdout: {[], 0}, stderr: {[], 0}, truncated?: false, broken?: false}
 
-  defp append(capture, key, data) do
-    cap = if key == :stdout, do: max_output_bytes(), else: max_error_bytes()
+  defp append(capture, key, data, limits) do
+    cap = if key == :stdout, do: limits.max_output_bytes, else: limits.max_error_bytes
     {parts, size} = Map.fetch!(capture, key)
 
     if size >= cap do
@@ -172,9 +179,9 @@ defmodule ReyCode.Tool.Bash do
     end
   end
 
-  defp build_result(capture, status, timed_out?, wall_ms) do
-    output = render(capture.stdout, max_output_bytes(), capture.truncated?)
-    stderr = render(capture.stderr, max_error_bytes(), false)
+  defp build_result(capture, status, timed_out?, wall_ms, limits) do
+    output = render(capture.stdout, limits.max_output_bytes, capture.truncated?)
+    stderr = render(capture.stderr, limits.max_error_bytes, false)
 
     metadata =
       %{
@@ -212,5 +219,13 @@ defmodule ReyCode.Tool.Bash do
     else
       output
     end
+  end
+
+  defp limits(policy) do
+    %{
+      timeout_ms: RuntimeConfig.policy(policy, :tool_bash_timeout_ms, 30_000),
+      max_output_bytes: RuntimeConfig.policy(policy, :tool_bash_max_output_bytes, 256_000),
+      max_error_bytes: RuntimeConfig.policy(policy, :tool_bash_max_error_bytes, 64_000)
+    }
   end
 end

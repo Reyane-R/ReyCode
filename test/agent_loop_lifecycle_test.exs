@@ -11,7 +11,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
 
   use ExUnit.Case, async: false
 
-  alias ReyCode.EventStore
+  alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.Frame
   alias ReyCode.Test.Wait
@@ -31,22 +31,12 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     File.mkdir_p!(workspace)
     File.write!(Path.join(workspace, "hello.txt"), "tool-loop-content")
 
-    previous_simulator = Application.get_env(:rey_code, :squad_simulator)
-
-    on_exit(fn ->
-      File.rm_rf!(workspace)
-
-      if previous_simulator do
-        Application.put_env(:rey_code, :squad_simulator, previous_simulator)
-      else
-        Application.delete_env(:rey_code, :squad_simulator)
-      end
-    end)
+    on_exit(fn -> File.rm_rf!(workspace) end)
 
     %{workspace: workspace}
   end
 
-  defp engine_opts(store) do
+  defp engine_opts(store, simulator_opts) do
     [
       name: @engine,
       event_store: store,
@@ -54,11 +44,21 @@ defmodule ReyCode.AgentLoopLifecycleTest do
       agent_registry: @agent_registry,
       event_registry: @event_registry,
       provider_catalog: ReyCode.Provider.Catalog,
-      agent_delay_ms: 0
+      config:
+        RuntimeConfig.fresh(
+          allow_simulator_provider: true,
+          default_provider: :simulator
+        ),
+      agent_delay_ms: 0,
+      simulator_opts:
+        Keyword.merge(
+          [seed: 0, delay_ms: 0, jitter_ms: 0, failure_rate: 0.0],
+          simulator_opts
+        )
     ]
   end
 
-  defp start_engine(_workspace) do
+  defp start_engine(_workspace, simulator_opts) do
     path =
       Path.join(
         System.tmp_dir!(),
@@ -70,21 +70,15 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     start_supervised!({Registry, keys: :duplicate, name: @event_registry})
     start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
 
-    start_supervised!(Supervisor.child_spec({Engine, engine_opts(store)}, restart: :temporary))
+    start_supervised!(
+      Supervisor.child_spec({Engine, engine_opts(store, simulator_opts)}, restart: :temporary)
+    )
 
     %{store: store}
   end
 
-  defp simulator_scenario(tool_requests) do
-    Application.put_env(
-      :rey_code,
-      :squad_simulator,
-      seed: 0,
-      delay_ms: 0,
-      jitter_ms: 0,
-      failure_rate: 0.0,
-      tool_requests: tool_requests
-    )
+  defp tool_write_pause do
+    [tool_requests: [%{tool: "write", arguments: %{"path" => "out.txt", "content" => "paused"}}]]
   end
 
   defp events_of_type(store, type) do
@@ -119,9 +113,10 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   test "allow-listed tool executes once and its result reaches the next round", %{
     workspace: workspace
   } do
-    simulator_scenario([%{tool: "read", arguments: %{"path" => "hello.txt"}}])
-
-    %{store: store} = start_engine(workspace)
+    %{store: store} =
+      start_engine(workspace,
+        tool_requests: [%{tool: "read", arguments: %{"path" => "hello.txt"}}]
+      )
 
     assert {:ok, room_id} = Engine.create_room("Tool Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Read the file", :compare, @engine)
@@ -168,9 +163,10 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   end
 
   test "tool failures are durable results and the provider can recover", %{workspace: workspace} do
-    simulator_scenario([%{tool: "read", arguments: %{"path" => "missing.txt"}}])
-
-    %{store: store} = start_engine(workspace)
+    %{store: store} =
+      start_engine(workspace,
+        tool_requests: [%{tool: "read", arguments: %{"path" => "missing.txt"}}]
+      )
 
     assert {:ok, room_id} = Engine.create_room("Tool Failure", workspace, @engine)
 
@@ -209,11 +205,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   test "ask tool pauses durably without executing and releases the worker", %{
     workspace: workspace
   } do
-    simulator_scenario([
-      %{tool: "write", arguments: %{"path" => "out.txt", "content" => "paused"}}
-    ])
-
-    %{store: store} = start_engine(workspace)
+    %{store: store} = start_engine(workspace, tool_write_pause())
 
     assert {:ok, room_id} = Engine.create_room("Ask Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Write the file", :compare, @engine)
@@ -237,11 +229,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   end
 
   test "provider frames never overwrite waiting approval status", %{workspace: workspace} do
-    simulator_scenario([
-      %{tool: "write", arguments: %{"path" => "out.txt", "content" => "paused"}}
-    ])
-
-    %{store: store} = start_engine(workspace)
+    %{store: store} = start_engine(workspace, tool_write_pause())
 
     assert {:ok, room_id} = Engine.create_room("Frame Guard", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Write the file", :compare, @engine)
@@ -271,11 +259,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   end
 
   test "waiting approval survives engine restart and stays dormant", %{workspace: workspace} do
-    simulator_scenario([
-      %{tool: "write", arguments: %{"path" => "out.txt", "content" => "paused"}}
-    ])
-
-    %{store: store} = start_engine(workspace)
+    %{store: store} = start_engine(workspace, tool_write_pause())
 
     assert {:ok, room_id} = Engine.create_room("Restart Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Write the file", :compare, @engine)
@@ -289,7 +273,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
 
     :ok = GenServer.stop(@engine)
 
-    assert {:ok, _restarted} = Engine.start_link(engine_opts(store))
+    assert {:ok, _restarted} = Engine.start_link(engine_opts(store, tool_write_pause()))
 
     assert Wait.projection(@engine, fn next ->
              inv = next.invocations[invocation.id]
@@ -302,12 +286,13 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   end
 
   test "sequential tool rounds keep the full conversation", %{workspace: workspace} do
-    simulator_scenario([
-      %{tool: "read", arguments: %{"path" => "hello.txt"}},
-      %{tool: "list", arguments: %{"path" => "."}}
-    ])
-
-    %{store: store} = start_engine(workspace)
+    %{store: store} =
+      start_engine(workspace,
+        tool_requests: [
+          %{tool: "read", arguments: %{"path" => "hello.txt"}},
+          %{tool: "list", arguments: %{"path" => "."}}
+        ]
+      )
 
     assert {:ok, room_id} = Engine.create_room("Multi Round", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Inspect twice", :compare, @engine)

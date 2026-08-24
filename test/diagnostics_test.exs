@@ -107,41 +107,43 @@ end
 defmodule ReyCode.DiagnosticsSanitizationTest do
   use ExUnit.Case, async: false
 
-  alias ReyCode.Diagnostics
+  alias ReyCode.{Diagnostics, RuntimeConfig}
 
   test "provider endpoints expose only sanitized origins and never echo secrets" do
-    previous_providers = Application.get_env(:rey_code, :openai_compatible_providers)
     System.put_env("REYCODE_SENTINEL_KEY", "sentinel-key-value")
 
-    Application.put_env(:rey_code, :openai_compatible_providers, [
-      %{
-        id: :sentinel,
-        name: "Sentinel",
-        base_url:
-          "https://sentinel-user:sentinel-pass@example.test:8443/secret-path?api_key=query-sentinel#frag-sentinel",
-        key_env: "REYCODE_SENTINEL_KEY"
-      },
-      %{id: :broken, name: "Broken", base_url: "::::not a url::::", key_env: "REYCODE_MISSING"},
-      %{
-        id: :odd,
-        name: "Odd",
-        base_url: "ftp://files.example.test/pub",
-        key_env: "REYCODE_MISSING"
-      }
-    ])
+    config =
+      RuntimeConfig.fresh(
+        openai_compatible_providers: [
+          %{
+            id: :sentinel,
+            name: "Sentinel",
+            base_url:
+              "https://sentinel-user:sentinel-pass@example.test:8443/secret-path?api_key=query-sentinel#frag-sentinel",
+            key_env: "REYCODE_SENTINEL_KEY"
+          },
+          %{
+            id: :broken,
+            name: "Broken",
+            base_url: "::::not a url::::",
+            key_env: "REYCODE_MISSING"
+          },
+          %{
+            id: :odd,
+            name: "Odd",
+            base_url: "ftp://files.example.test/pub",
+            key_env: "REYCODE_MISSING"
+          }
+        ]
+      )
 
     on_exit(fn ->
-      if previous_providers do
-        Application.put_env(:rey_code, :openai_compatible_providers, previous_providers)
-      else
-        Application.delete_env(:rey_code, :openai_compatible_providers)
-      end
-
       System.delete_env("REYCODE_SENTINEL_KEY")
     end)
 
     report =
       Diagnostics.snapshot(
+        config: config,
         system_info: %{os_family: "unix", os: "test", architecture: "test"},
         runtime_info: %{elixir: "1.0", otp: "1"},
         catalog_snapshot: %{}

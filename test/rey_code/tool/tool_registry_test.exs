@@ -1,6 +1,7 @@
 defmodule ReyCode.ToolRegistryTest do
   use ExUnit.Case, async: true
 
+  alias ReyCode.RuntimeConfig
   alias ReyCode.Tool.{Request, Result}
   alias ReyCode.ToolRegistry
 
@@ -18,31 +19,33 @@ defmodule ReyCode.ToolRegistryTest do
     Request.new(tool: tool, arguments: arguments, workspace: @workspace, roots: [@root])
   end
 
+  defp policy, do: RuntimeConfig.fresh(workspace_roots: [@root])
+
   test "allow-listed tools execute immediately" do
     path = Path.join(@workspace, "note.txt")
     File.write!(path, "hello")
     req = request("read", %{path: path})
 
-    assert {:ok, %Result{ok: true, output: "hello"}} = ToolRegistry.dispatch(req)
+    assert {:ok, %Result{ok: true, output: "hello"}} = ToolRegistry.dispatch(req, policy())
   end
 
   test "bash and write require approval (ask) and are not executed by dispatch" do
     assert {:ask, %Request{tool: "bash"}} =
-             ToolRegistry.dispatch(request("bash", %{command: "echo hi"}))
+             ToolRegistry.dispatch(request("bash", %{command: "echo hi"}), policy())
 
     assert {:ask, %Request{tool: "write"}} =
-             ToolRegistry.dispatch(request("write", %{path: "x", content: "y"}))
+             ToolRegistry.dispatch(request("write", %{path: "x", content: "y"}), policy())
   end
 
   test "unknown tool is denied" do
-    assert {:deny, :unknown_tool} = ToolRegistry.dispatch(request("rm", %{}))
+    assert {:deny, :unknown_tool} = ToolRegistry.dispatch(request("rm", %{}), policy())
   end
 
-  test "execute/1 runs an approved tool" do
+  test "execute/2 runs an approved tool" do
     path = Path.join(@workspace, "out.txt")
 
     assert %Result{ok: true} =
-             ToolRegistry.execute(request("write", %{path: path, content: "data"}))
+             ToolRegistry.execute(request("write", %{path: path, content: "data"}), policy())
 
     assert File.read!(path) == "data"
   end
