@@ -248,10 +248,11 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   defp release_review_status(room, projection) do
     turn = projection.turns[room.active_turn_id]
-    review = turn && turn.squad && Map.get(turn.squad, :pending_review)
+    review = turn && turn.squad && turn.squad.pending_review
 
     if review do
-      "release approval required  /  leader recommends #{review.decision}  /  /release"
+      "release approval required  /  leader recommends " <>
+        "#{review.recommendation.decision}  /  /release"
     else
       ""
     end

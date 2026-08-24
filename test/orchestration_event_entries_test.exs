@@ -231,7 +231,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
     assert [configured, entered] =
              EventEntries.squad_start(turn,
                rework_budget: 5,
-               release_authority: "human"
+               release_authority: :owner
              )
 
     assert configured ==
@@ -244,7 +244,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "rework_budget" => 5,
                  "release_authority" => "human",
                  "workflow_version" => Squad.workflow_version(),
-                 "phase" => Squad.stage_label(0)
+                 "phase" => Squad.phase_label(0)
                },
                @turn_metadata
              }
@@ -256,7 +256,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "turn_id" => "turn-1",
                  "room_id" => "room-1",
                  "stage" => 0,
-                 "phase" => Squad.stage_label(0),
+                 "phase" => Squad.phase_label(0),
                  "cycle" => 0
                },
                @turn_metadata
@@ -267,10 +267,10 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
     turn = %{
       id: "turn-1",
       room_id: "room-1",
-      squad: %{cycle: 1, stage: 4, phase: "specification", rework_count: 2}
+      squad: %{cycle: 1, phase_index: 4, phase: "specification", rework_count: 2}
     }
 
-    rework_spec = %{stage: 2, phase: "story_review", cycle: 2}
+    rework_spec = %{phase_index: 2, phase: "story_review", cycle: 2}
 
     assert [rework] = EventEntries.squad_continue(turn, [rework_spec])
 
@@ -292,7 +292,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                @turn_metadata
              }
 
-    transition_spec = %{stage: 5, phase: "specification_gate", cycle: 1}
+    transition_spec = %{phase_index: 5, phase: "specification_gate", cycle: 1}
 
     assert EventEntries.squad_continue(turn, [transition_spec]) == [
              {
@@ -308,7 +308,9 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
              }
            ]
 
-    assert EventEntries.squad_continue(turn, [%{stage: 4, phase: "specification", cycle: 1}]) ==
+    assert EventEntries.squad_continue(turn, [
+             %{phase_index: 4, phase: "specification", cycle: 1}
+           ]) ==
              []
   end
 
@@ -330,7 +332,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
 
     spec = %{
       participant_id: "builder",
-      stage: 0,
+      phase_index: 0,
       label: "independent response",
       system_prompt: "Respond independently"
     }
@@ -377,7 +379,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
         provider: :simulator,
         model: nil
       },
-      stage: 0,
+      phase_index: 0,
       label: "independent response",
       system_prompt: "Respond independently"
     }

@@ -55,7 +55,7 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
   end
 
   defp execute_current_phase(%{state: state} = context) do
-    phase = Squad.phase(state.phase)
+    phase = Squad.phase(state.phase_index)
 
     case execute_phase(context, phase) do
       {:ok, outputs, next_context} -> transition(next_context, phase, outputs)
@@ -64,7 +64,7 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
   end
 
   defp execute_phase(context, phase) do
-    Enum.reduce_while(phase.roles, {:ok, [], context}, fn role_id, {:ok, outputs, context} ->
+    Enum.reduce_while(phase.role_ids, {:ok, [], context}, fn role_id, {:ok, outputs, context} ->
       case execute_role(new_step(context, phase, role_id)) do
         {:ok, output, next_context} -> {:cont, {:ok, [output | outputs], next_context}}
         {:error, next_context} -> {:halt, {:error, next_context}}
@@ -175,7 +175,7 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
     %{
       "kind" => "gate",
       "decision" => if(rework?, do: "rework", else: "approve"),
-      "target_phase" => if(rework?, do: phase.rework_to, else: nil),
+      "target_phase" => if(rework?, do: phase.rework_phase, else: nil),
       "reasons" => if(rework?, do: ["seeded rework"], else: [])
     }
   end
@@ -184,7 +184,7 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
     role_id
     |> Squad.role()
     |> Map.fetch!(:artifacts)
-    |> Enum.filter(&(&1 in phase.artifacts))
+    |> Enum.filter(&(&1 in phase.artifact_kinds))
     |> Enum.map(&simulated_artifact(&1, phase.id))
     |> artifact_output()
   end
@@ -214,7 +214,7 @@ defmodule ReyCode.Orchestration.Squad.Simulator do
   end
 
   defp fail(%{state: state} = context) do
-    %{context | state: %{state | phase: Squad.complete_stage(), outcome: :failed}}
+    %{context | state: %{state | phase_index: Squad.complete_phase_index(), outcome: :failed}}
   end
 
   defp finish(%{state: state, result: result}) do

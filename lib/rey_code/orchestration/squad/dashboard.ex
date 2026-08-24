@@ -2,8 +2,7 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   @moduledoc "Pure read model and presentation values for the squad dashboard."
 
   alias ReyCode.Orchestration.{Projection, Room, Squad, Turn}
-
-  @terminal_statuses [:completed, :failed, :partial, :cancelled]
+  alias ReyCode.Orchestration.Squad.{GateResolution, GateReview}
 
   @type usage_summary :: %{
           tokens: integer(),
@@ -23,11 +22,11 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
         %{
           turn: turn,
           phases: Enum.with_index(Squad.phases()),
-          decisions: Enum.reverse(turn.squad.decisions),
-          reviews: turn.squad |> Map.get(:gate_reviews, []) |> Enum.reverse(),
+          resolutions: Enum.reverse(turn.squad.resolutions),
+          reviews: Enum.reverse(turn.squad.reviews),
           artifacts: Enum.reverse(turn.squad.artifacts),
           retries: Enum.reverse(turn.squad.retries),
-          directives: turn.squad |> Map.get(:directives, []) |> Enum.reverse(),
+          directives: Enum.reverse(turn.squad.directives),
           usage: summarize_usage(turn, projection)
         }
     end
@@ -79,23 +78,25 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
     if Squad.gate?(phase), do: "  [gate]", else: ""
   end
 
-  @doc "Formats a recorded squad decision for display."
-  @spec decision_label(map()) :: String.t()
-  def decision_label(decision) do
-    actor = Map.get(decision, :actor, "agent")
-    base = "#{decision.phase} / cycle #{decision.cycle} / #{decision.decision} / #{actor}"
+  @doc "Formats an authoritative GateResolution for display."
+  @spec resolution_label(GateResolution.t()) :: String.t()
+  def resolution_label(resolution) do
+    base =
+      "#{resolution.phase} / cycle #{resolution.cycle} / #{resolution.decision} / " <>
+        Atom.to_string(resolution.authority)
 
-    if decision.target_phase do
-      "#{base} -> #{decision.target_phase}"
+    if resolution.target_phase do
+      "#{base} -> #{resolution.target_phase}"
     else
       base
     end
   end
 
-  @doc "Formats a pending human gate review for display."
-  @spec review_label(map()) :: String.t()
+  @doc "Formats a pending owner GateReview for display."
+  @spec review_label(GateReview.t()) :: String.t()
   def review_label(review) do
-    "#{review.phase} / cycle #{review.cycle} / leader recommends #{review.decision}"
+    "#{review.phase} / cycle #{review.cycle} / leader recommends " <>
+      review.recommendation.decision
   end
 
   @doc "Formats a recorded squad artifact for display."
@@ -139,12 +140,12 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   end
 
   defp phase_state(index, turn) do
-    stage = turn.squad.stage
+    phase_index = turn.squad.phase_index
 
     cond do
-      index < stage -> :completed
-      index == stage and turn.status in @terminal_statuses -> :completed
-      index == stage -> :current
+      index < phase_index -> :completed
+      index == phase_index and turn.status == :terminal -> :completed
+      index == phase_index -> :current
       true -> :pending
     end
   end

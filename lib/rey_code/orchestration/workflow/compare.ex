@@ -9,7 +9,7 @@ defmodule ReyCode.Orchestration.Workflow.Compare do
     Enum.map(room.participants, fn participant ->
       %{
         participant_id: participant.id,
-        stage: 0,
+        phase_index: 0,
         label: "independent response",
         system_prompt:
           "Respond independently from the perspective of #{participant.perspective}. Do not assume you can see other agents' current answers."

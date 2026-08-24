@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.RecoveryTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.EventStore
+  alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Orchestration.Projector
   alias ReyCode.Provider.{Frame, Runtime}
@@ -171,7 +171,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
 
     assert_receive {:DOWN, ^survivor_ref, :process, ^survivor, :killed}, 5_000
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :completed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
     assert Engine.snapshot(@engine).turns[turn_id].invocation_order == ["inv-builder"]
   end
 
@@ -195,7 +195,8 @@ defmodule ReyCode.Orchestration.RecoveryTest do
        agent_supervisor: @agent_supervisor,
        agent_registry: @agent_registry,
        event_registry: @event_registry,
-       provider_catalog: catalog}
+       provider_catalog: catalog,
+       config: RuntimeConfig.fresh(global_concurrency: 3, workspace_concurrency: 3)}
     )
 
     assert {:ok, room_id} = Engine.create_room("Ghost Room", System.tmp_dir!(), @engine)
@@ -233,7 +234,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
       send(provider_pid, :complete)
     end)
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :completed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 
     live = Engine.snapshot(@engine)
     replayed = Projector.replay(EventStore.load(store))
@@ -347,12 +348,12 @@ defmodule ReyCode.Orchestration.RecoveryTest do
        agent_delay_ms: 0}
     )
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :failed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :failed
 
     error = Engine.snapshot(@engine).invocations[invocation_id].error
-    assert error["category"] == "interrupted"
-    assert error["retryable"] == false
-    assert error["message"] =~ "cannot be replayed safely"
+    assert error.category == :interrupted
+    refute error.retryable?
+    assert error.message =~ "cannot be replayed safely"
   end
 
   defp participants do

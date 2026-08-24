@@ -120,7 +120,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
       turn == nil ->
         retry_resolve(turn_id, decision, attempts)
 
-      turn.status in [:completed, :partial, :failed, :cancelled] ->
+      turn.status == :terminal ->
         turn
 
       true ->
@@ -169,7 +169,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
       turn && turn.squad.phase == phase ->
         turn
 
-      turn && turn.status in [:completed, :partial, :failed, :cancelled] ->
+      turn && turn.status == :terminal ->
         turn
 
       waiting = List.first(waiting_invocations(projection, turn_id)) ->
@@ -200,7 +200,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
 
     turn = resolve_all_waiting(turn_id, :approve)
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
 
     assert File.read!(out_path) == "approved-content"
 
@@ -245,7 +245,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
     projection = Engine.snapshot(@engine)
     invocations = Enum.map(turn.invocation_order, &projection.invocations[&1])
 
-    assert turn.status == :failed
+    assert turn.outcome == :failed
     refute Enum.any?(invocations, &(&1.status == :waiting_tool_approval))
     assert Enum.any?(invocations, &(&1.status == :cancelled))
 
@@ -275,8 +275,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
 
     assert Enum.all?(invocations, &(&1.status == :failed))
     assert Enum.all?(invocations, &(&1.pending_tool_review == nil))
-    assert Enum.all?(invocations, &(&1.error["category"] == "tool_denied"))
-    assert Enum.all?(invocations, &(&1.error["retryable"] == false))
+    assert Enum.all?(invocations, &(&1.error.category == :tool_denied))
+    assert Enum.all?(invocations, &(not &1.error.retryable?))
 
     # Denial is terminal: resolving again is rejected, and no run ever started.
     denied_invocation = snapshot.invocations[hd(snapshot.turns[turn_id].invocation_order)]
@@ -317,7 +317,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
 
     turn = resolve_all_waiting(turn_id, :approve)
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
     assert File.read!(out_path) == "approved-content"
 
     assert length(events_of_type(store, :tool_run_started)) == 3
@@ -345,7 +345,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
 
     snapshot = Wait.turn_status(@engine, turn_id, [:completed, :partial, :failed, :cancelled])
 
-    assert snapshot.status == :cancelled
+    assert snapshot.status == :terminal
+    assert snapshot.outcome == :cancelled
     refute File.exists?(out_path)
     assert events_of_type(store, :tool_run_started) == []
 
@@ -367,7 +368,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
     :ok = GenServer.stop(@engine)
     assert {:ok, _restarted} = Engine.start_link(engine_opts(store))
 
-    assert Wait.turn_status(@engine, turn_id, [:completed, :partial, :failed, :cancelled]).status ==
+    assert Wait.turn_status(@engine, turn_id, [:completed, :partial, :failed, :cancelled]).outcome ==
              :cancelled
 
     refute File.exists?(out_path)

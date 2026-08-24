@@ -3,10 +3,13 @@ defmodule ReyCode.Orchestration.ContextTest do
 
   alias ReyCode.Orchestration.Context
 
-  test "debate includes completed earlier stages but excludes same-stage siblings" do
+  test "debate includes completed earlier phases but excludes same-phase siblings" do
     turn = %{id: "turn-1", mode: :debate, context_through_sequence: 2}
-    invocation = %{stage: 1}
-    projection = %{invocations: %{"inv-proposal" => %{stage: 0}, "inv-sibling" => %{stage: 1}}}
+    invocation = %{phase_index: 1}
+
+    projection = %{
+      invocations: %{"inv-proposal" => %{phase_index: 0}, "inv-sibling" => %{phase_index: 1}}
+    }
 
     historical = message("historical", "turn-0", 1, :completed)
     user_request = message("request", "turn-1", 2, :completed)

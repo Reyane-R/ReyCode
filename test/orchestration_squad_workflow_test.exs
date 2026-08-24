@@ -1,6 +1,9 @@
 defmodule ReyCode.Orchestration.SquadWorkflowTest do
   use ExUnit.Case, async: true
 
+  alias ReyCode.Failure
+  alias ReyCode.Orchestration.Squad.Seat
+  alias ReyCode.Orchestration.SquadRun
   alias ReyCode.Orchestration.Workflow.Squad
   alias ReyCode.Orchestration.Workflow.Squad.Finalizer
 
@@ -10,12 +13,12 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
       "qa_author" => participant("qa_author", "QA Author")
     }
 
-    room = %{squad_roles: roles}
+    room = %{squad_seats: roles}
 
     turn = %{
       id: "turn-1",
       invocation_order: [],
-      squad: %{
+      squad: %SquadRun{
         directives: [
           %{text: "Keep the first release read-only."},
           %{text: "Prioritize audit evidence over throughput."}
@@ -65,60 +68,60 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
 
   test "returns a declarative retry action for retryable squad failures" do
     invocation = invocation("analyst", "stories")
-    error = %{"category" => "timeout", "retryable" => true}
+    error = Failure.new(:timeout, "timed out", true)
 
     assert {:retry, [failed, retry], retry_spec} =
              Squad.finalize(invocation, %{body: ""}, {:failed, error},
                human_release_review?: true
              )
 
-    assert {:invocation_failed, %{"error" => ^error}, _} = failed
+    assert {:invocation_failed, %{"error" => error_wire}, _} = failed
+    assert error_wire == Failure.to_wire(error)
     assert {:squad_retry_scheduled, %{"attempt" => 2, "reason" => "timeout"}, _} = retry
     assert retry_spec.attempt == 2
     assert retry_spec.logical_work_id == invocation.logical_work_id
   end
 
-  test "advances non-retryable and malformed failures without scheduling a retry" do
-    errors = [
-      %{"category" => "tool_calls_unsupported", "retryable" => false},
-      %{"category" => "missing_retryable"},
-      %{"category" => "nil_retryable", "retryable" => nil},
-      %{"category" => "malformed_retryable", "retryable" => "true"},
-      %{"category" => "atom_retryable", retryable: true}
-    ]
+  test "advances non-retryable failures without scheduling a retry" do
+    error = Failure.new(:tool_denied, "denied")
 
-    for error <- errors do
-      assert {:advance, [{:invocation_failed, %{"error" => ^error}, _metadata}]} =
-               Squad.finalize(invocation("analyst", "stories"), %{body: ""}, {:failed, error},
-                 human_release_review?: true
-               )
-    end
+    assert {:advance, [{:invocation_failed, %{"error" => error_wire}, _metadata}]} =
+             Squad.finalize(
+               invocation("analyst", "stories"),
+               %{body: ""},
+               {:failed, error},
+               human_release_review?: true
+             )
+
+    assert error_wire == Failure.to_wire(error)
   end
 
   test "does not retry a retryable failure at the attempt limit" do
     invocation =
       invocation("analyst", "stories", ReyCode.Orchestration.Squad.retry_limit())
 
-    error = %{"category" => "rate_limited", "retryable" => true}
+    error = Failure.new(:rate_limited, "rate limited", true)
 
-    assert {:advance, [{:invocation_failed, %{"error" => ^error}, _metadata}]} =
+    assert {:advance, [{:invocation_failed, %{"error" => error_wire}, _metadata}]} =
              Squad.finalize(invocation, %{body: ""}, {:failed, error},
                human_release_review?: true
              )
+
+    assert error_wire == Failure.to_wire(error)
   end
 
   test "completes when the newest invocation failed without a retry" do
     failed = %{
       status: :failed,
       attempt: 1,
-      stage: 1,
+      phase_index: 1,
       cycle: 0,
       logical_work_id: "work-1"
     }
 
     turn = %{
       invocation_order: ["inv-1"],
-      squad: %{stage: 1, cycle: 0}
+      squad: %SquadRun{phase_index: 1, cycle: 0}
     }
 
     assert Squad.advance(%{}, turn, %{invocations: %{"inv-1" => failed}}) ==
@@ -129,7 +132,7 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
     failed = %{
       status: :failed,
       attempt: 1,
-      stage: 1,
+      phase_index: 1,
       cycle: 0,
       logical_work_id: "work-1"
     }
@@ -138,7 +141,7 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
 
     turn = %{
       invocation_order: ["inv-1", "inv-2"],
-      squad: %{stage: 1, cycle: 0}
+      squad: %SquadRun{phase_index: 1, cycle: 0}
     }
 
     projection = %{invocations: %{"inv-1" => failed, "inv-2" => retry}}
@@ -185,8 +188,9 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
   end
 
   defp participant(id, name) do
-    %{
+    %Seat{
       id: id,
+      role_id: id,
       name: name,
       perspective: "verification",
       provider: :simulator,
@@ -201,7 +205,7 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
       turn_id: "turn-1",
       room_id: "room-1",
       participant: participant(role_id, role_id),
-      stage: 1,
+      phase_index: 1,
       phase: phase,
       cycle: 0,
       logical_work_id: "work-1",

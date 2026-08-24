@@ -37,12 +37,12 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
          ssl: Keyword.get(opts, :ssl, tls_options())
        }}
     else
-      {:error, reason} -> {:error, HTTP.error("launch_failed", inspect(reason), false)}
+      {:error, reason} -> {:error, HTTP.error(:launch_failed, inspect(reason), false)}
     end
   end
 
   def start(_method, _url, _headers, _body, _opts) do
-    {:error, HTTP.error("launch_failed", "Invalid HTTP request", false)}
+    {:error, HTTP.error(:launch_failed, "Invalid HTTP request", false)}
   end
 
   @impl true
@@ -69,6 +69,8 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
         end
       end)
 
+    # The collector enforces the request deadline and this monitor guarantees
+    # termination if it exits before replying.
     receive do
       {^result_tag, result} ->
         Process.demonitor(monitor, [:flush])
@@ -76,12 +78,12 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
 
       {:DOWN, ^monitor, :process, ^collector, reason} ->
         {:error,
-         HTTP.error("request_failed", "Transport collector exited: #{inspect(reason)}", false)}
+         HTTP.error(:request_failed, "Transport collector exited: #{inspect(reason)}", false)}
     end
   end
 
   def collect(_invalid, _on_event, _acc) do
-    {:error, HTTP.error("request_failed", "Invalid transport context", false)}
+    {:error, HTTP.error(:request_failed, "Invalid transport context", false)}
   end
 
   # One request map threads every hop of the redirect chain: the fixed
@@ -101,7 +103,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
       await_response(request_id, request)
     else
       {:error, %{} = error} -> {:error, error}
-      {:error, reason} -> {:error, HTTP.error("request_failed", inspect(reason), false)}
+      {:error, reason} -> {:error, HTTP.error(:request_failed, inspect(reason), false)}
     end
   end
 
@@ -225,12 +227,12 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
 
       request.redirects >= request.context.max_redirects ->
         {:error,
-         HTTP.error("request_failed", "Too many redirects while requesting #{request.url}", false)}
+         HTTP.error(:request_failed, "Too many redirects while requesting #{request.url}", false)}
 
       https_downgrade?(request.url, location) ->
         {:error,
          HTTP.error(
-           "request_failed",
+           :request_failed,
            "Refusing insecure HTTPS-to-HTTP redirect to #{location}",
            false
          )}
@@ -335,10 +337,10 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
   end
 
   defp timeout_error,
-    do: HTTP.error("timeout", "HTTP request exceeded its deadline", true)
+    do: HTTP.error(:timeout, "HTTP request exceeded its deadline", true)
 
   defp request_error(:timeout), do: timeout_error()
-  defp request_error(reason), do: HTTP.error("request_failed", inspect(reason), false)
+  defp request_error(reason), do: HTTP.error(:request_failed, inspect(reason), false)
 
   defp cancel_and_error(request_id, error) do
     cancel_and_drain(request_id)
@@ -360,7 +362,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
             exception ->
               {:error,
                HTTP.error(
-                 "request_failed",
+                 :request_failed,
                  "Transport callback crashed: #{Exception.message(exception)}",
                  false
                )}
@@ -368,7 +370,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
             kind, reason ->
               {:error,
                HTTP.error(
-                 "request_failed",
+                 :request_failed,
                  "Transport callback crashed: #{Exception.format_banner(kind, reason)}",
                  false
                )}
@@ -381,7 +383,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
 
         {:exit, reason} ->
           {:error,
-           HTTP.error("request_failed", "Transport callback exited: #{inspect(reason)}", false)}
+           HTTP.error(:request_failed, "Transport callback exited: #{inspect(reason)}", false)}
 
         nil ->
           {:error, timeout_error()}

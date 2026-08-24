@@ -40,9 +40,7 @@ defmodule ReyCode.Orchestration.Validation do
           {:ok, String.t()} | {:ok, :already_finished} | {:error, atom()}
   def cancellation(nil, _reason), do: {:error, :turn_not_found}
 
-  def cancellation(%{status: status}, _reason)
-      when status in [:completed, :failed, :partial, :cancelled],
-      do: {:ok, :already_finished}
+  def cancellation(%{status: :terminal}, _reason), do: {:ok, :already_finished}
 
   def cancellation(_turn, reason) do
     reason = if is_binary(reason), do: String.trim(reason), else: ""
@@ -104,7 +102,7 @@ defmodule ReyCode.Orchestration.Validation do
 
   defp require_requested_run(_review, _raw_run_id), do: {:error, :tool_run_not_found}
 
-  defp require_requested_review(%{review_id: review_id}, raw_review_id)
+  defp require_requested_review(%{id: review_id}, raw_review_id)
        when is_binary(raw_review_id),
        do: if(raw_review_id == review_id, do: :ok, else: {:error, :gate_review_not_found})
 
@@ -122,7 +120,7 @@ defmodule ReyCode.Orchestration.Validation do
   defp pending_gate_review(nil), do: {:error, :turn_not_found}
 
   defp pending_gate_review(%{mode: :squad, status: :running, squad: squad}) do
-    case Map.get(squad || %{}, :pending_review) do
+    case squad && squad.pending_review do
       nil -> {:error, :gate_review_not_pending}
       review -> {:ok, review}
     end

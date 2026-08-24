@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Workflow.Squad.Finalizer do
   @moduledoc false
 
-  alias ReyCode.{Hashing, JSON, Retry}
+  alias ReyCode.{Failure, Hashing, JSON, Retry}
   alias ReyCode.Orchestration.{EventEntries, Squad}
   alias ReyCode.Orchestration.Squad.Output
 
@@ -18,11 +18,12 @@ defmodule ReyCode.Orchestration.Workflow.Squad.Finalizer do
         {:advance, entries}
 
       {:error, reason} ->
-        error = %{
-          "category" => "invalid_squad_output",
-          "message" => "Squad role returned invalid structured output: #{reason}",
-          "retryable" => true
-        }
+        error =
+          Failure.new(
+            :invalid_squad_output,
+            "Squad role returned invalid structured output: #{reason}",
+            true
+          )
 
         failure_action(invocation, error)
     end
@@ -102,7 +103,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad.Finalizer do
     %{
       participant_id: invocation.participant.id,
       participant: invocation.participant,
-      stage: invocation.stage,
+      phase_index: invocation.phase_index,
       phase: invocation.phase,
       cycle: invocation.cycle,
       logical_work_id: invocation.logical_work_id,

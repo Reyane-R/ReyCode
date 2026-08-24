@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.OpenCode.Protocol do
   @moduledoc "Decodes OpenCode JSON output into provider frames with bounded stream state."
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.{Frame, Request, TextBuffer}
   alias ReyCode.Provider.OpenCode.Protocol.State
   alias ReyCode.RuntimeConfig
@@ -112,25 +113,25 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
     state |> Map.put(:text_buffer, buffer) |> emit_text_chunks(chunks, emit)
   end
 
-  @spec finish(State.t()) :: {:ok, map()} | {:error, map()}
+  @spec finish(State.t()) :: {:ok, map()} | {:error, Failure.t()}
   def finish(%State{output_limit_exceeded?: true} = state) do
-    {:error, error("output_too_large", "OpenCode output exceeded #{state.output_limit} bytes")}
+    {:error, error(:output_too_large, "OpenCode output exceeded #{state.output_limit} bytes")}
   end
 
   def finish(state) do
     cond do
       state.exit_status not in [nil, 0] ->
         message = failure_diagnostics(state, state.exit_status)
-        {:error, error("command_failed", message)}
+        {:error, error(:command_failed, message)}
 
       state.provider_errors != [] ->
         {:error,
-         error("provider_error", state.provider_errors |> Enum.reverse() |> Enum.join("\n"))}
+         error(:provider_error, state.provider_errors |> Enum.reverse() |> Enum.join("\n"))}
 
       not state.protocol_activity? ->
         {:error,
          error(
-           "protocol_error",
+           :protocol_error,
            "OpenCode exited successfully without recognized protocol records"
          )}
 
@@ -329,7 +330,5 @@ defmodule ReyCode.Provider.OpenCode.Protocol do
   defp error_text(%{"data" => %{"message" => message}}), do: message
   defp error_text(value), do: inspect(value)
 
-  defp error(category, message) do
-    %{"category" => category, "message" => message, "retryable" => false}
-  end
+  defp error(category, message), do: Failure.new(category, message)
 end

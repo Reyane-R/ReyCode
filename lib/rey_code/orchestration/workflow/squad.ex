@@ -12,7 +12,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
 
   @impl true
   def advance(room, turn, projection) do
-    phase = turn.squad.stage
+    phase = turn.squad.phase_index
     cycle = turn.squad.cycle
     invocations = current_invocations(turn, projection, phase, cycle)
 
@@ -40,16 +40,16 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
     phase = Squad.phase(phase_index)
     spec_context = invocation_spec_context(context, phase, phase_index, cycle)
 
-    Enum.map(phase.roles, &invocation_spec(&1, spec_context))
+    Enum.map(phase.role_ids, &invocation_spec(&1, spec_context))
   end
 
   defp transition(room, turn, projection) do
     state = fsm_from_turn(turn)
 
     result =
-      if Squad.gate?(state.phase) do
-        gate = latest_gate(turn.squad, state.phase, state.cycle)
-        SquadFSM.gate(state, gate)
+      if Squad.gate?(state.phase_index) do
+        resolution = latest_resolution(turn.squad, state.phase_index, state.cycle)
+        SquadFSM.gate(state, resolution)
       else
         SquadFSM.next(state)
       end
@@ -57,7 +57,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
     case result do
       {:continue, next} ->
         context = planning_context(room, turn, projection)
-        {:continue, specs_for_phase(context, next.phase, next.cycle)}
+        {:continue, specs_for_phase(context, next.phase_index, next.cycle)}
 
       {:complete, next} ->
         {:complete, SquadFSM.outcome(next)}
@@ -70,7 +70,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
   defp current_invocations(turn, projection, phase, cycle) do
     turn.invocation_order
     |> Enum.map(&projection.invocations[&1])
-    |> Enum.filter(&(&1.stage == phase and &1.cycle == cycle))
+    |> Enum.filter(&(&1.phase_index == phase and &1.cycle == cycle))
     |> Enum.group_by(& &1.logical_work_id)
     |> Enum.map(fn {_logical_work_id, attempts} -> Enum.max_by(attempts, & &1.attempt) end)
   end
@@ -81,7 +81,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
     phase = Squad.phase(phase_index)
 
     if Squad.gate?(phase) do
-      latest_gate(squad, phase_index, cycle) != nil
+      latest_resolution(squad, phase_index, cycle) != nil
     else
       artifact_kinds =
         squad.artifacts
@@ -92,11 +92,11 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
     end
   end
 
-  defp latest_gate(squad, phase_index, cycle) do
+  defp latest_resolution(squad, phase_index, cycle) do
     phase = Squad.phase(phase_index)
 
-    Enum.find(squad.decisions, fn decision ->
-      decision.phase == phase.id and decision.cycle == cycle
+    Enum.find(squad.resolutions, fn resolution ->
+      resolution.phase == phase.id and resolution.cycle == cycle
     end)
   end
 
@@ -164,18 +164,18 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
       phase_index: phase_index,
       cycle: cycle,
       dependencies: dependency_ids(context.turn, context.projection),
-      directives: Map.get(context.turn.squad || %{}, :directives, [])
+      directives: (context.turn.squad && context.turn.squad.directives) || []
     }
   end
 
   defp invocation_spec(role_id, context) do
     role = Squad.role(role_id)
-    participant = Map.fetch!(Map.get(context.room, :squad_roles, %{}), role_id)
+    participant = Map.fetch!(context.room.squad_seats, role_id)
 
     %{
       participant_id: role_id,
       participant: participant,
-      stage: context.phase_index,
+      phase_index: context.phase_index,
       phase: context.phase.id,
       cycle: context.cycle,
       logical_work_id: logical_work_id(context.turn.id, context.phase.id, context.cycle, role_id),
@@ -189,7 +189,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
   defp fsm_from_turn(turn) do
     %SquadFSM{
       room_id: turn.room_id,
-      phase: turn.squad.stage,
+      phase_index: turn.squad.phase_index,
       cycle: turn.squad.cycle,
       rework_count: turn.squad.rework_count,
       rework_budget: turn.squad.rework_budget,

@@ -1,5 +1,13 @@
 defmodule ReyCode.Security.Workspace do
-  @moduledoc "Canonical workspace validation and local-root policy."
+  @moduledoc """
+  Canonical Workspace validation and trusted-root containment policy.
+
+  Paths are resolved to filesystem identity before authorization, filesystem
+  roots and non-directories are rejected, and containment is checked after
+  symlink resolution. Missing, malformed, and out-of-policy paths return
+  tagged errors without side effects. Callers supply a frozen WorkspacePolicy
+  or explicit roots; default roots are finite local development roots.
+  """
 
   alias ReyCode.RuntimeConfig
   alias ReyCode.RuntimeConfig.Workspace, as: WorkspacePolicy

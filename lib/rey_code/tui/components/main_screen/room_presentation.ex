@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.Components.MainScreen.RoomPresentation do
   alias ReyCode.Orchestration.Squad
 
   def visible_participants(room, :squad) do
-    configured = Map.get(room, :squad_roles, %{})
+    configured = room.squad_seats
 
     Enum.map(Squad.roles(), fn role ->
       Map.get(configured, role.id, %{

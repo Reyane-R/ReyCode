@@ -74,7 +74,7 @@ defmodule ReyCode.Orchestration.Engine.Turns do
   end
 
   defp runtime_preflight(room, :squad, state) do
-    configured = room.squad_roles
+    configured = room.squad_seats
 
     missing =
       Squad.roles()
@@ -86,7 +86,7 @@ defmodule ReyCode.Orchestration.Engine.Turns do
       end)
       |> Enum.map(& &1.id)
 
-    if missing == [], do: :ok, else: {:error, {:squad_roles_unconfigured, missing}}
+    if missing == [], do: :ok, else: {:error, {:squad_seats_unconfigured, missing}}
   end
 
   defp runtime_preflight(room, _mode, state) do

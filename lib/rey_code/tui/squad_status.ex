@@ -78,7 +78,7 @@ defmodule ReyCode.TUI.SquadStatus do
       class="h-full w-full border-none overflow-scroll mute-scrollbar-40 pt-1"
     >
       <box class="inline w-full">
-        <box class="font-bold">{@term.dashboard.turn.status}</box>
+        <box class="font-bold">{@term.dashboard.turn.outcome || @term.dashboard.turn.status}</box>
         <box class="w-full text-right text-primary">
           {@term.dashboard.turn.squad.phase}  /  cycle {@term.dashboard.turn.squad.cycle}
         </box>
@@ -94,19 +94,22 @@ defmodule ReyCode.TUI.SquadStatus do
         {Dashboard.phase_marker(index, @term.dashboard.turn)} {phase.id}{Dashboard.gate_label(phase)}
       </box>
       <box class="pt-2 text-muted">GATE HISTORY</box>
-      <box :if={@term.dashboard.decisions == [] and @term.dashboard.reviews == []} class="text-muted">
-        No gate decisions recorded.
+      <box
+        :if={@term.dashboard.resolutions == [] and @term.dashboard.reviews == []}
+        class="text-muted"
+      >
+        No gate resolutions recorded.
       </box>
       <box :for={review <- @term.dashboard.reviews} class="w-full overflow-hidden">
         <box class="font-bold text-warning">{Dashboard.review_label(review)}</box>
-        <box :if={review.reasons != []} class="pl-2 text-muted w-full overflow-hidden">
-          {Enum.join(review.reasons, "; ")}
+        <box :if={review.recommendation.reasons != []} class="pl-2 text-muted w-full overflow-hidden">
+          {Enum.join(review.recommendation.reasons, "; ")}
         </box>
       </box>
-      <box :for={decision <- @term.dashboard.decisions} class="w-full overflow-hidden">
-        <box class="font-bold">{Dashboard.decision_label(decision)}</box>
-        <box :if={decision.reasons != []} class="pl-2 text-muted w-full overflow-hidden">
-          {Enum.join(decision.reasons, "; ")}
+      <box :for={resolution <- @term.dashboard.resolutions} class="w-full overflow-hidden">
+        <box class="font-bold">{Dashboard.resolution_label(resolution)}</box>
+        <box :if={resolution.reasons != []} class="pl-2 text-muted w-full overflow-hidden">
+          {Enum.join(resolution.reasons, "; ")}
         </box>
       </box>
       <box class="pt-2 text-muted">ARTIFACTS</box>

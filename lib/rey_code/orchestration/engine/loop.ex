@@ -1,6 +1,8 @@
 defmodule ReyCode.Orchestration.Engine.Loop do
   @moduledoc "Handles the durable AgentLoop process protocol for the Engine."
 
+  alias ReyCode.Failure
+
   alias ReyCode.Orchestration.{EventEntries, InvocationRequest, ToolRun, ToolRuns, Validation}
 
   alias ReyCode.Orchestration.Engine.{
@@ -320,11 +322,5 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     Lifecycle.finalize_invocation(state, invocation.id, {:failed, tool_denied_error()}, [denial])
   end
 
-  defp tool_denied_error do
-    %{
-      "category" => "tool_denied",
-      "message" => "Tool request denied",
-      "retryable" => false
-    }
-  end
+  defp tool_denied_error, do: Failure.new(:tool_denied, "Tool request denied")
 end

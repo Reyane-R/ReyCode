@@ -3,7 +3,9 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
 
   import ReyCode.Test.OpenCodeHelpers, only: [collect_frames: 1, request: 0, text_record: 1]
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.OpenCode.Protocol
+
   alias ReyCode.RuntimeConfig
 
   test "maps OpenCode JSON output into text frames" do
@@ -292,8 +294,11 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
 
     state = Enum.reduce_while(elements, state, &fold_element(&1, &2, emit))
 
-    {Protocol.finish(state), collect_frames([])}
+    {wire_result(Protocol.finish(state)), collect_frames([])}
   end
+
+  defp wire_result({:error, %Failure{} = failure}), do: {:error, Failure.to_wire(failure)}
+  defp wire_result(result), do: result
 
   defp fold_element(element, state, emit) do
     case Protocol.fold(element, state, emit) do

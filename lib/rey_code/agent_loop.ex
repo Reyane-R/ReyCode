@@ -10,7 +10,7 @@ defmodule ReyCode.AgentLoop do
   the loop after an approval decision or an engine restart.
   """
 
-  alias ReyCode.Agent
+  alias ReyCode.{Agent, Failure}
   alias ReyCode.Orchestration.Engine.Client
   alias ReyCode.Provider.Catalog
   alias ReyCode.Provider.Response
@@ -151,15 +151,13 @@ defmodule ReyCode.AgentLoop do
       )
   end
 
-  defp internal_error(message) do
-    %{"category" => "internal", "message" => message, "retryable" => false}
-  end
+  defp internal_error(message), do: Failure.new(:internal, message)
 
   defp unavailable_provider_error(reason) do
-    %{
-      "category" => "provider_unavailable",
-      "message" => Agent.provider_error(reason),
-      "retryable" => reason in [:provider_checking, :provider_check_timeout, :error]
-    }
+    Failure.new(
+      :provider_unavailable,
+      Agent.provider_error(reason),
+      reason in [:provider_checking, :provider_check_timeout, :error]
+    )
   end
 end

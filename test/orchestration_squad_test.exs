@@ -17,7 +17,7 @@ defmodule ReyCode.Orchestration.SquadTest do
              architecture_review release_gate
            )
 
-    assert Enum.map(Squad.roles_in_stage(4), & &1.id) == ["gherkin_author", "qa_author"]
+    assert Enum.map(Squad.roles_in_phase(4), & &1.id) == ["gherkin_author", "qa_author"]
   end
 
   test "only the squad leader may decide gates" do
@@ -42,7 +42,7 @@ defmodule ReyCode.Orchestration.SquadTest do
   end
 
   test "senior implementer owns integration and downstream fallback" do
-    assert Squad.phase("integration").roles == ["senior_implementer"]
+    assert Squad.phase("integration").role_ids == ["senior_implementer"]
     assert Squad.fallback("implementer") == "senior_implementer"
     assert Squad.fallback("hardener") == "senior_implementer"
     assert Squad.fallback("analyst") == nil
@@ -50,10 +50,10 @@ defmodule ReyCode.Orchestration.SquadTest do
 
   test "leader gates have bounded targeted rework" do
     assert Squad.max_rework() == 3
-    assert Squad.phase("story_gate").rework_to == "stories"
-    assert Squad.phase("specification_gate").rework_to == "specification"
-    assert Squad.phase("code_gate").rework_to == "integration"
-    assert Squad.phase("release_gate").rework_to == "integration"
+    assert Squad.phase("story_gate").rework_phase == "stories"
+    assert Squad.phase("specification_gate").rework_phase == "specification"
+    assert Squad.phase("code_gate").rework_phase == "integration"
+    assert Squad.phase("release_gate").rework_phase == "integration"
   end
 
   test "phase completion accepts current artifact bundles" do

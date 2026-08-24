@@ -1,6 +1,8 @@
 defmodule ReyCode.Provider.OpenAICompatibleTest do
   use ExUnit.Case, async: false
 
+  alias ReyCode.Failure
+
   alias ReyCode.OpenAICompatible.FakeTransport
 
   alias ReyCode.Provider.{
@@ -117,7 +119,10 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         "data: [DONE]\n\n"
       ])
 
-      frames = collect_frames(fn emit -> OpenAICompatible.stream(runtime(), request(), emit) end)
+      frames =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
 
       {result, emitted} = frames
 
@@ -146,10 +151,12 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
             openai_compatible_chunk_latency_ms: 50
           ]
 
-          OpenAICompatible.stream(runtime(policy), request(), fn frame ->
-            send(test_pid, {:frame, frame})
-            :ok
-          end)
+          wire_result(
+            OpenAICompatible.stream(runtime(policy), request(), fn frame ->
+              send(test_pid, {:frame, frame})
+              :ok
+            end)
+          )
         end)
 
       assert_receive {:transport_paused, ^token, producer}, 500
@@ -172,7 +179,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       frames =
         collect_frames(fn emit ->
-          OpenAICompatible.stream(runtime(), %{request() | resume_from: 10}, emit)
+          wire_result(OpenAICompatible.stream(runtime(), %{request() | resume_from: 10}, emit))
         end)
 
       {_result, emitted} = frames
@@ -189,7 +196,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       frames =
         collect_frames(fn emit ->
-          OpenAICompatible.stream(runtime(), request(), emit)
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
         end)
 
       {result, emitted} = frames
@@ -213,7 +220,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       ])
 
       {:ok, %Response{tool_calls: calls}} =
-        OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+        wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
       assert Enum.map(calls, &{&1.id, &1.tool}) == [{"call-1", "read"}, {"call-2", "list"}]
     end
@@ -226,7 +233,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         "data: [DONE]\n\n"
       ])
 
-      {:ok, round_one} = OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+      {:ok, round_one} =
+        wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
       assert [%ToolCall{id: "call-9"} = call] = round_one.tool_calls
 
@@ -261,7 +269,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         "data: [DONE]\n\n"
       ])
 
-      {:ok, round_two} = OpenAICompatible.stream(runtime(), continuation, fn _frame -> :ok end)
+      {:ok, round_two} =
+        wire_result(OpenAICompatible.stream(runtime(), continuation, fn _frame -> :ok end))
 
       assert round_two.text == "The file says: file body"
       assert round_two.tool_calls == []
@@ -308,7 +317,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
               %{
                 "category" => "protocol_error",
                 "message" => "Provider returned an invalid streaming response"
-              }} = OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+              }} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
     end
 
     test "fails closed for malformed and content-free successful streams" do
@@ -334,7 +344,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                 %{
                   "category" => "protocol_error",
                   "message" => "Provider returned an invalid streaming response"
-                }} = OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+                }} =
+                 wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
       end
     end
 
@@ -342,7 +353,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       FakeTransport.set_stream(["data: provider-secret-payload\n\n"])
 
       assert {:error, error} =
-               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
       assert error["category"] == "protocol_error"
       refute inspect(error) =~ "provider-secret-payload"
@@ -354,13 +365,13 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       FakeTransport.set_stream([text])
 
       assert {:ok, %Response{text: "valid"}} =
-               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
       for tail <- ["data: not-json\n\n", "data: {\"choices\":"] do
         FakeTransport.set_stream([text, tail])
 
         assert {:error, %{"category" => "protocol_error"}} =
-                 OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+                 wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
       end
     end
 
@@ -371,21 +382,21 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       ])
 
       assert {:error, %{"category" => "protocol_error"}} =
-               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
     end
 
     test "returns a missing credentials error when the key is unset" do
       System.delete_env(@key_env)
 
       assert {:error, %{"category" => "missing_credentials", "retryable" => false}} =
-               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
     end
 
     test "maps a rate-limit status to a retryable error" do
       FakeTransport.set_stream_status(429, ~s({"error":{"message":"slow down"}}))
 
       assert {:error, %{"category" => "rate_limited", "retryable" => true, "message" => message}} =
-               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
       assert message =~ "slow down"
     end
@@ -394,7 +405,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       FakeTransport.set_stream_status(401, ~s({"error":{"message":"bad key"}}))
 
       assert {:error, %{"category" => "authentication_failed", "retryable" => false}} =
-               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
     end
 
     test "contains transport raises, throws, and exits without linking them to the caller" do
@@ -405,7 +416,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         FakeTransport.set_stream_failure(failure)
 
         assert {:error, %{"category" => "launch_failed"}} =
-                 OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+                 wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
         refute_receive {:EXIT, _pid, _reason}, 0
       end
@@ -439,7 +450,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       }
 
       assert {:error, %{"category" => "output_too_large", "retryable" => false}} =
-               OpenAICompatible.stream(runtime, request(), fn _frame -> :ok end)
+               wire_result(OpenAICompatible.stream(runtime, request(), fn _frame -> :ok end))
     after
       System.delete_env("TINY_API_KEY")
     end
@@ -478,6 +489,9 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
     end
   end
+
+  defp wire_result({:error, %Failure{} = failure}), do: {:error, Failure.to_wire(failure)}
+  defp wire_result(result), do: result
 
   defp runtime(overrides \\ []) do
     config =

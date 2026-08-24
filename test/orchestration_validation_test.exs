@@ -1,7 +1,8 @@
 defmodule ReyCode.Orchestration.ValidationTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.Validation
+  alias ReyCode.Orchestration.Squad.{GateRecommendation, GateReview}
+  alias ReyCode.Orchestration.{SquadRun, Validation}
   alias ReyCode.Security.CanonicalPath
 
   test "normalizes valid command values" do
@@ -60,7 +61,7 @@ defmodule ReyCode.Orchestration.ValidationTest do
       assert {:ok, "User stopped it"} =
                Validation.cancellation(%{status: :running}, "  User stopped it  ")
 
-      assert {:ok, :already_finished} = Validation.cancellation(%{status: :completed}, nil)
+      assert {:ok, :already_finished} = Validation.cancellation(%{status: :terminal}, nil)
     end
 
     test "preserves turn and reason error precedence" do
@@ -132,7 +133,7 @@ defmodule ReyCode.Orchestration.ValidationTest do
 
       assert {:error, :squad_not_running} =
                Validation.gate_resolution(
-                 %{mode: :squad, status: :completed},
+                 %{mode: :squad, status: :terminal},
                  review_id(),
                  :ship,
                  :bad,
@@ -141,7 +142,7 @@ defmodule ReyCode.Orchestration.ValidationTest do
 
       assert {:error, :gate_review_not_pending} =
                Validation.gate_resolution(
-                 %{mode: :squad, status: :running, squad: %{pending_review: nil}},
+                 %{mode: :squad, status: :running, squad: %SquadRun{pending_review: nil}},
                  review_id(),
                  :ship,
                  :bad,
@@ -171,11 +172,14 @@ defmodule ReyCode.Orchestration.ValidationTest do
   end
 
   defp running_squad do
-    %{
-      mode: :squad,
-      status: :running,
-      squad: %{pending_review: %{review_id: review_id(), phase: "release_gate", cycle: 1}}
+    review = %GateReview{
+      id: review_id(),
+      phase: "release_gate",
+      cycle: 1,
+      recommendation: %GateRecommendation{decision: "approve"}
     }
+
+    %{mode: :squad, status: :running, squad: %SquadRun{pending_review: review}}
   end
 
   defp review_id, do: "turn-1:release_gate:1"

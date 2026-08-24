@@ -17,6 +17,7 @@ defmodule ReyCode.TUI do
   alias ReyCode.TUI.{NewRoom, Render, Settings, SlashPalette, State}
 
   @modes [:compare, :debate, :fan_out, :squad]
+  @shutdown_timeout_ms 5_000
 
   @doc "Global keybindings shared by the application and tests."
   def global_keybindings do
@@ -121,8 +122,12 @@ defmodule ReyCode.TUI do
 
     Task.start(fn ->
       ref = Process.monitor(server)
-      receive do: ({:DOWN, ^ref, :process, ^server, _reason} -> :ok)
-      System.stop(0)
+
+      receive do
+        {:DOWN, ^ref, :process, ^server, _reason} -> System.stop(0)
+      after
+        @shutdown_timeout_ms -> System.stop(1)
+      end
     end)
 
     {:stop, term}
@@ -142,9 +147,9 @@ defmodule ReyCode.TUI do
       {:error, :empty_message} ->
         {:noreply, assign(term, notice: "Write a message first")}
 
-      {:error, {:squad_roles_unconfigured, role_ids}} ->
+      {:error, {:squad_seats_unconfigured, role_ids}} ->
         names = Enum.map_join(role_ids, ", ", &Squad.role(&1).name)
-        {:noreply, assign(term, notice: "Configure squad roles with Ctrl+G: #{names}")}
+        {:noreply, assign(term, notice: "Configure squad seats with Ctrl+G: #{names}")}
 
       {:error, {:participants_unconfigured, participant_ids}} ->
         {:noreply,

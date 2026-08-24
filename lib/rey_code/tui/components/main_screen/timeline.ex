@@ -7,6 +7,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   import ReyCode.TUI.Components.MainScreen.RoomPresentation,
     only: [mode_label: 1, room_label: 1]
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.Presentation
 
   attr :messages, :list, required: true
@@ -103,6 +104,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   end
 
   defp error_message(nil), do: nil
+  defp error_message(%Failure{message: message}), do: message
   defp error_message(error) when is_map(error), do: error["message"] || error[:message]
   defp error_message(error), do: to_string(error)
 

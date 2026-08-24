@@ -8,7 +8,7 @@ defmodule ReyCode.Agent do
 
   use GenServer, restart: :temporary
 
-  alias ReyCode.AgentLoop
+  alias ReyCode.{AgentLoop, Failure}
   alias ReyCode.Orchestration.Engine.Client
   alias ReyCode.Provider.{Response, Runtime}
 
@@ -46,7 +46,7 @@ defmodule ReyCode.Agent do
   end
 
   @doc "Streams one provider round with frame buffering and error containment."
-  @spec stream(state(), map(), Runtime.t()) :: {:ok, Response.t()} | {:error, map()}
+  @spec stream(state(), map(), Runtime.t()) :: {:ok, Response.t()} | {:error, Failure.t()}
   def stream(state, request, runtime) do
     buffer = :ets.new(__MODULE__, [:set, :public])
 
@@ -82,8 +82,8 @@ defmodule ReyCode.Agent do
   @spec execute_tool_run(state(), map()) :: :ok
   def execute_tool_run(state, run), do: AgentLoop.execute_tool_run(state, run)
 
-  @doc "Fails the invocation with a provider-shaped error."
-  @spec fail(state(), map()) :: :ok
+  @doc "Fails the invocation with a typed internal Failure."
+  @spec fail(state(), Failure.t()) :: :ok
   def fail(state, error) do
     :ok = Client.fail_invocation(state.engine, state.invocation_id, error)
   end
@@ -137,7 +137,5 @@ defmodule ReyCode.Agent do
     end
   end
 
-  defp internal_error(message) do
-    %{"category" => "internal", "message" => message, "retryable" => false}
-  end
+  defp internal_error(message), do: Failure.new(:internal, message)
 end

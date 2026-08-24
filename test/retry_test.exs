@@ -1,16 +1,13 @@
 defmodule ReyCode.RetryTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Retry
+  alias ReyCode.{Failure, Retry}
 
-  test "accepts only a literal true retryable flag" do
-    assert Retry.retryable?(%{"retryable" => true})
+  test "accepts only an explicitly retryable typed Failure" do
+    assert Retry.retryable?(Failure.new(:timeout, "timed out", true))
 
-    refute Retry.retryable?(%{"retryable" => false})
-    refute Retry.retryable?(%{})
-    refute Retry.retryable?(%{"retryable" => nil})
-    refute Retry.retryable?(%{"retryable" => "true"})
-    refute Retry.retryable?(%{retryable: true})
+    refute Retry.retryable?(Failure.new(:timeout, "timed out"))
+    refute Retry.retryable?(%{"retryable" => true})
     refute Retry.retryable?(nil)
     refute Retry.retryable?(true)
   end

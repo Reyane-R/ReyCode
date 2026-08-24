@@ -1,7 +1,9 @@
 defmodule ReyCode.Orchestration.EventEntries do
   @moduledoc "Pure construction of orchestration event entries."
 
+  alias ReyCode.Failure
   alias ReyCode.Orchestration.{Invocation, Room, Squad, ToolRun, Turn}
+  alias ReyCode.Orchestration.Squad.Seat
   alias ReyCode.Provider.Frame
 
   @type event_entry :: {atom(), map(), keyword()}
@@ -400,9 +402,10 @@ defmodule ReyCode.Orchestration.EventEntries do
           "room_id" => turn.room_id,
           "seats" => Enum.map(Squad.roles(), & &1.id),
           "rework_budget" => Keyword.fetch!(config, :rework_budget),
-          "release_authority" => Keyword.fetch!(config, :release_authority),
+          "release_authority" =>
+            wire_release_authority(Keyword.fetch!(config, :release_authority)),
           "workflow_version" => Squad.workflow_version(),
-          "phase" => Squad.stage_label(0)
+          "phase" => Squad.phase_label(0)
         },
         metadata
       },
@@ -412,7 +415,7 @@ defmodule ReyCode.Orchestration.EventEntries do
           "turn_id" => turn.id,
           "room_id" => turn.room_id,
           "stage" => 0,
-          "phase" => Squad.stage_label(0),
+          "phase" => Squad.phase_label(0),
           "cycle" => 0
         },
         metadata
@@ -429,7 +432,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       spec.cycle > turn.squad.cycle ->
         [squad_rework_entry(turn, spec)]
 
-      spec.stage != turn.squad.stage ->
+      spec.phase_index != turn.squad.phase_index ->
         [squad_stage_entry(turn, spec)]
 
       true ->
@@ -465,7 +468,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the terminal event for a completed or failed invocation."
-  @spec invocation_terminal(Invocation.t(), {:completed, map()} | {:failed, map()}) ::
+  @spec invocation_terminal(Invocation.t(), {:completed, map()} | {:failed, Failure.t()}) ::
           event_entry()
   def invocation_terminal(invocation, {:completed, metadata}) do
     invocation_event(
@@ -489,15 +492,15 @@ defmodule ReyCode.Orchestration.EventEntries do
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
         "room_id" => invocation.room_id,
-        "error" => error
+        "error" => Failure.to_wire(error)
       },
       invocation
     )
   end
 
   @doc "Builds the durable event that schedules another squad provider attempt."
-  @spec squad_provider_retry(Invocation.t(), map()) :: event_entry()
-  def squad_provider_retry(invocation, error) do
+  @spec squad_provider_retry(Invocation.t(), Failure.t()) :: event_entry()
+  def squad_provider_retry(invocation, %Failure{} = error) do
     event(
       :squad_retry_scheduled,
       %{
@@ -508,7 +511,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "kind" => "provider_retry",
         "phase" => invocation.phase,
         "cycle" => invocation.cycle,
-        "reason" => error["category"] || "provider_failure"
+        "reason" => Atom.to_string(error.category)
       },
       :turn,
       invocation.turn_id,
@@ -546,7 +549,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "attempt" => turn.squad.rework_count + 1,
         "kind" => "rework",
         "phase" => turn.squad.phase,
-        "target_stage" => spec.stage,
+        "target_stage" => spec.phase_index,
         "target_phase" => spec.phase,
         "cycle" => spec.cycle,
         "reason" => "leader_requested_rework"
@@ -564,7 +567,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       %{
         "turn_id" => turn.id,
         "room_id" => turn.room_id,
-        "stage" => spec.stage,
+        "stage" => spec.phase_index,
         "phase" => spec.phase,
         "cycle" => spec.cycle
       },
@@ -588,7 +591,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "turn_id" => turn.id,
         "room_id" => room.id,
         "participant" => wire_participant(participant),
-        "stage" => spec.stage,
+        "stage" => spec.phase_index,
         "phase" => Map.get(spec, :phase, spec.label),
         "cycle" => Map.get(spec, :cycle, 0),
         "logical_work_id" => Map.get(spec, :logical_work_id, invocation_id),
@@ -605,6 +608,13 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  defp wire_participant(%Seat{} = seat) do
+    seat
+    |> Map.from_struct()
+    |> wire_participant()
+    |> Map.put("role_id", seat.role_id)
+  end
+
   defp wire_participant(participant) do
     %{
       "id" => participant.id,
@@ -617,4 +627,7 @@ defmodule ReyCode.Orchestration.EventEntries do
 
   defp wire_provider(provider) when is_atom(provider), do: Atom.to_string(provider)
   defp wire_provider(provider), do: provider
+
+  defp wire_release_authority(:owner), do: "human"
+  defp wire_release_authority(:squad_leader), do: "leader"
 end

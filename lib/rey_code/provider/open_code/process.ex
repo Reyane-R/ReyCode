@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.OpenCode.Process do
   @moduledoc "Launches the OpenCode CLI and streams raw output within a total deadline."
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.Request
   alias ReyCode.RuntimeConfig.OpenCode, as: OpenCodePolicy
   alias ReyCode.Security.Environment
@@ -72,12 +73,12 @@ defmodule ReyCode.Provider.OpenCode.Process do
       exception ->
         Task.shutdown(task, :brutal_kill)
         drain_relay(tag)
-        {:error, error("launch_failed", Exception.message(exception))}
+        {:error, error(:launch_failed, Exception.message(exception))}
     catch
       kind, reason ->
         Task.shutdown(task, :brutal_kill)
         drain_relay(tag)
-        {:error, error("launch_failed", Exception.format_banner(kind, reason))}
+        {:error, error(:launch_failed, Exception.format_banner(kind, reason))}
     end
   end
 
@@ -102,6 +103,8 @@ defmodule ReyCode.Provider.OpenCode.Process do
           Enum.reduce_while(stream, :ok, fn item, :ok ->
             acknowledgement = make_ref()
             send(owner, {tag, :item, acknowledgement, item})
+            # The parent collection loop owns the deadline and brutally stops
+            # this task on timeout, bounding acknowledgement waits transitively.
 
             receive do
               {^tag, ^acknowledgement, :cont} -> {:cont, :ok}
@@ -161,7 +164,7 @@ defmodule ReyCode.Provider.OpenCode.Process do
         producer_result(result, acc)
 
       {:DOWN, ^task_ref, :process, _pid, reason} ->
-        {:error, error("launch_failed", inspect(reason))}
+        {:error, error(:launch_failed, inspect(reason))}
     after
       max(receive_for, 0) ->
         collect_loop(task, tag, acc, loop)
@@ -215,24 +218,24 @@ defmodule ReyCode.Provider.OpenCode.Process do
   defp await_halt(task, tag, acc, deadline, timeout) do
     case Task.yield(task, max(deadline - monotonic_ms(), 0)) do
       {:ok, result} -> producer_result(result, acc)
-      {:exit, reason} -> {:error, error("launch_failed", inspect(reason))}
+      {:exit, reason} -> {:error, error(:launch_failed, inspect(reason))}
       nil -> timeout(task, tag, timeout)
     end
   end
 
   defp producer_result({:ok, :done}, acc), do: {:ok, acc}
-  defp producer_result({:error, message}, _acc), do: {:error, error("launch_failed", message)}
+  defp producer_result({:error, message}, _acc), do: {:error, error(:launch_failed, message)}
 
   defp stop_with_error(task, tag, message) do
     _ = Task.shutdown(task, :brutal_kill)
     drain_relay(tag)
-    {:error, error("launch_failed", message)}
+    {:error, error(:launch_failed, message)}
   end
 
   defp timeout(task, tag, timeout) do
     _ = Task.shutdown(task, :brutal_kill)
     drain_relay(tag)
-    {:error, error("timeout", "OpenCode did not finish within #{timeout}ms")}
+    {:error, error(:timeout, "OpenCode did not finish within #{timeout}ms")}
   end
 
   defp min_deadline(deadline, nil), do: deadline
@@ -274,7 +277,5 @@ defmodule ReyCode.Provider.OpenCode.Process do
     module.stream(args, opts)
   end
 
-  defp error(category, message) do
-    %{"category" => category, "message" => message, "retryable" => false}
-  end
+  defp error(category, message), do: Failure.new(category, message)
 end

@@ -1,12 +1,13 @@
 defmodule ReyCode.ToolRegistry do
   @moduledoc """
-  Dispatches provider tool requests to ReyCode-executed tools under a trust boundary.
+  Dispatches provider ToolCalls under the Workspace trust and approval model.
 
-  The approval model is rooted in workspace trust (D23):
-
-    - `read`, `grep`, `glob`, `list`, `edit` are allowed inside configured workspace roots.
-    - `bash` and `write` require owner approval (`ask`) before execution.
-    - Anything outside the trusted roots is denied before any tool runs.
+  Unknown tools fail closed. Read-only and edit tools execute only after path
+  containment has been established; Bash and Write return an approval request
+  and perform no side effect before the Owner resolves the durable ToolRun.
+  Each adapter receives only its focused, bounded policy. Tool results are
+  explicit success/failure values; process timeout and cancellation behavior
+  belong to the adapter implementation.
   """
 
   alias ReyCode.Security.Workspace

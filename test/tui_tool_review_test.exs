@@ -118,7 +118,7 @@ defmodule ReyCode.TUI.ToolReviewTest do
 
     Enum.any?(snapshot.turns[turn_id].invocation_order, fn id ->
       error = snapshot.invocations[id].error
-      error != nil and error["category"] == "tool_denied"
+      error != nil and error.category == :tool_denied
     end)
   end
 

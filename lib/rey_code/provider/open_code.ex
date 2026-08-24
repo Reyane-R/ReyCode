@@ -3,6 +3,7 @@ defmodule ReyCode.Provider.OpenCode do
 
   @behaviour ReyCode.Provider
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenCode.{Discovery, Process, Prompt, Protocol}
   alias ReyCode.Security.Workspace
@@ -14,7 +15,7 @@ defmodule ReyCode.Provider.OpenCode do
   @doc "Streams an OpenCode response as provider frames and one text round."
   @impl true
   @spec stream(Runtime.t(), Request.t(), (Frame.t() -> :ok)) ::
-          {:ok, Response.t()} | {:error, map()}
+          {:ok, Response.t()} | {:error, Failure.t()}
   def stream(%Runtime{module: __MODULE__, executable: executable} = runtime, request, emit)
       when is_binary(executable) do
     with {:ok, runtime} <- Runtime.revalidate_executable(runtime),
@@ -23,18 +24,18 @@ defmodule ReyCode.Provider.OpenCode do
       run(runtime.executable, %{request | workspace: workspace}, emit, runtime.config)
     else
       {:error, {:executable_changed, _details}} ->
-        {:error, error("executable_changed", "OpenCode executable changed after discovery")}
+        {:error, error(:executable_changed, "OpenCode executable changed after discovery")}
 
       {:error, {:executable_unavailable, reason}} ->
-        {:error, error("invalid_executable", "OpenCode executable is unavailable: #{reason}")}
+        {:error, error(:invalid_executable, "OpenCode executable is unavailable: #{reason}")}
 
       {:error, reason} ->
-        {:error, error("invalid_workspace", "OpenCode workspace is invalid: #{reason}")}
+        {:error, error(:invalid_workspace, "OpenCode workspace is invalid: #{reason}")}
     end
   end
 
   def stream(%Runtime{}, _request, _emit) do
-    {:error, error("invalid_runtime", "OpenCode runtime has no executable")}
+    {:error, error(:invalid_runtime, "OpenCode runtime has no executable")}
   end
 
   defp run(executable, request, emit, config) do
@@ -45,7 +46,7 @@ defmodule ReyCode.Provider.OpenCode do
     if byte_size(prompt) > max_prompt_bytes do
       {:error,
        error(
-         "prompt_too_large",
+         :prompt_too_large,
          "OpenCode prompt is #{byte_size(prompt)} bytes; maximum is #{max_prompt_bytes} bytes"
        )}
     else
@@ -85,7 +86,5 @@ defmodule ReyCode.Provider.OpenCode do
     end
   end
 
-  defp error(category, message) do
-    %{"category" => category, "message" => message, "retryable" => false}
-  end
+  defp error(category, message), do: Failure.new(category, message)
 end

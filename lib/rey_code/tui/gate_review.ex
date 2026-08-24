@@ -25,7 +25,7 @@ defmodule ReyCode.TUI.GateReview do
   def open(term) do
     room = term.assigns.projection.rooms[term.assigns.selected_room_id]
     turn = term.assigns.projection.turns[room.active_turn_id]
-    review = turn && turn.squad && Map.get(turn.squad, :pending_review)
+    review = turn && turn.squad && turn.squad.pending_review
 
     if review do
       Component.assign(term,
@@ -60,7 +60,7 @@ defmodule ReyCode.TUI.GateReview do
   @spec submit(map()) :: {:noreply, map()}
   def submit(term) do
     decision = Enum.at(@options, term.assigns.gate_review.index)
-    review_id = Map.get(term.assigns.gate_review.review, :review_id)
+    review_id = term.assigns.gate_review.review.id
 
     case Engine.resolve_gate(
            term.assigns.gate_review.turn_id,
@@ -130,12 +130,14 @@ defmodule ReyCode.TUI.GateReview do
         </box>
       </box>
       <box class="pt-2 text-muted">LEADER RECOMMENDATION</box>
-      <box class="pt-1 font-bold text-warning">{@term.gate_review.review.decision}</box>
-      <box :if={@term.gate_review.review.reasons == []} class="pt-1 text-muted">
+      <box class="pt-1 font-bold text-warning">
+        {@term.gate_review.review.recommendation.decision}
+      </box>
+      <box :if={@term.gate_review.review.recommendation.reasons == []} class="pt-1 text-muted">
         No reasons supplied.
       </box>
       <box
-        :for={reason <- @term.gate_review.review.reasons}
+        :for={reason <- @term.gate_review.review.recommendation.reasons}
         class="pt-1 text-muted w-full overflow-hidden"
       >
         - {reason}

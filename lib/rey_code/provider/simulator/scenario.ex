@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.Simulator.Scenario do
   @moduledoc "Deterministic delay, failure, and leader-rework scenario."
 
+  alias ReyCode.Failure
   alias ReyCode.Hashing
 
   defstruct seed: 0,
@@ -62,13 +63,13 @@ defmodule ReyCode.Provider.Simulator.Scenario do
   end
 
   @doc false
-  @spec failure_error(failure_kind()) :: map()
-  def failure_error(:retryable), do: error("simulated_retryable", true)
-  def failure_error(:permanent), do: error("simulated_permanent", false)
-  def failure_error(:timeout), do: error("simulated_timeout", true)
-  def failure_error(:invalid_output), do: error("invalid_squad_output", true)
-  def failure_error(:after_frame), do: error("simulated_after_frame", true)
-  def failure_error(:crash), do: error("worker_exit", true)
+  @spec failure_error(failure_kind()) :: Failure.t()
+  def failure_error(:retryable), do: failure(:simulated_retryable, true)
+  def failure_error(:permanent), do: failure(:simulated_permanent, false)
+  def failure_error(:timeout), do: failure(:simulated_timeout, true)
+  def failure_error(:invalid_output), do: failure(:invalid_squad_output, true)
+  def failure_error(:after_frame), do: failure(:simulated_after_frame, true)
+  def failure_error(:crash), do: failure(:worker_exit, true)
 
   defp random_failure(rate, _value) when rate <= 0.0, do: nil
 
@@ -89,11 +90,7 @@ defmodule ReyCode.Provider.Simulator.Scenario do
 
   defp normalize_failure(_value), do: nil
 
-  defp error(category, retryable) do
-    %{
-      "category" => category,
-      "message" => "Injected simulator failure",
-      "retryable" => retryable
-    }
+  defp failure(category, retryable) do
+    Failure.new(category, "Injected simulator failure", retryable)
   end
 end

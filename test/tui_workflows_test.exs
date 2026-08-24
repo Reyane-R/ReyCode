@@ -1,6 +1,10 @@
 defmodule ReyCode.TUI.WorkflowsTest do
   use ExUnit.Case, async: true
 
+  alias ReyCode.Orchestration.Squad.GateRecommendation
+  alias ReyCode.Orchestration.Squad.GateReview, as: GateReviewRecord
+  alias ReyCode.Orchestration.SquadRun
+
   alias ReyCode.TUI.{Cancellation, Directive, GateReview, NewRoom, SquadStatus, Workspace}
 
   defmodule EngineStub do
@@ -69,8 +73,15 @@ defmodule ReyCode.TUI.WorkflowsTest do
 
   test "gate review preserves decision order and shortcut submission" do
     {:ok, engine} = EngineStub.start_link(self(), %{resolve_gate: :ok})
-    review = %{review_id: "turn-1:release_gate:1", decision: :approve, reasons: []}
-    turn = put_in(active_turn(), [:squad, :pending_review], review)
+
+    review = %GateReviewRecord{
+      id: "turn-1:release_gate:1",
+      phase: "release_gate",
+      cycle: 1,
+      recommendation: %GateRecommendation{decision: "approve", reasons: []}
+    }
+
+    turn = %{active_turn() | squad: %SquadRun{pending_review: review}}
     opened = term(engine: engine) |> with_turn(turn) |> GateReview.open()
 
     assert GateReview.options() == [:approve, :rework, :abort]
@@ -142,7 +153,7 @@ defmodule ReyCode.TUI.WorkflowsTest do
       room_id: "room-1",
       mode: :squad,
       status: :running,
-      squad: %{pending_review: nil}
+      squad: %SquadRun{pending_review: nil}
     }
   end
 end
