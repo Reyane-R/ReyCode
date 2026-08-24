@@ -6,20 +6,20 @@ defmodule ReyCode.Orchestration.SquadFSMTest do
   test "starts at leader intake" do
     state = SquadFSM.new("room-1")
 
-    assert state.phase == 0
+    assert state.phase_index == 0
     assert state.cycle == 0
-    assert SquadFSM.stage_label(state) == "leader_intake"
+    assert SquadFSM.phase_label(state) == "leader_intake"
     refute SquadFSM.complete?(state)
   end
 
   test "walks non-gate phases in fixed order" do
     state = SquadFSM.new("room-1")
     assert {:continue, state} = SquadFSM.next(state)
-    assert SquadFSM.stage_label(state) == "stories"
+    assert SquadFSM.phase_label(state) == "stories"
     assert {:continue, state} = SquadFSM.next(state)
-    assert SquadFSM.stage_label(state) == "story_review"
+    assert SquadFSM.phase_label(state) == "story_review"
     assert {:continue, state} = SquadFSM.next(state)
-    assert SquadFSM.stage_label(state) == "story_gate"
+    assert SquadFSM.phase_label(state) == "story_gate"
   end
 
   test "worker gate outputs cannot advance a gate" do
@@ -39,7 +39,7 @@ defmodule ReyCode.Orchestration.SquadFSMTest do
                "target_phase" => nil
              })
 
-    assert SquadFSM.stage_label(next) == "specification"
+    assert SquadFSM.phase_label(next) == "specification"
   end
 
   test "leader rework is targeted and bounded" do
@@ -52,7 +52,7 @@ defmodule ReyCode.Orchestration.SquadFSMTest do
     }
 
     assert {:continue, state} = SquadFSM.gate(state, gate)
-    assert SquadFSM.stage_label(state) == "integration"
+    assert SquadFSM.phase_label(state) == "integration"
     assert state.cycle == 1
     assert state.rework_count == 1
 
@@ -129,7 +129,7 @@ defmodule ReyCode.Orchestration.SquadFSMTest do
     assert SquadFSM.outcome(failed) == :failed
   end
 
-  defp advance_to(state, target) when state.phase >= target, do: state
+  defp advance_to(state, target) when state.phase_index >= target, do: state
 
   defp advance_to(state, target) do
     {:continue, state} = SquadFSM.next(state)

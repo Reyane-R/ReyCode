@@ -18,7 +18,7 @@ defmodule ReyCode.Test.Wait do
   end
 
   def terminal_turn(server, turn_id, timeout \\ 5_000) do
-    turn_status(server, turn_id, [:completed, :partial, :failed], timeout)
+    turn_status(server, turn_id, :terminal, timeout)
   end
 
   def invocation_status(server, turn_id, statuses, timeout \\ 5_000) do
@@ -82,15 +82,18 @@ defmodule ReyCode.Test.Wait do
 
   defp turn_with_status(projection, turn_id, statuses) do
     case projection.turns[turn_id] do
-      %{status: status} = turn -> if status in statuses, do: turn
-      _turn -> nil
+      %{status: status, outcome: outcome} = turn ->
+        if status in statuses or outcome in statuses, do: turn
+
+      _turn ->
+        nil
     end
   end
 
   defp turn_with_pending_review(projection, turn_id) do
     case projection.turns[turn_id] do
       %{squad: squad} = turn when not is_nil(squad) ->
-        if Map.get(squad, :pending_review), do: turn
+        if squad.pending_review, do: turn
 
       _turn ->
         nil

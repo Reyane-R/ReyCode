@@ -4,6 +4,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
 
   alias ReyCode.Event
   alias ReyCode.Orchestration.{Invocation, Message, Participant, Projector, Room, Turn}
+  alias ReyCode.Orchestration.Squad.{GateResolution, GateReview}
 
   test "replay rebuilds room messages, turns, and streamed invocations" do
     participant = %{
@@ -92,7 +93,8 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert state.rooms["room-1"].message_order == ["msg-agent", "msg-user"]
     assert state.messages["msg-agent"].body == "Hello world"
     assert state.messages["msg-agent"].status == :completed
-    assert state.turns["turn-1"].status == :completed
+    assert state.turns["turn-1"].status == :terminal
+    assert state.turns["turn-1"].outcome == :completed
     assert state.invocations["inv-1"].last_frame_sequence == 2
   end
 
@@ -309,15 +311,15 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert directive.cycle == 0
     assert directive.recorded_at == "2026-08-03T00:00:00Z"
 
-    assert [review] = state.turns["turn-squad"].squad.gate_reviews
-    assert review.actor == "agent"
-    assert review.decision == "approve"
+    assert [%GateReview{} = review] = state.turns["turn-squad"].squad.reviews
+    assert review.recommendation.role_id == "squad_leader"
+    assert review.recommendation.decision == "approve"
     assert state.turns["turn-squad"].squad.pending_review == nil
 
-    assert [decision] = state.turns["turn-squad"].squad.decisions
-    assert decision.actor == "human"
-    assert decision.role_id == "human_owner"
-    assert state.turns["turn-squad"].squad.latest_gate == decision
+    assert [%GateResolution{} = resolution] = state.turns["turn-squad"].squad.resolutions
+    assert resolution.authority == :owner
+    assert resolution.resolver_id == "human_owner"
+    assert state.turns["turn-squad"].squad.latest_resolution == resolution
   end
 
   property "replay preserves arbitrary message bodies" do

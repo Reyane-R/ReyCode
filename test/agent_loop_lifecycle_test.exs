@@ -121,7 +121,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     assert {:ok, room_id} = Engine.create_room("Tool Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Read the file", :compare, @engine)
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :completed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 
     rounds = per_invocation(events_of_type(store, :provider_round_recorded))
 
@@ -173,7 +173,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     assert {:ok, turn_id} =
              Engine.post_message(room_id, "Read the missing file", :compare, @engine)
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :completed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 
     started = events_of_type(store, :tool_run_started)
     failed = events_of_type(store, :tool_run_failed)
@@ -298,7 +298,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     assert {:ok, room_id} = Engine.create_room("Multi Round", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(room_id, "Inspect twice", :compare, @engine)
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :completed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 
     rounds = per_invocation(events_of_type(store, :provider_round_recorded))
 

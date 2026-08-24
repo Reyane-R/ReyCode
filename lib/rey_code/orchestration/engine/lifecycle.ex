@@ -1,8 +1,11 @@
 defmodule ReyCode.Orchestration.Engine.Lifecycle do
   @moduledoc "Owns turn recovery, scheduling, cancellation, and finalization transitions."
 
+  alias ReyCode.Failure
   alias ReyCode.Orchestration.Engine.{Admission, Identity, Options, Persistence}
   alias ReyCode.Orchestration.{EventEntries, ToolRuns, Validation}
+
+  @worker_stop_timeout_ms 5_000
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
 
   def interrupt_started_runs(state, invocation) do
@@ -149,7 +152,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
           [{pid, _} | _] ->
             ref = Process.monitor(pid)
             Process.exit(pid, :kill)
-            receive do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)
+            await_down!(ref, pid)
             recover_missing_execution(state, invocation)
 
           [] ->
@@ -166,7 +169,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
       [{pid, _} | _] ->
         ref = Process.monitor(pid)
         Process.exit(pid, :kill)
-        receive do: ({:DOWN, ^ref, :process, ^pid, _} -> :ok)
+        await_down!(ref, pid)
         Admission.enqueue(state, invocation.id)
 
       [] ->
@@ -183,11 +186,11 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   defp interrupt_and_fail(state, invocation, reason) do
     state = interrupt_started_runs(state, invocation)
 
-    error = %{
-      "category" => "interrupted",
-      "message" => "The provider invocation was interrupted mid tool run: #{reason}",
-      "retryable" => false
-    }
+    error =
+      Failure.new(
+        :interrupted,
+        "The provider invocation was interrupted mid tool run: #{reason}"
+      )
 
     finalize_invocation(state, invocation.id, {:failed, error})
   end
@@ -196,11 +199,11 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     if replayable?(invocation.participant.provider) do
       Admission.enqueue(state, invocation.id)
     else
-      error = %{
-        "category" => "interrupted",
-        "message" => "The provider invocation was interrupted and cannot be replayed safely",
-        "retryable" => false
-      }
+      error =
+        Failure.new(
+          :interrupted,
+          "The provider invocation was interrupted and cannot be replayed safely"
+        )
 
       finalize_invocation(state, invocation.id, {:failed, error})
     end
@@ -220,8 +223,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
           rework_budget: state.config.squad.rework_budget,
           release_authority:
             if(state.config.squad.release_gate_human?,
-              do: "human",
-              else: "leader"
+              do: :owner,
+              else: :squad_leader
             )
         ]
 
@@ -338,11 +341,12 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
         monitor_execution(state, invocation.id, pid)
 
       {:error, reason} ->
-        error = %{
-          "category" => "worker_start_failed",
-          "message" => "Could not start provider worker: #{inspect(reason)}",
-          "retryable" => true
-        }
+        error =
+          Failure.new(
+            :worker_start_failed,
+            "Could not start provider worker: #{inspect(reason)}",
+            true
+          )
 
         finalize_invocation(state, invocation.id, {:failed, error})
     end
@@ -364,7 +368,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   # Release-gate authority is frozen at turn start (squad_configured carries it);
   # flipping the runtime env mid-turn does not change an in-flight squad.
   defp human_release_review?(turn) do
-    turn.squad != nil and Map.get(turn.squad, :release_authority) != "leader"
+    turn.squad != nil and turn.squad.release_authority == :owner
   end
 
   def budget_extension_entries(%{squad: squad} = turn, :rework)
@@ -416,6 +420,15 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
     next = Persistence.append_and_apply!(state, prepend ++ entries ++ invocation_entries)
     start_invocation_workers(next, invocation_entries)
+  end
+
+  defp await_down!(ref, pid) do
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+    after
+      @worker_stop_timeout_ms ->
+        raise "provider worker did not stop within #{@worker_stop_timeout_ms}ms"
+    end
   end
 
   def replayable?(:simulator), do: true

@@ -12,7 +12,7 @@ defmodule ReyCode.Orchestration.Workflow.Debate do
   @impl true
   def advance(room, turn, projection) do
     invocations = Workflow.invocations(turn, projection)
-    proposal = Enum.filter(invocations, &(&1.stage == 0))
+    proposal = Enum.filter(invocations, &(&1.phase_index == 0))
 
     if proposal == [] or not Enum.all?(proposal, &Workflow.terminal?/1) do
       :wait
@@ -22,8 +22,8 @@ defmodule ReyCode.Orchestration.Workflow.Debate do
   end
 
   defp advance_after_proposal(room, invocations) do
-    critiques = Enum.filter(invocations, &(&1.stage == 1))
-    revision = Enum.filter(invocations, &(&1.stage == 2))
+    critiques = Enum.filter(invocations, &(&1.phase_index == 1))
+    revision = Enum.filter(invocations, &(&1.phase_index == 2))
 
     cond do
       critiques == [] and revision == [] ->
@@ -58,7 +58,7 @@ defmodule ReyCode.Orchestration.Workflow.Debate do
   defp proposal_spec(participant) do
     %{
       participant_id: participant.id,
-      stage: 0,
+      phase_index: 0,
       label: "proposal",
       system_prompt: "Act as the debate lead. Offer a concrete proposal with explicit tradeoffs."
     }
@@ -67,7 +67,7 @@ defmodule ReyCode.Orchestration.Workflow.Debate do
   defp critique_spec(participant) do
     %{
       participant_id: participant.id,
-      stage: 1,
+      phase_index: 1,
       label: "critique",
       system_prompt:
         "Review the lead proposal from the perspective of #{participant.perspective}. Identify the strongest flaw and suggest a correction."
@@ -77,7 +77,7 @@ defmodule ReyCode.Orchestration.Workflow.Debate do
   defp revision_spec(participant) do
     %{
       participant_id: participant.id,
-      stage: 2,
+      phase_index: 2,
       label: "revision",
       system_prompt:
         "Revise the proposal after considering the critiques. State what changed and provide the final recommendation."

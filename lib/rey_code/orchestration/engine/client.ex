@@ -1,5 +1,16 @@
 defmodule ReyCode.Orchestration.Engine.Client do
-  @moduledoc "Internal process protocol used by supervised invocation workers."
+  @moduledoc """
+  Internal process protocol used by supervised InvocationWorkers.
+
+  Requests and start notifications use the default bounded GenServer timeout.
+  Frame, ProviderRound, ToolRun, and terminal transitions wait indefinitely
+  because each call crosses the EventStore durability point; timing out after
+  an unknown commit would make retry safety unknowable. The InvocationWorker
+  owns cancellation and is supervised. Duplicate frames are idempotent;
+  state transitions reject stale or invalid source states with tagged errors.
+  """
+
+  alias ReyCode.Failure
 
   alias ReyCode.Provider.Frame
 
@@ -72,7 +83,7 @@ defmodule ReyCode.Orchestration.Engine.Client do
     GenServer.call(server, {:complete_invocation, invocation_id, metadata}, :infinity)
   end
 
-  @spec fail_invocation(GenServer.server(), String.t(), map()) :: :ok
+  @spec fail_invocation(GenServer.server(), String.t(), Failure.t()) :: :ok
   def fail_invocation(server, invocation_id, error) do
     GenServer.call(server, {:fail_invocation, invocation_id, error}, :infinity)
   end

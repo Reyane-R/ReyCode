@@ -2,8 +2,7 @@ defmodule ReyCode.TUITest do
   use ExUnit.Case, async: false
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.Engine
-  alias ReyCode.Orchestration.Squad
+  alias ReyCode.Orchestration.{Engine, Invocation, Squad, Turn}
   alias ReyCode.Test.Wait
 
   test "renders a project room and posts a mode-tagged message" do
@@ -612,39 +611,41 @@ defmodule ReyCode.TUITest do
       reason: "provider_failure"
     }
 
-    turn = %{
-      id: turn_id,
-      room_id: room_id,
-      user_message_id: "msg-ui-squad-owner",
-      mode: :squad,
-      status: :completed,
-      context_through_sequence: projection.sequence,
-      invocation_order: [invocation_id],
-      outcome: :completed,
-      squad: %{
+    turn =
+      Turn.from_map(%{
+        id: turn_id,
         room_id: room_id,
-        workflow_version: "squad-v3",
-        stage: 3,
-        phase: "story_gate",
-        cycle: 0,
-        rework_count: 0,
-        rework_budget: 3,
-        seats: Enum.map(Squad.roles(), & &1.id),
-        decisions: [decision],
-        latest_gate: decision,
-        promotions: %{},
-        artifacts: [artifact],
-        blockers: [],
-        retries: [retry],
-        seed: 0
-      },
-      created_at: "9999-12-31T23:59:59Z"
-    }
+        user_message_id: "msg-ui-squad-owner",
+        mode: :squad,
+        status: :completed,
+        context_through_sequence: projection.sequence,
+        invocation_order: [invocation_id],
+        outcome: :completed,
+        squad: %{
+          room_id: room_id,
+          workflow_version: "squad-v3",
+          stage: 3,
+          phase: "story_gate",
+          cycle: 0,
+          rework_count: 0,
+          rework_budget: 3,
+          seats: Enum.map(Squad.roles(), & &1.id),
+          decisions: [decision],
+          latest_gate: decision,
+          promotions: %{},
+          artifacts: [artifact],
+          blockers: [],
+          retries: [retry],
+          seed: 0
+        },
+        created_at: "9999-12-31T23:59:59Z"
+      })
 
-    invocation = %{
-      id: invocation_id,
-      usage: %{"prompt_tokens" => 10, "completion_tokens" => 5, "cost" => 0.0025}
-    }
+    invocation =
+      Invocation.from_map(%{
+        id: invocation_id,
+        usage: %{"prompt_tokens" => 10, "completion_tokens" => 5, "cost" => 0.0025}
+      })
 
     projection
     |> put_in([:rooms, room_id], %{room | active_turn_id: nil})

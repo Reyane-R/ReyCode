@@ -62,6 +62,7 @@ defmodule ReyCode.Orchestration.ProjectorSnapshotTest do
     assert %Participant{} = invocation.participant
 
     assert invocation.rounds == []
+    assert invocation.phase_index == 0
     assert invocation.tool_runs == %{}
     assert invocation.tool_run_order == []
     assert invocation.pending_tool_review == nil

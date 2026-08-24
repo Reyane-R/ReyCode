@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
   use ExUnit.Case, async: false
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.{Frame, OpenAICompatible, Request, Response, Runtime}
   alias ReyCode.Provider.OpenAICompatible.HTTP
   alias ReyCode.Provider.OpenAICompatible.HTTPC
@@ -59,16 +60,18 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     end)
 
     {:ok, context} =
-      HTTPC.start(
-        :post,
-        "http://#{@loopback}:#{port}/api/v1/start",
-        [{"Authorization", "Bearer hidden"}, {"Cookie", "sid=abc123"}],
-        "",
-        []
+      wire_result(
+        HTTPC.start(
+          :post,
+          "http://#{@loopback}:#{port}/api/v1/start",
+          [{"Authorization", "Bearer hidden"}, {"Cookie", "sid=abc123"}],
+          "",
+          []
+        )
       )
 
     assert {:ok, :ok, %{status: 200, headers: _headers}} =
-             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
 
     assert_receive {:request, "/api/v1/start", start_headers}, 1_000
     assert_receive {:request, "/api/v1/next", next_headers}, 1_000
@@ -102,16 +105,18 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     end)
 
     {:ok, context} =
-      HTTPC.start(
-        :post,
-        "http://#{@loopback}:#{start_port}/start",
-        [{"Authorization", "Bearer hidden"}, {"Cookie", "sid=abc123"}, {"X-Trace", "keep"}],
-        "",
-        []
+      wire_result(
+        HTTPC.start(
+          :post,
+          "http://#{@loopback}:#{start_port}/start",
+          [{"Authorization", "Bearer hidden"}, {"Cookie", "sid=abc123"}, {"X-Trace", "keep"}],
+          "",
+          []
+        )
       )
 
     assert {:ok, :ok, %{status: 200, headers: _headers}} =
-             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
 
     assert_receive {:request, "/start", start_headers}, 1_000
     assert_receive {:request, "/final", final_headers}, 1_000
@@ -137,10 +142,10 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     end)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{port}/start", [], "", [])
+      wire_result(HTTPC.start(:post, "http://#{@loopback}:#{port}/start", [], "", []))
 
     assert {:error, %{"category" => "request_failed"}} =
-             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
   end
 
   test "returns request_failed when Location header is invalid" do
@@ -157,10 +162,10 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     end)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{port}/start", [], "", [])
+      wire_result(HTTPC.start(:post, "http://#{@loopback}:#{port}/start", [], "", []))
 
     assert {:error, %{"category" => "request_failed"}} =
-             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
   end
 
   test "rejects HTTPS-to-HTTP redirects before following" do
@@ -186,16 +191,18 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     end)
 
     {:ok, context} =
-      HTTPC.start(
-        :post,
-        "http://#{@loopback}:#{port}/loop",
-        [{"Authorization", "Bearer top-secret"}],
-        "",
-        max_redirects: 2
+      wire_result(
+        HTTPC.start(
+          :post,
+          "http://#{@loopback}:#{port}/loop",
+          [{"Authorization", "Bearer top-secret"}],
+          "",
+          max_redirects: 2
+        )
       )
 
     assert {:error, %{"category" => "request_failed", "message" => message}} =
-             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
 
     assert message =~ "Too many redirects"
     refute message =~ "top-secret"
@@ -203,7 +210,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
 
   test "rejects an invalid transport context" do
     assert {:error, %{"category" => "request_failed", "message" => "Invalid transport context"}} =
-             HTTPC.collect(:not_a_context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(:not_a_context, fn _, _acc -> {:cont, :ok} end, :ok))
   end
 
   test "maps a server error status to a provider error" do
@@ -219,10 +226,11 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
       stop_test_server(listen_socket, server_pid)
     end)
 
-    {:ok, context} = HTTPC.start(:post, "http://#{@loopback}:#{port}/fail", [], "", [])
+    {:ok, context} =
+      wire_result(HTTPC.start(:post, "http://#{@loopback}:#{port}/fail", [], "", []))
 
     assert {:error, %{"category" => "server_error", "retryable" => true, "message" => message}} =
-             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
 
     assert message =~ "upstream exploded"
   end
@@ -233,10 +241,10 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     :gen_tcp.close(socket)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{free_port}/nowhere", [], "", [])
+      wire_result(HTTPC.start(:post, "http://#{@loopback}:#{free_port}/nowhere", [], "", []))
 
     assert {:error, %{"category" => "request_failed", "retryable" => false}} =
-             HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
   end
 
   test "halts chunk delivery when the consumer stops the stream" do
@@ -253,18 +261,18 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     end)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{port}/chunks", [], "", [])
+      wire_result(HTTPC.start(:post, "http://#{@loopback}:#{port}/chunks", [], "", []))
 
     on_event = fn
       {:partial, _chunk}, :ok ->
-        {:halt, :ok, HTTP.error("output_too_large", "consumer halted", false)}
+        {:halt, :ok, HTTP.error(:output_too_large, "consumer halted", false)}
 
       {:partial, _chunk}, acc ->
         {:cont, acc}
     end
 
     assert {:error, %{"category" => "output_too_large"}} =
-             HTTPC.collect(context, on_event, :ok)
+             wire_result(HTTPC.collect(context, on_event, :ok))
   end
 
   test "sends GET without a body and preserves streamed response bytes" do
@@ -279,19 +287,18 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
 
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
-    {:ok, context} = HTTPC.start(:get, "http://#{@loopback}:#{port}/models", [], nil, [])
+    {:ok, context} =
+      wire_result(HTTPC.start(:get, "http://#{@loopback}:#{port}/models", [], nil, []))
 
     assert {:ok, ^response, %{status: 200}} =
-             HTTPC.collect(
-               context,
-               fn {:partial, bytes}, acc -> {:cont, acc <> bytes} end,
-               ""
+             wire_result(
+               HTTPC.collect(context, fn {:partial, bytes}, acc -> {:cont, acc <> bytes} end, "")
              )
 
     assert_receive {:request, %{method: "GET", path: "/models", body: ""}}
 
     assert {:error, %{"category" => "launch_failed"}} =
-             HTTPC.start(:get, "http://#{@loopback}:#{port}/models", [], "", [])
+             wire_result(HTTPC.start(:get, "http://#{@loopback}:#{port}/models", [], "", []))
   end
 
   test "delivers bytes before connection close" do
@@ -319,17 +326,21 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{port}/stream", [], "{}", timeout: 1_000)
+      wire_result(
+        HTTPC.start(:post, "http://#{@loopback}:#{port}/stream", [], "{}", timeout: 1_000)
+      )
 
     task =
       Task.async(fn ->
-        HTTPC.collect(
-          context,
-          fn {:partial, bytes}, acc ->
-            send(test_pid, {:streamed, bytes})
-            {:cont, acc <> bytes}
-          end,
-          ""
+        wire_result(
+          HTTPC.collect(
+            context,
+            fn {:partial, bytes}, acc ->
+              send(test_pid, {:streamed, bytes})
+              {:cont, acc <> bytes}
+            end,
+            ""
+          )
         )
       end)
 
@@ -359,10 +370,12 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{port}/slow", [], "{}", timeout: 3_000)
+      wire_result(
+        HTTPC.start(:post, "http://#{@loopback}:#{port}/slow", [], "{}", timeout: 3_000)
+      )
 
     assert {:error, %{"category" => "timeout", "retryable" => true}} =
-             HTTPC.collect(context, fn _, acc -> {:cont, acc} end, :ok)
+             wire_result(HTTPC.collect(context, fn _, acc -> {:cont, acc} end, :ok))
 
     assert_receive :response_started, 5_000
     assert_receive {:connection_result, {:error, :closed}}, 5_000
@@ -386,14 +399,16 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
 
     {:ok, context} =
-      HTTPC.start(:post, "http://#{@loopback}:#{port}/halt", [], "{}", timeout: 1_000)
+      wire_result(
+        HTTPC.start(:post, "http://#{@loopback}:#{port}/halt", [], "{}", timeout: 1_000)
+      )
 
     on_event = fn {:partial, _chunk}, acc ->
-      {:halt, acc, HTTP.error("output_too_large", "consumer halted", false)}
+      {:halt, acc, HTTP.error(:output_too_large, "consumer halted", false)}
     end
 
     assert {:error, %{"category" => "output_too_large"}} =
-             HTTPC.collect(context, on_event, :ok)
+             wire_result(HTTPC.collect(context, on_event, :ok))
 
     assert_receive {:halt_connection_result, {:error, :closed}}, 1_000
     refute_receive {:http, _message}, 50
@@ -475,10 +490,12 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     runtime = real_http_runtime(port, 3_000)
 
     assert {:error, %{"category" => "timeout"}} =
-             OpenAICompatible.stream(runtime, provider_request(), fn _frame ->
-               Process.sleep(5_000)
-               :ok
-             end)
+             wire_result(
+               OpenAICompatible.stream(runtime, provider_request(), fn _frame ->
+                 Process.sleep(5_000)
+                 :ok
+               end)
+             )
 
     assert_receive {:timeout_connection_result, {:error, :closed}}, 5_000
   end
@@ -726,4 +743,6 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
   defp status_reason(200), do: "OK"
   defp status_reason(302), do: "Found"
   defp status_reason(_), do: "OK"
+  defp wire_result({:error, %Failure{} = failure}), do: {:error, Failure.to_wire(failure)}
+  defp wire_result(result), do: result
 end

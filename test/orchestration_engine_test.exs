@@ -16,7 +16,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     room = snapshot.rooms[room_id]
     messages = Enum.map(room.message_order, &snapshot.messages[&1])
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
     assert Enum.count(messages, &(&1.turn_id == turn_id)) == 4
     assert Enum.count(messages, &(&1.role == :assistant and &1.turn_id == turn_id)) == 3
     assert Enum.any?(messages, &String.contains?(&1.body, "smallest end-to-end implementation"))
@@ -30,8 +30,8 @@ defmodule ReyCode.Orchestration.EngineTest do
     snapshot = ReyCode.snapshot()
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
-    assert turn.status == :completed
-    assert Enum.map(invocations, & &1.stage) == [0, 1, 1, 2]
+    assert turn.outcome == :completed
+    assert Enum.map(invocations, & &1.phase_index) == [0, 1, 1, 2]
     assert Enum.map(invocations, & &1.label) == ["proposal", "critique", "critique", "revision"]
   end
 
@@ -43,7 +43,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     snapshot = ReyCode.snapshot()
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
     assert length(invocations) == 3
     assert Enum.all?(invocations, &(&1.label == "parallel branch"))
   end
@@ -57,8 +57,8 @@ defmodule ReyCode.Orchestration.EngineTest do
     second = wait_until_terminal(second_id)
     snapshot = ReyCode.snapshot()
 
-    assert first.status == :completed
-    assert second.status == :completed
+    assert first.outcome == :completed
+    assert second.outcome == :completed
     assert snapshot.rooms[room_id].slug == "payments-rewrite"
     assert snapshot.rooms[room_id].active_turn_id == nil
     assert snapshot.rooms[room_id].queued_turn_ids == []
@@ -79,7 +79,7 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     assert :ok = Engine.Client.record_frame(engine, invocation.id, duplicate)
     assert Engine.snapshot(engine).messages[invocation.message_id].body == message.body
-    assert wait_until_terminal_on(engine, turn_id).status == :completed
+    assert wait_until_terminal_on(engine, turn_id).outcome == :completed
   end
 
   test "persists provider frames before terminal invocation events" do
@@ -138,7 +138,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     assert_receive {:DOWN, ^monitor, :process, ^old_engine, :killed}, 1_000
     assert wait_for_engine(engine, old_engine)
 
-    assert wait_until_terminal_on(engine, turn_id).status == :completed
+    assert wait_until_terminal_on(engine, turn_id).outcome == :completed
     assert receive_snapshot_after(baseline)
   end
 
@@ -158,8 +158,8 @@ defmodule ReyCode.Orchestration.EngineTest do
     Process.exit(pid, :kill)
 
     terminal = wait_until_terminal_on(engine, turn_id, 5_000)
-    assert terminal.status == :partial
-    assert Engine.snapshot(engine).invocations[invocation_id].error["category"] == "worker_exit"
+    assert terminal.outcome == :partial
+    assert Engine.snapshot(engine).invocations[invocation_id].error.category == :worker_exit
   end
 
   @tag capture_log: true
@@ -176,7 +176,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     snapshot = Engine.snapshot(engine)
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
 
     assert Enum.all?(invocations, fn invocation ->
              invocation.status == :completed and invocation.last_frame_sequence > 0
@@ -356,7 +356,7 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   defp drain_turn(engine, turn_id),
-    do: assert(wait_until_terminal_on(engine, turn_id).status == :completed)
+    do: assert(wait_until_terminal_on(engine, turn_id).outcome == :completed)
 
   defp default_room_id(engine \\ Engine) do
     snapshot = Engine.snapshot(engine)

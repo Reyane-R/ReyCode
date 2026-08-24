@@ -1,5 +1,14 @@
 defmodule ReyCode.Provider.Catalog do
-  @moduledoc "Discovers provider runtimes and publishes their transient availability."
+  @moduledoc """
+  Discovers provider capabilities and resolves frozen ProviderRuntimes.
+
+  Discovery is transient, bounded, and retryable; it never enters durable
+  Projection state. Snapshot and immediate resolution use the default bounded
+  GenServer timeout. `resolve_when_ready/3` waits for the owned discovery task
+  and therefore uses an intentional infinite call timeout; task/probe policy
+  bounds the physical work. Missing, checking, unavailable, and invalid-model
+  states return stable tagged reasons.
+  """
 
   use GenServer
 

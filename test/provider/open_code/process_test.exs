@@ -14,6 +14,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       runtime: 2
     ]
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.{Command, OpenCode, Runtime}
   alias ReyCode.Provider.OpenCode.Process
   alias ReyCode.Security.Environment
@@ -45,9 +46,11 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     end)
 
     assert {:ok, _metadata} =
-             OpenCode.stream(runtime(path), %{request() | workspace: workspace}, fn _frame ->
-               :ok
-             end)
+             wire_result(
+               OpenCode.stream(runtime(path), %{request() | workspace: workspace}, fn _frame ->
+                 :ok
+               end)
+             )
 
     actual_workspace = File.stat!(String.trim(File.read!(capture_path)))
     requested_workspace = File.stat!(workspace)
@@ -79,10 +82,12 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     end)
 
     assert {:ok, _metadata} =
-             OpenCode.stream(runtime(discovered), request(), fn frame ->
-               send(test_pid, {:frame, frame})
-               :ok
-             end)
+             wire_result(
+               OpenCode.stream(runtime(discovered), request(), fn frame ->
+                 send(test_pid, {:frame, frame})
+                 :ok
+               end)
+             )
 
     assert_receive {:frame, %{kind: :text_delta, data: %{text: "frozen policy"}}}
   end
@@ -98,17 +103,19 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
 
     task =
       Task.async(fn ->
-        OpenCode.stream(
-          runtime(path,
-            provider_timeout_ms: 5_000,
-            opencode_text_chunk_bytes: 1_000,
-            opencode_text_chunk_latency_ms: 50
-          ),
-          request(),
-          fn frame ->
-            send(test_pid, {:frame, frame})
-            :ok
-          end
+        wire_result(
+          OpenCode.stream(
+            runtime(path,
+              provider_timeout_ms: 5_000,
+              opencode_text_chunk_bytes: 1_000,
+              opencode_text_chunk_latency_ms: 50
+            ),
+            request(),
+            fn frame ->
+              send(test_pid, {:frame, frame})
+              :ok
+            end
+          )
         )
       end)
 
@@ -124,14 +131,16 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     started_at = System.monotonic_time(:millisecond)
 
     assert {:error, %{"category" => "timeout"}} =
-             Process.collect(
-               [:item],
-               fn _item, acc ->
-                 Elixir.Process.sleep(500)
-                 {:cont, acc}
-               end,
-               :ok,
-               50
+             wire_result(
+               Process.collect(
+                 [:item],
+                 fn _item, acc ->
+                   Elixir.Process.sleep(500)
+                   {:cont, acc}
+                 end,
+                 :ok,
+                 50
+               )
              )
 
     assert System.monotonic_time(:millisecond) - started_at < 300
@@ -158,7 +167,7 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
               "category" => "executable_changed",
               "message" => "OpenCode executable changed after discovery",
               "retryable" => false
-            }} = OpenCode.stream(runtime, request(), fn _frame -> :ok end)
+            }} = wire_result(OpenCode.stream(runtime, request(), fn _frame -> :ok end))
 
     refute File.exists?(marker)
   end
@@ -174,10 +183,12 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     started_at = System.monotonic_time(:millisecond)
 
     assert {:error, %{"category" => "timeout"}} =
-             OpenCode.stream(
-               runtime(path, provider_timeout_ms: 60, opencode_max_output_bytes: 100_000_000),
-               request(),
-               fn _frame -> :ok end
+             wire_result(
+               OpenCode.stream(
+                 runtime(path, provider_timeout_ms: 60, opencode_max_output_bytes: 100_000_000),
+                 request(),
+                 fn _frame -> :ok end
+               )
              )
 
     assert System.monotonic_time(:millisecond) - started_at < 500
@@ -197,10 +208,12 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
 
     task =
       Task.async(fn ->
-        OpenCode.stream(
-          runtime(path, provider_timeout_ms: 10_000, opencode_max_output_bytes: 1_000_000),
-          request(),
-          fn _frame -> :ok end
+        wire_result(
+          OpenCode.stream(
+            runtime(path, provider_timeout_ms: 10_000, opencode_max_output_bytes: 1_000_000),
+            request(),
+            fn _frame -> :ok end
+          )
         )
       end)
 
@@ -222,9 +235,15 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     path = fake_opencode("printf launched > '#{marker}'")
 
     assert {:error, %{"category" => "prompt_too_large"}} =
-             OpenCode.stream(runtime(path, opencode_max_prompt_bytes: 10), request(), fn _frame ->
-               :ok
-             end)
+             wire_result(
+               OpenCode.stream(
+                 runtime(path, opencode_max_prompt_bytes: 10),
+                 request(),
+                 fn _frame ->
+                   :ok
+                 end
+               )
+             )
 
     refute File.exists?(marker)
 
@@ -281,13 +300,11 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     test_pid = self()
 
     assert {:ok, %{}} =
-             OpenCode.stream(
-               runtime(path, provider_timeout_ms: 10_000),
-               request(),
-               fn frame ->
+             wire_result(
+               OpenCode.stream(runtime(path, provider_timeout_ms: 10_000), request(), fn frame ->
                  send(test_pid, {:frame, frame})
                  :ok
-               end
+               end)
              )
 
     assert_receive {:frame, %{kind: :text_delta, data: %{text: "response after stdin EOF"}}}
@@ -316,10 +333,12 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     end)
 
     assert {:ok, %{}} =
-             OpenCode.stream(runtime(path), request(), fn frame ->
-               send(self(), {:frame, frame})
-               :ok
-             end)
+             wire_result(
+               OpenCode.stream(runtime(path), request(), fn frame ->
+                 send(self(), {:frame, frame})
+                 :ok
+               end)
+             )
 
     stdin = File.read!(stdin_file)
     assert stdin =~ "Respond concisely"
@@ -356,13 +375,15 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
     end)
 
     assert {:ok, _metadata} =
-             OpenCode.stream(
-               runtime(path, opencode_env_allowlist: [allowed_name]),
-               request(),
-               fn frame ->
-                 send(test_pid, {:frame, frame})
-                 :ok
-               end
+             wire_result(
+               OpenCode.stream(
+                 runtime(path, opencode_env_allowlist: [allowed_name]),
+                 request(),
+                 fn frame ->
+                   send(test_pid, {:frame, frame})
+                   :ok
+                 end
+               )
              )
 
     assert_receive {:frame, %{kind: :text_delta, data: %{text: "environment restricted"}}}
@@ -378,28 +399,28 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       stream = Stream.map([:only], fn _ -> raise "stream exploded" end)
 
       assert {:error, %{"category" => "launch_failed", "message" => "stream exploded"}} =
-               Process.collect(stream, fn _, acc -> {:cont, acc} end, :ok, 5_000)
+               wire_result(Process.collect(stream, fn _, acc -> {:cont, acc} end, :ok, 5_000))
     end
 
     test "maps a throwing stream to a launch failure" do
       stream = Stream.map([:only], fn _ -> throw(:thrown) end)
 
       assert {:error, %{"category" => "launch_failed", "message" => message}} =
-               Process.collect(stream, fn _, acc -> {:cont, acc} end, :ok, 5_000)
+               wire_result(Process.collect(stream, fn _, acc -> {:cont, acc} end, :ok, 5_000))
 
       assert message =~ ":thrown"
     end
 
     test "maps an unfinished stream to a timeout" do
       assert {:error, %{"category" => "timeout", "message" => message}} =
-               Process.collect(
-                 Stream.cycle([:tick]),
-                 fn _, acc -> {:cont, acc} end,
-                 :ok,
-                 50
+               wire_result(
+                 Process.collect(Stream.cycle([:tick]), fn _, acc -> {:cont, acc} end, :ok, 50)
                )
 
       assert message =~ "did not finish within 50ms"
     end
   end
+
+  defp wire_result({:error, %Failure{} = failure}), do: {:error, Failure.to_wire(failure)}
+  defp wire_result(result), do: result
 end

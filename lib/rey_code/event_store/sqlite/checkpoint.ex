@@ -1,11 +1,13 @@
 defmodule ReyCode.EventStore.SQLite.Checkpoint do
   @moduledoc """
-  Pure encoding, decoding, and validation for projection checkpoints.
+  Pure encoding, decoding, and validation for Projection checkpoints.
 
-  Checkpoints are JSON documents whose terms use an explicit typed wire
-  format (tagged atoms/binaries/tuples/lists/maps), bound by a checksum,
-  byte cap, projection version, and shape validation against the stored
-  sequence.
+  Checkpoints are JSON documents with an explicit typed wire format. Encoding
+  strips internal struct tags recursively, preserving a map-based durable
+  contract. Decoding validates version, payload size, checksum, known atoms,
+  required shape, and stored sequence before returning data. Any uncertainty
+  returns a tagged error; the Engine decides whether recovery may fall back to
+  event replay. Three recent checkpoints are retained.
   """
 
   alias ReyCode.Hashing

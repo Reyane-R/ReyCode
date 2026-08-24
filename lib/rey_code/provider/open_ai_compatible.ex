@@ -13,6 +13,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   the accumulated tool results through the request conversation.
   """
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, Stream}
   alias ReyCode.RuntimeConfig
@@ -40,9 +41,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   @doc "Streams one chat-completion round from the runtime's OpenAI-compatible provider."
-  @impl true
   @spec stream(Runtime.t(), Request.t(), (Frame.t() -> :ok)) ::
-          {:ok, Response.t()} | {:error, map()}
+          {:ok, Response.t()} | {:error, Failure.t()}
   def stream(%Runtime{provider_id: provider_id, config: %OpenAIPolicy{} = policy}, request, emit) do
     transport = transport(policy)
 
@@ -78,7 +78,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
       {:ok, _body, %{status: status}} ->
         {:error, "model list request returned HTTP status #{inspect(status)}"}
 
-      {:error, %{"message" => message}} ->
+      {:error, %Failure{message: message}} ->
         {:error, message}
 
       {:error, reason} ->
@@ -92,7 +92,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp collect_model_bytes({:partial, data}, body, max_bytes) do
     if byte_size(body) + byte_size(data) > max_bytes do
       {:halt, body,
-       HTTP.error("response_too_large", "Model response exceeded #{max_bytes} bytes", false)}
+       HTTP.error(:response_too_large, "Model response exceeded #{max_bytes} bytes", false)}
     else
       {:cont, body <> data}
     end
@@ -142,7 +142,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
     if byte_size(body) > profile.max_prompt_bytes do
       HTTP.error(
-        "prompt_too_large",
+        :prompt_too_large,
         "Provider prompt is #{byte_size(body)} bytes; maximum is #{profile.max_prompt_bytes} bytes",
         false
       )
@@ -216,7 +216,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp fetch_key(profile) do
     if blank?(System.get_env(profile.key_env)) do
       {:error,
-       HTTP.error("missing_credentials", "Set #{profile.key_env} to use #{profile.name}", false)}
+       HTTP.error(:missing_credentials, "Set #{profile.key_env} to use #{profile.name}", false)}
     else
       {:ok, System.get_env(profile.key_env)}
     end

@@ -8,10 +8,10 @@ defmodule ReyCode.RuntimeConfig.Schema do
   defp settings do
     [
       # Orchestration limits
-      {:global_concurrency, fn -> :infinity end, :limit},
-      {:workspace_concurrency, fn -> :infinity end, :limit},
-      {:global_queue_limit, fn -> :infinity end, :queue_limit},
-      {:workspace_queue_limit, fn -> :infinity end, :queue_limit},
+      {:global_concurrency, fn -> 2 end, :limit},
+      {:workspace_concurrency, fn -> 1 end, :limit},
+      {:global_queue_limit, fn -> 100 end, :queue_limit},
+      {:workspace_queue_limit, fn -> 20 end, :queue_limit},
       # Provider policy
       {:agent_delay_ms, fn -> 0 end, {:integer, 0}},
       {:allow_simulator_provider, fn -> false end, :boolean},

@@ -1,11 +1,12 @@
 defmodule ReyCode.Orchestration.Engine.WorkerExit do
   @moduledoc "Classifies a monitored provider worker exit as an orchestration action."
 
+  alias ReyCode.Failure
   alias ReyCode.Orchestration.{Invocation, ToolRuns}
 
   @terminal [:completed, :failed, :cancelled]
 
-  @type action :: :ignore | :release | :requeue | {:fail, map()}
+  @type action :: :ignore | :release | :requeue | {:fail, Failure.t()}
 
   @spec classify(Invocation.t() | nil, term(), (term() -> boolean())) :: action()
   def classify(nil, _reason, _replayable?), do: :ignore
@@ -27,11 +28,11 @@ defmodule ReyCode.Orchestration.Engine.WorkerExit do
 
       true ->
         {:fail,
-         %{
-           "category" => "worker_exit",
-           "message" => "Provider worker exited before recording a result: #{inspect(reason)}",
-           "retryable" => replayable?.(invocation.participant.provider)
-         }}
+         Failure.new(
+           :worker_exit,
+           "Provider worker exited before recording a result: #{inspect(reason)}",
+           replayable?.(invocation.participant.provider)
+         )}
     end
   end
 end

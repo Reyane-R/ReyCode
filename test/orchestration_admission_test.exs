@@ -39,7 +39,7 @@ defmodule ReyCode.Orchestration.AdmissionTest do
          do: projection
     end)
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :completed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
   end
 
   test "rejects queued turns when the configured global queue is full", %{store: store} do
@@ -57,7 +57,7 @@ defmodule ReyCode.Orchestration.AdmissionTest do
     assert {:error, :global_queue_full} =
              Engine.post_message(room_id, "Do not enqueue", :compare, @engine)
 
-    assert Wait.terminal_turn(@engine, turn_id).status == :completed
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
   end
 
   test "durably cancels running and queued invocations without retries", %{store: store} do
@@ -74,7 +74,7 @@ defmodule ReyCode.Orchestration.AdmissionTest do
 
     projection = Engine.snapshot(@engine)
     turn = projection.turns[turn_id]
-    assert turn.status == :cancelled
+    assert turn.status == :terminal
     assert turn.outcome == :cancelled
     assert Enum.all?(turn.invocation_order, &(projection.invocations[&1].status == :cancelled))
     assert EventStore.load(store) |> Enum.any?(&(&1.type == :invocation_cancelled))

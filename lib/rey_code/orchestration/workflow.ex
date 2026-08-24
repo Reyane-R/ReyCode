@@ -5,7 +5,7 @@ defmodule ReyCode.Orchestration.Workflow do
 
   @type spec :: %{
           participant_id: String.t(),
-          stage: non_neg_integer(),
+          phase_index: non_neg_integer(),
           label: String.t(),
           system_prompt: String.t()
         }

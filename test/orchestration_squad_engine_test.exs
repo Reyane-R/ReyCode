@@ -18,7 +18,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     snapshot = Engine.snapshot(engine)
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
     assert turn.squad.workflow_version == "squad-v3"
     assert turn.squad.phase == "release_gate"
     assert turn.squad.rework_count == 0
@@ -29,7 +29,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
              architect squad_leader
            )
 
-    assert Enum.all?(turn.squad.decisions, &(&1.role_id == "squad_leader"))
+    assert Enum.all?(turn.squad.resolutions, &(&1.resolver_id == "squad_leader"))
 
     assert MapSet.new(turn.squad.artifacts, & &1.kind) ==
              MapSet.new(~w(
@@ -53,7 +53,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
 
     turn = wait_until_terminal(turn_id, engine)
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
     assert turn.squad.rework_count == 1
     assert turn.squad.cycle == 1
     assert Enum.count(turn.squad.artifacts, &(&1.kind == "integrated_implementation")) == 2
@@ -85,7 +85,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
       |> Enum.map(&snapshot.invocations[&1])
       |> Enum.filter(&(&1.phase == "stories"))
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
     assert Enum.map(analyst_attempts, & &1.attempt) == [1, 2]
     assert Enum.uniq_by(analyst_attempts, & &1.logical_work_id) |> length() == 1
   end
@@ -113,9 +113,9 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
       |> Enum.map(&snapshot.invocations[&1])
       |> Enum.filter(&(&1.phase == "stories"))
 
-    assert turn.status == :failed
+    assert turn.outcome == :failed
     assert Enum.map(analyst_attempts, & &1.attempt) == [1]
-    assert hd(analyst_attempts).error["retryable"] == false
+    refute hd(analyst_attempts).error.retryable?
 
     refute Enum.any?(EventStore.load(store), fn event ->
              event.type == :squad_retry_scheduled and event.data["turn_id"] == turn_id and
@@ -129,8 +129,8 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert :ok = Engine.configure_squad_roles(room_id, ["analyst", "architect"], :simulator, nil)
     room = ReyCode.snapshot().rooms[room_id]
 
-    assert room.squad_roles["analyst"].provider == :simulator
-    assert room.squad_roles["architect"].name == "Architect"
+    assert room.squad_seats["analyst"].provider == :simulator
+    assert room.squad_seats["architect"].name == "Architect"
   end
 
   test "records an owner directive on a running squad turn" do
@@ -173,11 +173,11 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     turn = wait_until_pending_review(turn_id, engine)
     assert turn.status == :running
     assert turn.squad.phase == "release_gate"
-    assert turn.squad.pending_review.decision == "approve"
-    assert turn.squad.pending_review.actor == "agent"
-    refute Enum.any?(turn.squad.decisions, &(&1.phase == "release_gate"))
+    assert turn.squad.pending_review.recommendation.decision == "approve"
+    assert turn.squad.pending_review.recommendation.role_id == "squad_leader"
+    refute Enum.any?(turn.squad.resolutions, &(&1.phase == "release_gate"))
 
-    review_id = turn.squad.pending_review.review_id
+    review_id = turn.squad.pending_review.id
 
     assert {:error, :invalid_gate_decision} =
              Engine.resolve_gate(turn_id, review_id, :ship, nil, [], engine)
@@ -196,10 +196,10 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
              )
 
     completed = wait_until_terminal(turn_id, engine)
-    assert completed.status == :completed
+    assert completed.outcome == :completed
     assert completed.squad.pending_review == nil
-    assert completed.squad.latest_gate.actor == "human"
-    assert completed.squad.latest_gate.role_id == "human_owner"
+    assert completed.squad.latest_resolution.authority == :owner
+    assert completed.squad.latest_resolution.resolver_id == "human_owner"
 
     event_types =
       EventStore.load(store)
@@ -241,13 +241,13 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
 
       assert turn.status == :running
       assert turn.squad.rework_count == cycle - 1
-      assert turn.squad.pending_review.decision == "rework"
+      assert turn.squad.pending_review.recommendation.decision == "rework"
       assert turn.squad.pending_review.cycle == cycle - 1
 
       assert :ok =
                Engine.resolve_gate(
                  turn_id,
-                 turn.squad.pending_review.review_id,
+                 turn.squad.pending_review.id,
                  :rework,
                  "integration",
                  ["owner approves cycle #{cycle}"],
@@ -258,12 +258,12 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     flush_projection_snapshots()
 
     final = wait_until_pending_review(turn_id, engine)
-    assert final.squad.pending_review.decision == "approve"
+    assert final.squad.pending_review.recommendation.decision == "approve"
 
     assert :ok =
              Engine.resolve_gate(
                turn_id,
-               final.squad.pending_review.review_id,
+               final.squad.pending_review.id,
                :approve,
                nil,
                ["owner approves release"],
@@ -271,7 +271,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
              )
 
     completed = wait_until_terminal(turn_id, engine)
-    assert completed.status == :completed
+    assert completed.outcome == :completed
 
     # Four reworks happened: three budgeted plus one durably granted by the
     # owner beyond the budget (squad_budget_extended event).
@@ -294,26 +294,26 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert RuntimeConfig.load!().squad.release_gate_human? == false
 
     turn = wait_until_pending_review(turn_id, engine)
-    assert turn.squad.release_authority == "human"
-    assert turn.squad.pending_review.decision == "approve"
+    assert turn.squad.release_authority == :owner
+    assert turn.squad.pending_review.recommendation.decision == "approve"
 
     assert :ok =
              Engine.resolve_gate(
                turn_id,
-               turn.squad.pending_review.review_id,
+               turn.squad.pending_review.id,
                :approve,
                nil,
                ["owner approves release"],
                engine
              )
 
-    assert wait_until_terminal(turn_id, engine).status == :completed
+    assert wait_until_terminal(turn_id, engine).outcome == :completed
   end
 
   test "blocks a squad turn when required roles are unconfigured" do
     assert {:ok, room_id} = ReyCode.create_room("Unconfigured Squad", System.tmp_dir!())
 
-    assert {:error, {:squad_roles_unconfigured, missing}} =
+    assert {:error, {:squad_seats_unconfigured, missing}} =
              ReyCode.post_message(room_id, "Do not start", :squad)
 
     assert length(missing) == 12
@@ -336,7 +336,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     turn = wait_until_terminal(turn_id, engine)
     snapshot = Engine.snapshot(engine)
 
-    assert turn.status == :completed
+    assert turn.outcome == :completed
 
     active_duplicates =
       turn.invocation_order

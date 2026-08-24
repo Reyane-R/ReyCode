@@ -1,11 +1,17 @@
 defmodule ReyCode.EventStore do
   @moduledoc """
-  A single-writer transactional event store backed by SQLite.
+  Single-writer transactional EventStore backed by SQLite.
 
-  Legacy schema-v2 NDJSON logs are no longer written; point `:legacy_path`
-  at one to import its events once, before the SQLite store has any of its
-  own. A focused reader for that format lives in
-  `ReyCode.EventStore.LegacyNDJSON`.
+  Appends are atomic and may enforce the caller's expected global sequence;
+  a mismatch fails without writing. Checkpoints are map-based, checksummed,
+  size-bounded snapshots. Legacy schema-v2 NDJSON may be imported once before
+  SQLite contains events.
+
+  Public storage calls wait indefinitely because a caller timing out after an
+  unknown commit point could retry a transaction whose durability is unknown.
+  The EventStore process owns completion; callers cancel by terminating their
+  supervised operation, while store failure is handled by rest-for-one
+  supervision. SQLite and validation failures are returned as tagged errors.
   """
 
   use GenServer

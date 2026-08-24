@@ -8,17 +8,22 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
 
   alias Exqlite.Sqlite3
   alias ReyCode.EventStore.SQLite.{Backup, Checkpoint, Migrations, Sql}
-  alias ReyCode.Hashing
+  alias ReyCode.{Failure, Hashing}
 
   alias ReyCode.Orchestration.{
     Invocation,
     Message,
     Participant,
     Projection,
+    ProviderRound,
     Room,
+    SquadRun,
     ToolRun,
     Turn
   }
+
+  alias ReyCode.Orchestration.Squad.{GateRecommendation, GateResolution, GateReview, Seat}
+  alias ReyCode.Provider.ToolCall
 
   describe "checkpoint codec" do
     test "round-trips typed records through the map-based checkpoint wire format" do
@@ -29,20 +34,76 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
         provider: :simulator
       }
 
+      seat = %Seat{
+        id: "analyst",
+        role_id: "analyst",
+        name: "Analyst",
+        perspective: "analysis",
+        provider: :simulator
+      }
+
+      failure = Failure.new(:timeout, "timed out", true)
+      recommendation = %GateRecommendation{decision: "approve"}
+      review = %GateReview{id: "review-1", phase: "release_gate", recommendation: recommendation}
+
+      resolution = %GateResolution{
+        review_id: "review-1",
+        resolver_id: "human_owner",
+        authority: :owner,
+        decision: "approve",
+        phase: "release_gate"
+      }
+
+      squad = %SquadRun{
+        room_id: "room-1",
+        workflow_version: "squad-v3",
+        phase_index: 14,
+        phase: "release_gate",
+        rework_budget: 3,
+        role_ids: ["analyst"],
+        reviews: [review],
+        resolutions: [resolution],
+        latest_resolution: resolution
+      }
+
       projection = %Projection{
         sequence: 12,
         rooms: %{
-          "room-1" => %Room{id: "room-1", slug: "alpha", participants: [participant]}
+          "room-1" => %Room{
+            id: "room-1",
+            slug: "alpha",
+            participants: [participant],
+            squad_seats: %{"analyst" => seat}
+          }
         },
         room_order: ["room-1"],
-        messages: %{"msg-1" => %Message{id: "msg-1", room_id: "room-1", body: "Hello"}},
-        turns: %{"turn-1" => %Turn{id: "turn-1", room_id: "room-1"}},
+        messages: %{
+          "msg-1" => %Message{id: "msg-1", room_id: "room-1", body: "Hello", error: failure}
+        },
+        turns: %{
+          "turn-1" => %Turn{
+            id: "turn-1",
+            room_id: "room-1",
+            status: :terminal,
+            outcome: :completed,
+            squad: squad
+          }
+        },
         invocations: %{
           "inv-1" => %Invocation{
             id: "inv-1",
             participant: participant,
+            phase_index: 0,
             usage: %{slug: :alpha, ratio: 0.5, span: {1, 2}},
-            tool_runs: %{"run-1" => %ToolRun{id: "run-1", status: :completed}}
+            rounds: [
+              %ProviderRound{
+                index: 0,
+                text: "read",
+                tool_calls: [ToolCall.new("call-1", "read", %{"path" => "mix.exs"})]
+              }
+            ],
+            tool_runs: %{"run-1" => %ToolRun{id: "run-1", status: :completed}},
+            error: failure
           }
         }
       }

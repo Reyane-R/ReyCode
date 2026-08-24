@@ -152,7 +152,7 @@ defmodule ReyCode.Provider.Simulator do
       gate_output(request, scenario, phase)
     else
       role = Squad.role(request.participant.id)
-      artifacts = Enum.filter(role.artifacts, &(&1 in phase.artifacts))
+      artifacts = Enum.filter(role.artifacts, &(&1 in phase.artifact_kinds))
 
       outputs =
         Enum.map(artifacts, fn artifact_type ->
@@ -177,7 +177,7 @@ defmodule ReyCode.Provider.Simulator do
       %{
         "kind" => "gate",
         "decision" => "rework",
-        "target_phase" => phase.rework_to,
+        "target_phase" => phase.rework_phase,
         "reasons" => ["Seeded simulator requested another remediation cycle"]
       }
     else

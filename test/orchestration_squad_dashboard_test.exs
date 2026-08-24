@@ -2,15 +2,30 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Orchestration.Squad
-  alias ReyCode.Orchestration.Squad.Dashboard
+
+  alias ReyCode.Orchestration.Squad.{
+    Dashboard,
+    GateRecommendation,
+    GateResolution,
+    GateReview,
+    Phase
+  }
+
+  alias ReyCode.Orchestration.SquadRun
 
   test "shapes the most recent squad turn for a room" do
     older = squad_turn("older", "room-1", "2026-01-01T00:00:00Z")
 
     newer =
       squad_turn("newer", "room-1", "2026-01-02T00:00:00Z", %{
-        decisions: [%{id: 1}, %{id: 2}],
-        gate_reviews: [%{id: 3}, %{id: 4}],
+        resolutions: [
+          %GateResolution{review_id: "1", resolver_id: "squad_leader", authority: :squad_leader},
+          %GateResolution{review_id: "2", resolver_id: "squad_leader", authority: :squad_leader}
+        ],
+        reviews: [
+          %GateReview{id: "3", recommendation: %GateRecommendation{}},
+          %GateReview{id: "4", recommendation: %GateRecommendation{}}
+        ],
         artifacts: [%{id: 5}, %{id: 6}],
         retries: [%{id: 7}, %{id: 8}],
         directives: [%{id: 9}, %{id: 10}]
@@ -25,8 +40,8 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
 
     assert dashboard.turn == newer
     assert dashboard.phases == Enum.with_index(Squad.phases())
-    assert dashboard.decisions == [%{id: 2}, %{id: 1}]
-    assert dashboard.reviews == [%{id: 4}, %{id: 3}]
+    assert Enum.map(dashboard.resolutions, & &1.review_id) == ["2", "1"]
+    assert Enum.map(dashboard.reviews, & &1.id) == ["4", "3"]
     assert dashboard.artifacts == [%{id: 6}, %{id: 5}]
     assert dashboard.retries == [%{id: 8}, %{id: 7}]
     assert dashboard.directives == [%{id: 10}, %{id: 9}]
@@ -53,8 +68,8 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
   end
 
   test "marks completed, current, pending, and terminal current phases" do
-    running = squad_turn("running", "room-1", "", %{stage: 1, status: :running})
-    completed = put_in(running.status, :completed)
+    running = squad_turn("running", "room-1", "", %{phase_index: 1, status: :running})
+    completed = %{running | status: :terminal, outcome: :completed}
 
     assert Dashboard.phase_marker(0, running) == "[x]"
     assert Dashboard.phase_class(0, running) == "text-success"
@@ -66,26 +81,33 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
   end
 
   test "builds the exact dashboard labels" do
-    assert Dashboard.gate_label(%{gate: true}) == "  [gate]"
-    assert Dashboard.gate_label(%{}) == ""
+    assert Dashboard.gate_label(%Phase{id: "gate", gate?: true}) == "  [gate]"
+    assert Dashboard.gate_label(%Phase{id: "work"}) == ""
 
-    assert Dashboard.decision_label(%{
+    assert Dashboard.resolution_label(%GateResolution{
              phase: "story_gate",
              cycle: 2,
              decision: "rework",
-             actor: "owner",
+             authority: :owner,
+             resolver_id: "human_owner",
              target_phase: "stories"
            }) == "story_gate / cycle 2 / rework / owner -> stories"
 
-    assert Dashboard.decision_label(%{
+    assert Dashboard.resolution_label(%GateResolution{
              phase: "story_gate",
              cycle: 0,
              decision: "approve",
+             authority: :squad_leader,
+             resolver_id: "squad_leader",
              target_phase: nil
-           }) == "story_gate / cycle 0 / approve / agent"
+           }) == "story_gate / cycle 0 / approve / squad_leader"
 
-    assert Dashboard.review_label(%{phase: "release_gate", cycle: 1, decision: "approve"}) ==
-             "release_gate / cycle 1 / leader recommends approve"
+    assert Dashboard.review_label(%GateReview{
+             id: "review-1",
+             phase: "release_gate",
+             cycle: 1,
+             recommendation: %GateRecommendation{decision: "approve"}
+           }) == "release_gate / cycle 1 / leader recommends approve"
 
     assert Dashboard.artifact_label(%{kind: "stories", phase: "story_review", cycle: 0}) ==
              "stories / story_review / cycle 0"
@@ -144,20 +166,26 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
   end
 
   defp squad_turn(id, room_id, created_at, overrides \\ %{}) do
-    squad = %{
-      stage: 0,
-      decisions: [],
-      artifacts: [],
-      retries: []
-    }
+    status = Map.get(overrides, :status, :terminal)
+    outcome = Map.get(overrides, :outcome, if(status == :terminal, do: :completed))
+
+    squad =
+      struct!(
+        SquadRun,
+        Map.merge(
+          %{room_id: room_id, phase_index: 0, resolutions: [], artifacts: [], retries: []},
+          Map.drop(overrides, [:status, :outcome])
+        )
+      )
 
     %{
       id: id,
       room_id: room_id,
       mode: :squad,
-      status: Map.get(overrides, :status, :completed),
+      status: status,
+      outcome: outcome,
       invocation_order: [],
-      squad: Map.merge(squad, Map.drop(overrides, [:status])),
+      squad: squad,
       created_at: created_at
     }
   end

@@ -53,7 +53,8 @@ defmodule Mix.Tasks.ReyCode.Squad do
       turn = execute_turn(room_id, workspace, config)
       Mix.shell().info(render(turn, workspace, config.format))
 
-      if turn.status != :completed, do: Mix.raise("Squad did not approve the theme")
+      if turn.status != :terminal or turn.outcome != :completed,
+        do: Mix.raise("Squad did not approve the theme")
     end)
   end
 
@@ -199,9 +200,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
     if phase != nil and phase != previous_phase, do: Mix.shell().info("[squad] #{phase}")
   end
 
-  defp step(%{status: status} = turn, _turn_id, _config, _phase, _attempts)
-       when status in [:completed, :failed, :partial],
-       do: turn
+  defp step(%{status: :terminal} = turn, _turn_id, _config, _phase, _attempts), do: turn
 
   defp step(turn, turn_id, config, phase, attempts) do
     if human_gate_pending?(turn, config) do
@@ -223,11 +222,15 @@ defmodule Mix.Tasks.ReyCode.Squad do
   # review id so a stale answer can never resolve a newer gate.
   defp resolve_human_gate(turn_id, turn) do
     review = turn.squad.pending_review
-    Mix.shell().info("[squad] release gate awaiting the owner (leader says: #{review.decision})")
+
+    Mix.shell().info(
+      "[squad] release gate awaiting the owner (leader says: " <>
+        "#{review.recommendation.decision})"
+    )
 
     decision = prompt_gate_decision()
 
-    case ReyCode.resolve_gate(turn_id, Map.get(review, :review_id), decision, nil, []) do
+    case ReyCode.resolve_gate(turn_id, review.id, decision, nil, []) do
       :ok ->
         Mix.shell().info("[squad] release gate resolved: #{decision}")
 
@@ -265,13 +268,13 @@ defmodule Mix.Tasks.ReyCode.Squad do
       turn_id: turn.id,
       room_id: turn.room_id,
       workspace: workspace,
-      status: turn.status,
+      status: turn.outcome || turn.status,
       workflow_version: turn.squad.workflow_version,
       phase: turn.squad.phase,
       cycle: turn.squad.cycle,
       rework_count: turn.squad.rework_count,
       artifacts: Enum.reverse(turn.squad.artifacts),
-      gates: Enum.reverse(turn.squad.decisions)
+      gates: Enum.reverse(turn.squad.resolutions)
     }
   end
 
@@ -279,7 +282,9 @@ defmodule Mix.Tasks.ReyCode.Squad do
   def render(turn, workspace, :json), do: turn |> summary(workspace) |> Jason.encode!()
 
   def render(turn, _workspace, :human) do
-    "Squad #{turn.status}: #{turn.squad.phase}, cycle #{turn.squad.cycle}, " <>
+    result = turn.outcome || turn.status
+
+    "Squad #{result}: #{turn.squad.phase}, cycle #{turn.squad.cycle}, " <>
       "rework #{turn.squad.rework_count}/#{turn.squad.rework_budget}"
   end
 end

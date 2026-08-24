@@ -46,7 +46,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
         {:error,
          HTTP.error(
-           "launch_failed",
+           :launch_failed,
            "Provider stream crashed: #{Exception.message(exception)}",
            false
          )}
@@ -57,7 +57,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
         {:error,
          HTTP.error(
-           "launch_failed",
+           :launch_failed,
            "Provider stream crashed: #{Exception.format_banner(kind, reason)}",
            false
          )}
@@ -110,6 +110,9 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
         Process.demonitor(monitor, [:flush])
         {:halt, acc, error}
 
+      # The owning session enforces the provider deadline; timeout shutdown kills
+      # the transport task, which triggers this monitor and bounds the wait.
+
       {:DOWN, ^monitor, :process, ^transport_owner, _reason} ->
         {:halt, acc, cancellation_error()}
     end
@@ -155,8 +158,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
         finish_stream(result, session, state)
 
       {:DOWN, ^task_ref, :process, _pid, reason} ->
-        {:error,
-         HTTP.error("launch_failed", "Provider stream crashed: #{inspect(reason)}", false)}
+        {:error, HTTP.error(:launch_failed, "Provider stream crashed: #{inspect(reason)}", false)}
     after
       max(receive_for, 0) -> await_stream(session, state)
     end
@@ -248,10 +250,10 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   end
 
   defp timeout_error(timeout),
-    do: HTTP.error("timeout", "Provider did not finish within #{timeout}ms", true)
+    do: HTTP.error(:timeout, "Provider did not finish within #{timeout}ms", true)
 
   defp cancellation_error,
-    do: HTTP.error("request_cancelled", "Provider request was cancelled", false)
+    do: HTTP.error(:request_cancelled, "Provider request was cancelled", false)
 
   defp min_deadline(deadline, nil), do: deadline
   defp min_deadline(deadline, flush_deadline), do: min(deadline, flush_deadline)
@@ -277,7 +279,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
           exception ->
             {:error,
              HTTP.error(
-               "launch_failed",
+               :launch_failed,
                "Provider callback crashed: #{Exception.message(exception)}",
                false
              )}
@@ -285,7 +287,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
           kind, reason ->
             {:error,
              HTTP.error(
-               "launch_failed",
+               :launch_failed,
                "Provider callback crashed: #{Exception.format_banner(kind, reason)}",
                false
              )}
@@ -298,7 +300,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
       {:exit, reason} ->
         {:error,
-         HTTP.error("launch_failed", "Provider callback exited: #{inspect(reason)}", false)}
+         HTTP.error(:launch_failed, "Provider callback exited: #{inspect(reason)}", false)}
 
       nil ->
         :timeout
@@ -312,7 +314,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
     if bytes > state.max_bytes do
       {:halt, state,
-       HTTP.error("output_too_large", "Provider output exceeded #{state.max_bytes} bytes", false)}
+       HTTP.error(:output_too_large, "Provider output exceeded #{state.max_bytes} bytes", false)}
     else
       {events, parser} = SSE.feed(state.parser, data)
 
@@ -461,7 +463,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   defp valid_stream?(_state), do: protocol_error()
 
   defp protocol_error,
-    do: {:error, HTTP.error("protocol_error", @protocol_error_message, false)}
+    do: {:error, HTTP.error(:protocol_error, @protocol_error_message, false)}
 
   defp authorization(key), do: [{"Authorization", "Bearer " <> key}]
 

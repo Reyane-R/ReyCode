@@ -85,7 +85,8 @@ defmodule ReyCode.SquadMixTaskTest do
     turn = %{
       id: "turn-1",
       room_id: "room-1",
-      status: :completed,
+      status: :terminal,
+      outcome: :completed,
       squad: %{
         workflow_version: 1,
         phase: :completed,
@@ -93,7 +94,7 @@ defmodule ReyCode.SquadMixTaskTest do
         rework_count: 0,
         rework_budget: 3,
         artifacts: [],
-        decisions: []
+        resolutions: []
       }
     }
 
@@ -109,7 +110,8 @@ defmodule ReyCode.SquadMixTaskTest do
     turn = %{
       id: "turn-1",
       room_id: "room-1",
-      status: :completed,
+      status: :terminal,
+      outcome: :completed,
       squad: %{
         workflow_version: 1,
         phase: :completed,
@@ -117,7 +119,7 @@ defmodule ReyCode.SquadMixTaskTest do
         rework_count: 1,
         rework_budget: 3,
         artifacts: [],
-        decisions: []
+        resolutions: []
       }
     }
 
