@@ -7,41 +7,37 @@ defmodule ReyCode.Orchestration.Engine.Configuration do
   @type plan_result :: {:ok, [EventEntries.event_entry()]} | {:error, atom()}
 
   @doc "Validates and plans configuration events for selected room participants."
-  @spec participants(map(), term(), term(), term(), term(), GenServer.server(), map()) ::
-          plan_result()
-  def participants(projection, room_id, raw_ids, provider, model, provider_catalog, config) do
-    room = projection.rooms[room_id]
+  @spec participants(map(), term(), term(), atom(), term()) :: plan_result()
+  def participants(state, room_id, raw_ids, provider, model) do
+    room = state.projection.rooms[room_id]
     participant_ids = raw_ids |> List.wrap() |> Enum.uniq()
     available_ids = if room, do: Enum.map(room.participants, & &1.id), else: []
 
-    plan(
-      room,
-      participant_ids,
-      available_ids,
-      provider,
-      model,
-      provider_catalog,
-      config,
-      fn model ->
-        EventEntries.participant_configuration(room_id, participant_ids, provider, model)
-      end
-    )
+    with :ok <- validate_selection(room, participant_ids, available_ids),
+         {:ok, model} <- resolve_model(state, provider, model) do
+      {:ok, EventEntries.participant_configuration(room_id, participant_ids, provider, model)}
+    end
   end
 
   @doc "Validates and plans configuration events for selected squad roles."
-  @spec squad_roles(map(), term(), term(), term(), term(), GenServer.server(), map()) ::
-          plan_result()
-  def squad_roles(projection, room_id, raw_ids, provider, model, provider_catalog, config) do
-    room = projection.rooms[room_id]
+  @spec squad_roles(map(), term(), term(), atom(), term()) :: plan_result()
+  def squad_roles(state, room_id, raw_ids, provider, model) do
     role_ids = raw_ids |> List.wrap() |> Enum.uniq()
-    available_ids = Enum.map(Squad.roles(), & &1.id)
 
-    plan(room, role_ids, available_ids, provider, model, provider_catalog, config, fn model ->
-      EventEntries.squad_role_configuration(room_id, role_ids, provider, model)
-    end)
+    with :ok <-
+           validate_selection(
+             state.projection.rooms[room_id],
+             role_ids,
+             Enum.map(Squad.roles(), & &1.id)
+           ),
+         {:ok, model} <- resolve_model(state, provider, model) do
+      {:ok, EventEntries.squad_role_configuration(room_id, role_ids, provider, model)}
+    end
   end
 
-  defp plan(room, ids, available_ids, provider, raw_model, provider_catalog, config, entries) do
+  # Error precedence is part of the contract: target room, then selection
+  # shape, then membership, then provider configuration, then model/runtime.
+  defp validate_selection(room, ids, available_ids) do
     cond do
       room == nil ->
         {:error, :room_not_found}
@@ -52,17 +48,30 @@ defmodule ReyCode.Orchestration.Engine.Configuration do
       Enum.any?(ids, &(&1 not in available_ids)) ->
         {:error, :participant_not_found}
 
-      not Registry.configurable_provider?(provider, config: config) ->
-        {:error, :unknown_provider}
-
-      provider == :simulator ->
-        {:ok, entries.(nil)}
-
       true ->
-        with {:ok, model} <- Validation.model(raw_model),
-             {:ok, _runtime} <- Catalog.resolve(provider, model, provider_catalog) do
-          {:ok, entries.(model)}
-        end
+        :ok
+    end
+  end
+
+  defp resolve_model(state, provider, raw_model) do
+    with :ok <- configurable?(state, provider) do
+      model_for(state, provider, raw_model)
+    end
+  end
+
+  defp configurable?(state, provider) do
+    if Registry.configurable_provider?(provider, config: state.config),
+      do: :ok,
+      else: {:error, :unknown_provider}
+  end
+
+  # The simulator is its own runtime: it needs no model or catalog entry.
+  defp model_for(_state, :simulator, _raw_model), do: {:ok, nil}
+
+  defp model_for(state, provider, raw_model) do
+    with {:ok, model} <- Validation.model(raw_model),
+         {:ok, _runtime} <- Catalog.resolve(provider, model, state.provider_catalog) do
+      {:ok, model}
     end
   end
 end

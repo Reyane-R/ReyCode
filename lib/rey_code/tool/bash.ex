@@ -12,7 +12,7 @@ defmodule ReyCode.Tool.Bash do
   """
 
   alias ReyCode.Provider.TextBuffer
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Tools.Bash, as: BashPolicy
   alias ReyCode.Security.{Environment, Workspace}
   alias ReyCode.Tool.{Request, Result, Support}
 
@@ -24,7 +24,7 @@ defmodule ReyCode.Tool.Bash do
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    policy = Keyword.fetch!(opts, :policy)
+    %BashPolicy{} = policy = Keyword.fetch!(opts, :policy)
 
     with {:ok, command} <- Support.require_arg(arguments, :command),
          :ok <- Support.require_present(command, :missing_command),
@@ -60,9 +60,9 @@ defmodule ReyCode.Tool.Bash do
   defp environment_opts(policy) do
     [
       source: System.get_env(),
-      additional_names: RuntimeConfig.policy(policy, :tool_bash_env_allowlist, []),
-      cpu_seconds: RuntimeConfig.policy(policy, :tool_bash_cpu_seconds, 120),
-      open_files: RuntimeConfig.policy(policy, :tool_bash_open_files, 1_024)
+      additional_names: policy.env_allowlist,
+      cpu_seconds: policy.cpu_seconds,
+      open_files: policy.open_files
     ]
   end
 
@@ -220,9 +220,9 @@ defmodule ReyCode.Tool.Bash do
 
   defp limits(policy) do
     %{
-      timeout_ms: RuntimeConfig.policy(policy, :tool_bash_timeout_ms, 30_000),
-      max_output_bytes: RuntimeConfig.policy(policy, :tool_bash_max_output_bytes, 256_000),
-      max_error_bytes: RuntimeConfig.policy(policy, :tool_bash_max_error_bytes, 64_000)
+      timeout_ms: policy.timeout_ms,
+      max_output_bytes: policy.max_output_bytes,
+      max_error_bytes: policy.max_error_bytes
     }
   end
 end

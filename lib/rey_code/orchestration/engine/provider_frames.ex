@@ -1,9 +1,10 @@
 defmodule ReyCode.Orchestration.Engine.ProviderFrames do
   @moduledoc "Validates and deduplicates one contiguous provider-frame batch."
 
+  alias ReyCode.Orchestration.Invocation
   alias ReyCode.Provider.Frame
 
-  @spec collect(map(), [term()]) :: {:ok, [Frame.t()]} | {:error, atom()}
+  @spec collect(Invocation.t(), [term()]) :: {:ok, [Frame.t()]} | {:error, atom()}
   def collect(invocation, frames) do
     frames
     |> Enum.reduce_while({:ok, [], invocation.last_frame_sequence}, &collect_frame/2)

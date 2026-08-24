@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.EventEntries do
   @moduledoc "Pure construction of orchestration event entries."
 
-  alias ReyCode.Orchestration.Squad
+  alias ReyCode.Orchestration.{Invocation, Room, Squad, ToolRun, Turn}
   alias ReyCode.Provider.Frame
 
   @type event_entry :: {atom(), map(), keyword()}
@@ -105,7 +105,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the event that marks a turn as running."
-  @spec turn_started(map()) :: event_entry()
+  @spec turn_started(Turn.t()) :: event_entry()
   def turn_started(turn) do
     event(
       :turn_started,
@@ -118,7 +118,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the terminal event for a turn."
-  @spec turn_completed(map(), atom()) :: event_entry()
+  @spec turn_completed(Turn.t(), atom()) :: event_entry()
   def turn_completed(turn, outcome) do
     event(
       :turn_completed,
@@ -135,7 +135,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the invocation and turn events required to cancel a turn."
-  @spec cancel_turn(map(), [map()], String.t()) :: [event_entry()]
+  @spec cancel_turn(Turn.t(), [Invocation.t()], String.t()) :: [event_entry()]
   def cancel_turn(turn, invocations, reason) do
     turn_entry =
       event(
@@ -151,7 +151,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds cancellation events for active invocations without completing their turn."
-  @spec cancel_invocations([map()], String.t()) :: [event_entry()]
+  @spec cancel_invocations([Invocation.t()], String.t()) :: [event_entry()]
   def cancel_invocations(invocations, reason) do
     Enum.map(invocations, fn invocation ->
       invocation_event(
@@ -169,7 +169,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the event that marks a queued invocation as running."
-  @spec invocation_started(map()) :: event_entry()
+  @spec invocation_started(Invocation.t()) :: event_entry()
   def invocation_started(invocation) do
     invocation_event(
       :invocation_started,
@@ -184,7 +184,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event for a validated provider frame."
-  @spec provider_frame(map(), Frame.t()) :: event_entry()
+  @spec provider_frame(Invocation.t(), Frame.t()) :: event_entry()
   def provider_frame(invocation, frame) do
     data =
       Map.merge(Frame.to_event_data(frame), %{
@@ -198,7 +198,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds an operator directive event for a running squad turn."
-  @spec squad_directive(map(), String.t()) :: event_entry()
+  @spec squad_directive(Turn.t(), String.t()) :: event_entry()
   def squad_directive(turn, directive) do
     event(
       :squad_directive_added,
@@ -217,7 +217,8 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the event recording a human gate decision."
-  @spec gate_resolved(map(), map(), atom(), String.t() | nil, [String.t()]) :: event_entry()
+  @spec gate_resolved(Turn.t(), map(), atom(), String.t() | nil, [String.t()]) ::
+          event_entry()
   def gate_resolved(turn, review, decision, target_phase, reasons) do
     event(
       :gate_resolved,
@@ -239,7 +240,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event for one normalized provider round."
-  @spec provider_round(map(), non_neg_integer(), map()) :: event_entry()
+  @spec provider_round(Invocation.t(), non_neg_integer(), map()) :: event_entry()
   def provider_round(invocation, round_index, round_data) do
     invocation_event(
       :provider_round_recorded,
@@ -258,7 +259,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event requesting one tool run under an authorization decision."
-  @spec tool_run_requested(map(), map()) :: event_entry()
+  @spec tool_run_requested(Invocation.t(), ToolRun.t()) :: event_entry()
   def tool_run_requested(invocation, run) do
     invocation_event(
       :tool_run_requested,
@@ -280,7 +281,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event recording the owner decision for a tool run."
-  @spec tool_run_approval_resolved(map(), map(), atom()) :: event_entry()
+  @spec tool_run_approval_resolved(Invocation.t(), ToolRun.t(), atom()) :: event_entry()
   def tool_run_approval_resolved(invocation, run, decision) do
     invocation_event(
       :tool_run_approval_resolved,
@@ -298,7 +299,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event marking a tool run as executing."
-  @spec tool_run_started(map(), map()) :: event_entry()
+  @spec tool_run_started(Invocation.t(), ToolRun.t()) :: event_entry()
   def tool_run_started(invocation, run) do
     invocation_event(
       :tool_run_started,
@@ -315,7 +316,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event recording a successful tool run result."
-  @spec tool_run_completed(map(), map(), map()) :: event_entry()
+  @spec tool_run_completed(Invocation.t(), ToolRun.t(), map()) :: event_entry()
   def tool_run_completed(invocation, run, result) do
     invocation_event(
       :tool_run_completed,
@@ -333,7 +334,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event recording a tool run failure outcome."
-  @spec tool_run_failed(map(), map(), map()) :: event_entry()
+  @spec tool_run_failed(Invocation.t(), ToolRun.t(), map()) :: event_entry()
   def tool_run_failed(invocation, run, error) do
     invocation_event(
       :tool_run_failed,
@@ -352,7 +353,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event recording an interrupted (indeterminate) tool run."
-  @spec tool_run_interrupted(map(), map(), String.t()) :: event_entry()
+  @spec tool_run_interrupted(Invocation.t(), ToolRun.t(), String.t()) :: event_entry()
   def tool_run_interrupted(invocation, run, reason) do
     invocation_event(
       :tool_run_interrupted,
@@ -370,7 +371,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the event durably extending a squad turn's rework budget."
-  @spec squad_budget_extended(map(), pos_integer()) :: event_entry()
+  @spec squad_budget_extended(Turn.t(), pos_integer()) :: event_entry()
   def squad_budget_extended(turn, budget) do
     event(
       :squad_budget_extended,
@@ -387,7 +388,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the configuration and initial-stage events for a squad turn."
-  @spec squad_start(map(), keyword()) :: [event_entry()]
+  @spec squad_start(Turn.t(), keyword()) :: [event_entry()]
   def squad_start(turn, config) do
     metadata = aggregate_metadata(:turn, turn.id, turn.room_id, turn.id)
 
@@ -420,7 +421,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the stage or rework event needed before the next squad invocations."
-  @spec squad_continue(map(), [map()]) :: [event_entry()]
+  @spec squad_continue(Turn.t(), [map()]) :: [event_entry()]
   def squad_continue(_turn, []), do: []
 
   def squad_continue(turn, [spec | _specs]) do
@@ -437,7 +438,8 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds assistant-message events that establish planned provider invocations."
-  @spec open_invocations(map(), map(), [map()], [{String.t(), String.t()}]) :: [event_entry()]
+  @spec open_invocations(Room.t(), Turn.t(), [map()], [{String.t(), String.t()}]) ::
+          [event_entry()]
   def open_invocations(room, turn, specs, generated_ids) do
     if length(specs) != length(generated_ids) do
       raise ArgumentError,
@@ -450,7 +452,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds an event entry correlated to an invocation's turn and room."
-  @spec invocation_event(atom(), map(), map()) :: event_entry()
+  @spec invocation_event(atom(), map(), Invocation.t()) :: event_entry()
   def invocation_event(type, data, invocation) do
     event(
       type,
@@ -463,7 +465,8 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the terminal event for a completed or failed invocation."
-  @spec invocation_terminal(map(), {:completed, map()} | {:failed, map()}) :: event_entry()
+  @spec invocation_terminal(Invocation.t(), {:completed, map()} | {:failed, map()}) ::
+          event_entry()
   def invocation_terminal(invocation, {:completed, metadata}) do
     invocation_event(
       :invocation_completed,
@@ -493,7 +496,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds the durable event that schedules another squad provider attempt."
-  @spec squad_provider_retry(map(), map()) :: event_entry()
+  @spec squad_provider_retry(Invocation.t(), map()) :: event_entry()
   def squad_provider_retry(invocation, error) do
     event(
       :squad_retry_scheduled,
@@ -594,7 +597,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "system_prompt" => spec.system_prompt,
         "attempt" => Map.get(spec, :attempt, 1)
       },
-      %{
+      %Invocation{
         id: invocation_id,
         room_id: room.id,
         turn_id: turn.id

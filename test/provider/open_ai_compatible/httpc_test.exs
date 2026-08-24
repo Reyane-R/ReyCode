@@ -31,7 +31,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
               request_timeout_ms: request_timeout_ms
             }
           ]
-        )
+        ).open_ai
     }
   end
 

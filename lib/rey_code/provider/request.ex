@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.Request do
   @moduledoc "Normalized input for one provider round."
 
+  alias ReyCode.Orchestration.Participant
   alias ReyCode.Provider.Message
 
   @enforce_keys [
@@ -36,13 +37,7 @@ defmodule ReyCode.Provider.Request do
     dependencies: []
   ]
 
-  @type participant :: %{
-          required(:id) => String.t(),
-          required(:name) => String.t(),
-          required(:perspective) => String.t(),
-          required(:provider) => atom() | String.t(),
-          required(:model) => String.t() | nil
-        }
+  @type participant :: Participant.t()
   @type t :: %__MODULE__{
           invocation_id: String.t(),
           turn_id: String.t(),

@@ -3,17 +3,13 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
   alias ReyCode.Provider.{Frame, Response, TextBuffer, ToolCall}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, SSE}
-  alias ReyCode.RuntimeConfig
-
-  @default_chunk_bytes 8_192
-  @default_chunk_latency_ms 50
   @protocol_error_message "Provider returned an invalid streaming response"
 
   defmodule Context do
     @moduledoc false
 
-    @enforce_keys [:transport, :profile, :key, :request, :body, :emit]
-    defstruct [:transport, :profile, :key, :request, :body, :emit, :config]
+    @enforce_keys [:transport, :profile, :key, :request, :body, :emit, :config]
+    defstruct @enforce_keys
   end
 
   defmodule StreamTask do
@@ -21,6 +17,13 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
     @enforce_keys [:pid, :ref]
     defstruct [:pid, :ref]
+  end
+
+  defmodule Session do
+    @moduledoc false
+
+    @enforce_keys [:task, :tag, :context, :deadline, :timeout]
+    defstruct [:task, :tag, :context, :deadline, :timeout]
   end
 
   def run(%Context{profile: profile} = context) do
@@ -31,8 +34,11 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
     state = initial_state(profile, context.request, context.config)
     task = start_stream_task(context, owner, tag)
 
+    session =
+      %Session{task: task, tag: tag, context: context, deadline: deadline, timeout: timeout}
+
     try do
-      await_stream(task, tag, context, state, deadline, timeout)
+      await_stream(session, state)
     rescue
       exception ->
         stop_stream_task(task)
@@ -109,153 +115,112 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
     end
   end
 
-  defp await_stream(task, tag, context, state, deadline, timeout) do
+  defp await_stream(%Session{} = session, state) do
     now = monotonic_ms()
     flush_deadline = TextBuffer.next_flush_deadline(state.text_buffer)
 
     cond do
-      now >= deadline ->
-        timeout(task, tag, timeout)
+      now >= session.deadline ->
+        timeout(session)
 
       is_integer(flush_deadline) and now >= flush_deadline ->
-        flush_and_continue(task, tag, context, state, deadline, timeout, now)
+        flush_and_continue(session, state, now)
 
       true ->
-        receive_for = min_deadline(deadline, flush_deadline) - now
-        receive_stream(task, tag, context, state, deadline, timeout, receive_for)
+        receive_for = min_deadline(session.deadline, flush_deadline) - now
+        receive_stream(session, state, receive_for)
     end
   end
 
-  defp flush_and_continue(task, tag, context, state, deadline, timeout, now) do
-    case call_before(fn -> flush_due(state, context.emit, now) end, deadline) do
-      {:ok, next} -> await_stream(task, tag, context, next, deadline, timeout)
-      {:error, error} -> halt_stream(task, tag, error, deadline)
-      :timeout -> timeout(task, tag, timeout)
+  defp flush_and_continue(%Session{} = session, state, now) do
+    emit = session.context.emit
+
+    case call_before(fn -> flush_due(state, emit, now) end, session.deadline) do
+      {:ok, next} -> await_stream(session, next)
+      {:error, error} -> halt_stream(session, error)
+      :timeout -> timeout(session)
     end
   end
 
-  defp receive_stream(task, tag, context, state, deadline, timeout, receive_for) do
-    %StreamTask{pid: task_pid, ref: task_ref} = task
+  defp receive_stream(%Session{} = session, state, receive_for) do
+    tag = session.tag
+    %StreamTask{pid: task_pid, ref: task_ref} = session.task
 
     receive do
       {^tag, :event, relay, acknowledgement, event} ->
-        handle_relay_event(
-          task,
-          tag,
-          context,
-          state,
-          deadline,
-          timeout,
-          {relay, acknowledgement, event}
-        )
+        handle_relay_event(session, state, {relay, acknowledgement, event})
 
       {^tag, :stream_result, ^task_pid, result} ->
-        Process.demonitor(task.ref, [:flush])
-        finish_stream(result, state, context.emit, deadline, timeout)
+        Process.demonitor(task_ref, [:flush])
+        finish_stream(result, session, state)
 
       {:DOWN, ^task_ref, :process, _pid, reason} ->
         {:error,
          HTTP.error("launch_failed", "Provider stream crashed: #{inspect(reason)}", false)}
     after
-      max(receive_for, 0) -> await_stream(task, tag, context, state, deadline, timeout)
+      max(receive_for, 0) -> await_stream(session, state)
     end
   end
 
-  defp handle_relay_event(
-         task,
-         tag,
-         context,
-         state,
-         deadline,
-         timeout,
-         {relay, acknowledgement, event}
-       ) do
-    result = call_before(fn -> handle_event(event, state, context) end, deadline)
-    handle_relay_result(result, task, tag, context, deadline, timeout, relay, acknowledgement)
+  defp handle_relay_event(%Session{} = session, state, {relay, acknowledgement, event}) do
+    result = call_before(fn -> handle_event(event, state, session.context) end, session.deadline)
+    handle_relay_result(result, session, state, relay, acknowledgement)
   end
 
-  defp handle_relay_result(
-         {:ok, {:cont, next}},
-         task,
-         tag,
-         context,
-         deadline,
-         timeout,
-         relay,
-         acknowledgement
-       ) do
-    send(relay, {tag, acknowledgement, :cont})
-    await_stream(task, tag, context, next, deadline, timeout)
+  defp handle_relay_result({:ok, {:cont, next}}, session, _state, relay, acknowledgement) do
+    send(relay, {session.tag, acknowledgement, :cont})
+    await_stream(session, next)
   end
 
   defp handle_relay_result(
          {:ok, {:halt, _next, error}},
-         task,
-         tag,
-         _context,
-         deadline,
-         _timeout,
+         session,
+         _state,
          relay,
          acknowledgement
        ),
-       do: halt_relay(task, tag, deadline, relay, acknowledgement, error)
+       do: halt_relay(session, relay, acknowledgement, error)
 
-  defp handle_relay_result(
-         {:error, error},
-         task,
-         tag,
-         _context,
-         deadline,
-         _timeout,
-         relay,
-         acknowledgement
-       ),
-       do: halt_relay(task, tag, deadline, relay, acknowledgement, error)
+  defp handle_relay_result({:error, error}, session, _state, relay, acknowledgement),
+    do: halt_relay(session, relay, acknowledgement, error)
 
-  defp handle_relay_result(
-         :timeout,
-         task,
-         tag,
-         _context,
-         deadline,
-         timeout,
-         relay,
-         acknowledgement
-       ),
-       do: halt_relay(task, tag, deadline, relay, acknowledgement, timeout_error(timeout))
+  defp handle_relay_result(:timeout, session, _state, relay, acknowledgement),
+    do: halt_relay(session, relay, acknowledgement, timeout_error(session.timeout))
 
-  defp halt_relay(task, tag, deadline, relay, acknowledgement, error) do
-    send(relay, {tag, acknowledgement, {:halt, error}})
-    halt_stream(task, tag, error, deadline)
+  defp halt_relay(%Session{} = session, relay, acknowledgement, error) do
+    send(relay, {session.tag, acknowledgement, {:halt, error}})
+    halt_stream(session, error)
   end
 
-  defp finish_stream({:ok, _final}, state, emit, deadline, timeout) do
+  defp finish_stream({:ok, _final}, %Session{} = session, state) do
     with :ok <- valid_stream?(state),
-         do: finish_valid_stream(state, emit, deadline, timeout)
+         do: finish_valid_stream(session, state)
   end
 
-  defp finish_stream({:error, error}, _state, _emit, _deadline, _timeout), do: {:error, error}
+  defp finish_stream({:error, error}, _session, _state), do: {:error, error}
 
-  defp finish_valid_stream(state, emit, deadline, timeout) do
-    case call_before(fn -> flush_pending(state, emit) end, deadline) do
+  defp finish_valid_stream(%Session{} = session, state) do
+    emit = session.context.emit
+
+    case call_before(fn -> flush_pending(state, emit) end, session.deadline) do
       {:ok, state} -> {:ok, response(state)}
       {:error, error} -> {:error, error}
-      :timeout -> {:error, timeout_error(timeout)}
+      :timeout -> {:error, timeout_error(session.timeout)}
     end
   end
 
-  defp halt_stream(task, tag, error, deadline) do
-    remaining = max(deadline - monotonic_ms(), 0)
-    await_or_stop_stream_task(task, tag, remaining)
-    cancel_relays(tag, error)
+  defp halt_stream(%Session{} = session, error) do
+    remaining = max(session.deadline - monotonic_ms(), 0)
+    await_or_stop_stream_task(session.task, session.tag, remaining)
+    cancel_relays(session.tag, error)
     {:error, error}
   end
 
-  defp timeout(task, tag, timeout) do
-    error = timeout_error(timeout)
-    cancel_relays(tag, error)
-    stop_stream_task(task)
-    cancel_relays(tag, error)
+  defp timeout(%Session{} = session) do
+    error = timeout_error(session.timeout)
+    cancel_relays(session.tag, error)
+    stop_stream_task(session.task)
+    cancel_relays(session.tag, error)
     {:error, error}
   end
 
@@ -471,18 +436,8 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
       parser: SSE.new(),
       text_buffer:
         TextBuffer.new(
-          chunk_bytes:
-            RuntimeConfig.policy(
-              config,
-              :openai_compatible_chunk_bytes,
-              @default_chunk_bytes
-            ),
-          chunk_latency_ms:
-            RuntimeConfig.policy(
-              config,
-              :openai_compatible_chunk_latency_ms,
-              @default_chunk_latency_ms
-            ),
+          chunk_bytes: config.chunk_bytes,
+          chunk_latency_ms: config.chunk_latency_ms,
           flush_tail_on_size?: true
         ),
       sequence: request.resume_from,

@@ -4,7 +4,17 @@ defmodule ReyCode.Orchestration.Projector do
   import Kernel, except: [apply: 2]
 
   alias ReyCode.Event
-  alias ReyCode.Orchestration.Projection
+
+  alias ReyCode.Orchestration.{
+    Invocation,
+    Message,
+    Participant,
+    Projection,
+    Room,
+    ToolRun,
+    Turn
+  }
+
   alias ReyCode.Provider.Registry
 
   @type state :: Projection.t()
@@ -20,7 +30,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   @spec apply(Event.t(), state()) :: state()
   def apply(%Event{type: :room_created, data: data} = event, state) do
-    room = %{
+    room = %Room{
       id: data["room_id"],
       slug: data["slug"],
       title: data["title"],
@@ -61,13 +71,13 @@ defmodule ReyCode.Orchestration.Projector do
         model: data["model"]
       }
 
-      %{room | squad_roles: Map.put(Map.get(room, :squad_roles, %{}), role.id, role)}
+      %{room | squad_roles: Map.put(room.squad_roles, role.id, role)}
     end)
     |> put_sequence(event.sequence)
   end
 
   def apply(%Event{type: :message_posted, data: data} = event, state) do
-    message = %{
+    message = %Message{
       id: data["message_id"],
       room_id: data["room_id"],
       turn_id: data["turn_id"],
@@ -87,7 +97,7 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :turn_queued, data: data} = event, state) do
-    turn = %{
+    turn = %Turn{
       id: data["turn_id"],
       room_id: data["room_id"],
       user_message_id: data["user_message_id"],
@@ -122,7 +132,7 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :assistant_message_opened, data: data} = event, state) do
     participant = participant(data["participant"])
 
-    message = %{
+    message = %Message{
       id: data["message_id"],
       room_id: data["room_id"],
       turn_id: data["turn_id"],
@@ -136,7 +146,7 @@ defmodule ReyCode.Orchestration.Projector do
       error: nil
     }
 
-    invocation = %{
+    invocation = %Invocation{
       id: data["invocation_id"],
       room_id: data["room_id"],
       turn_id: data["turn_id"],
@@ -240,7 +250,7 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :tool_run_requested, data: data} = event, state) do
-    run = %{
+    run = %ToolRun{
       id: data["tool_run_id"],
       tool_call_id: data["tool_call_id"],
       round_index: data["round_index"],
@@ -565,20 +575,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   # Snapshots written before durable tool runs lack the rounds/tool-run
   # invocation fields; backfill them so recovery code can rely on the shape.
-  defp normalize_snapshot(state) do
-    state
-    |> Map.update!(:invocations, fn invocations ->
-      Map.new(invocations, fn {id, invocation} ->
-        {id,
-         invocation
-         |> Map.put_new(:rounds, [])
-         |> Map.put_new(:tool_runs, %{})
-         |> Map.put_new(:tool_run_order, [])
-         |> Map.put_new(:pending_tool_review, nil)}
-      end)
-    end)
-    |> Projection.from_map()
-  end
+  defp normalize_snapshot(state), do: Projection.from_map(state)
 
   @doc "Applies a provider frame payload to the projection without advancing the sequence."
   @spec apply_provider_frame(state(), String.t(), map()) :: state()
@@ -588,9 +585,8 @@ defmodule ReyCode.Orchestration.Projector do
     state =
       if invocation do
         update_invocation(state, invocation_id, fn value ->
-          value
-          |> Map.put(:last_frame_sequence, frame_data["frame_sequence"])
-          |> apply_invocation_frame(frame_data["kind"], frame_data["data"])
+          value = %{value | last_frame_sequence: frame_data["frame_sequence"]}
+          apply_invocation_frame(value, frame_data["kind"], frame_data["data"])
         end)
       else
         state
@@ -722,7 +718,7 @@ defmodule ReyCode.Orchestration.Projector do
   defp apply_invocation_frame(invocation, _kind, _data), do: invocation
 
   defp participant(data) do
-    %{
+    %Participant{
       id: data["id"],
       name: data["name"],
       perspective: data["perspective"],

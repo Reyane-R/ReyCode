@@ -10,7 +10,7 @@ defmodule ReyCode.Orchestration.ProjectorSnapshotTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Event
-  alias ReyCode.Orchestration.Projector
+  alias ReyCode.Orchestration.{Invocation, Participant, Projector}
 
   test "snapshots without tool-run fields replay into normalized invocations" do
     legacy_invocation = %{
@@ -58,6 +58,8 @@ defmodule ReyCode.Orchestration.ProjectorSnapshotTest do
     restored = Projector.apply(snapshot_event, Projector.initial())
 
     invocation = restored.invocations["inv-legacy"]
+    assert %Invocation{} = invocation
+    assert %Participant{} = invocation.participant
 
     assert invocation.rounds == []
     assert invocation.tool_runs == %{}

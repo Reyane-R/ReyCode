@@ -1,12 +1,13 @@
 defmodule ReyCode.Orchestration.ToolRuns do
   @moduledoc "Queries and transition validation for one invocation's tool runs."
 
+  alias ReyCode.Orchestration.{Invocation, ToolRun}
   alias ReyCode.Provider.ToolCall
 
   @terminal [:completed, :failed, :denied, :interrupted]
 
   @doc "Returns the first tool run still awaiting owner approval."
-  @spec awaiting(map()) :: map() | nil
+  @spec awaiting(Invocation.t()) :: ToolRun.t() | nil
   def awaiting(invocation) do
     invocation
     |> ordered_runs()
@@ -14,11 +15,11 @@ defmodule ReyCode.Orchestration.ToolRuns do
   end
 
   @doc "Whether any tool run is awaiting owner approval."
-  @spec awaiting?(map()) :: boolean()
+  @spec awaiting?(Invocation.t()) :: boolean()
   def awaiting?(invocation), do: awaiting(invocation) != nil
 
   @doc "Whether any tool run is mid-execution (indeterminate after a crash)."
-  @spec started?(map()) :: boolean()
+  @spec started?(Invocation.t()) :: boolean()
   def started?(invocation) do
     invocation
     |> ordered_runs()
@@ -26,11 +27,11 @@ defmodule ReyCode.Orchestration.ToolRuns do
   end
 
   @doc "Returns every tool run whose host execution had started."
-  @spec running(map()) :: [map()]
+  @spec running(Invocation.t()) :: [ToolRun.t()]
   def running(invocation), do: Enum.filter(ordered_runs(invocation), &(&1.status == :running))
 
   @doc "Returns the tool run recorded for a provider tool call ID."
-  @spec run_for_call(map(), String.t()) :: map() | nil
+  @spec run_for_call(Invocation.t(), String.t()) :: ToolRun.t() | nil
   def run_for_call(invocation, tool_call_id) do
     invocation
     |> ordered_runs()
@@ -42,7 +43,8 @@ defmodule ReyCode.Orchestration.ToolRuns do
   def terminal?(status), do: status in @terminal
 
   @doc "Returns the next durable action for the latest provider tool-call batch."
-  @spec next_action(map()) :: :none | {:new, ToolCall.t()} | {:existing, atom(), map()}
+  @spec next_action(Invocation.t()) ::
+          :none | {:new, ToolCall.t()} | {:existing, atom(), ToolRun.t()}
   def next_action(invocation) do
     case List.last(invocation.rounds) do
       nil ->
@@ -57,7 +59,8 @@ defmodule ReyCode.Orchestration.ToolRuns do
   end
 
   @doc "Fetches one projected run and validates its expected status."
-  @spec fetch_for_transition(map(), String.t(), atom()) :: {:ok, map()} | {:error, atom()}
+  @spec fetch_for_transition(Invocation.t(), String.t(), atom()) ::
+          {:ok, ToolRun.t()} | {:error, atom()}
   def fetch_for_transition(invocation, run_id, expected_status) do
     case Map.get(invocation.tool_runs, run_id) do
       nil -> {:error, :tool_run_not_found}
@@ -67,7 +70,7 @@ defmodule ReyCode.Orchestration.ToolRuns do
   end
 
   @doc "Encodes a terminal run as the JSON tool-result content for the next round."
-  @spec result_content(map()) :: String.t()
+  @spec result_content(ToolRun.t()) :: String.t()
   def result_content(%{status: :completed, result: result}) do
     Jason.encode!(%{
       "ok" => true,
@@ -113,9 +116,8 @@ defmodule ReyCode.Orchestration.ToolRuns do
   end
 
   defp ordered_runs(invocation) do
-    invocation
-    |> Map.get(:tool_runs, %{})
-    |> Map.take(invocation |> Map.get(:tool_run_order, []) |> Enum.reverse())
+    invocation.tool_runs
+    |> Map.take(Enum.reverse(invocation.tool_run_order))
     |> Map.values()
   end
 end

@@ -10,19 +10,13 @@ defmodule ReyCode.Tool.Edit do
   """
   @behaviour ReyCode.Tool
 
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Tools.Edit, as: EditPolicy
   alias ReyCode.Tool.{Request, Result, Support}
-
-  @max_bytes_default 512_000
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    max_bytes =
-      RuntimeConfig.policy(
-        Keyword.fetch!(opts, :policy),
-        :tool_edit_max_bytes,
-        @max_bytes_default
-      )
+    %EditPolicy{} = policy = Keyword.fetch!(opts, :policy)
+    max_bytes = policy.max_bytes
 
     with {:ok, path} <- Support.require_arg(arguments, :path),
          {:ok, old} <- Support.require_arg(arguments, :old_string),

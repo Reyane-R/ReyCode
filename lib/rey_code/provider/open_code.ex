@@ -5,11 +5,7 @@ defmodule ReyCode.Provider.OpenCode do
 
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenCode.{Discovery, Process, Prompt, Protocol}
-  alias ReyCode.RuntimeConfig
   alias ReyCode.Security.Workspace
-
-  @default_prompt_bytes 128_000
-  @default_timeout_ms :timer.minutes(10)
 
   @doc "Discovers the OpenCode executable, version, credentials, and available models."
   @spec discover(keyword()) :: {:ok, map()} | {:error, term()}
@@ -22,7 +18,8 @@ defmodule ReyCode.Provider.OpenCode do
   def stream(%Runtime{module: __MODULE__, executable: executable} = runtime, request, emit)
       when is_binary(executable) do
     with {:ok, runtime} <- Runtime.revalidate_executable(runtime),
-         {:ok, workspace} <- Workspace.validate(request.workspace, config: runtime.config) do
+         {:ok, workspace} <-
+           Workspace.validate(request.workspace, policy: runtime.workspace_policy) do
       run(runtime.executable, %{request | workspace: workspace}, emit, runtime.config)
     else
       {:error, {:executable_changed, _details}} ->
@@ -43,8 +40,7 @@ defmodule ReyCode.Provider.OpenCode do
   defp run(executable, request, emit, config) do
     prompt = Prompt.build(request)
 
-    max_prompt_bytes =
-      RuntimeConfig.policy(config, :opencode_max_prompt_bytes, @default_prompt_bytes)
+    max_prompt_bytes = config.max_prompt_bytes
 
     if byte_size(prompt) > max_prompt_bytes do
       {:error,
@@ -58,7 +54,7 @@ defmodule ReyCode.Provider.OpenCode do
   end
 
   defp launch(executable, request, prompt, emit, config) do
-    timeout = RuntimeConfig.policy(config, :provider_timeout_ms, @default_timeout_ms)
+    timeout = config.provider_timeout_ms
     state = Protocol.new(request, config)
 
     args = Process.launch_args(request)

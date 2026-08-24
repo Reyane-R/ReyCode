@@ -62,13 +62,13 @@ defmodule ReyCode.Provider.Catalog do
       registry: Keyword.get(opts, :registry, ReyCode.EventRegistry),
       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
       config: config,
-      discovery?:
-        Keyword.get_lazy(opts, :discovery?, fn ->
-          RuntimeConfig.policy(config, :provider_discovery, true)
+      discovery?: Keyword.get(opts, :discovery?, config.providers.discovery?),
+      discover:
+        Keyword.get(opts, :discover, fn ->
+          opencode_module.discover(open_code: config.open_code, providers: config.providers)
         end),
-      discover: Keyword.get(opts, :discover, fn -> opencode_module.discover(config: config) end),
       api_discover:
-        Keyword.get(opts, :api_discover, fn -> discover_api_profiles(profiles, config) end),
+        Keyword.get(opts, :api_discover, fn -> discover_api_profiles(profiles, config.open_ai) end),
       refresh_interval: Keyword.get(opts, :refresh_interval, @refresh_interval),
       retry_interval: Keyword.get(opts, :retry_interval, @retry_interval),
       probe_timeout: Keyword.get(opts, :probe_timeout, @probe_timeout),
@@ -304,10 +304,10 @@ defmodule ReyCode.Provider.Catalog do
     }
   end
 
-  defp discover_api_profiles(profiles, config) do
+  defp discover_api_profiles(profiles, policy) do
     Map.new(profiles, fn profile ->
-      module = ProviderRegistry.descriptor(profile.id, config).module
-      {profile.id, module.discover(profile, config: config)}
+      module = ProviderRegistry.descriptor(profile.id).module
+      {profile.id, module.discover(profile, policy: policy)}
     end)
   end
 
@@ -391,7 +391,8 @@ defmodule ReyCode.Provider.Catalog do
       executable: Map.get(entry, :executable),
       executable_identity: Map.get(entry, :executable_identity),
       version: Map.get(entry, :version),
-      config: state.config,
+      config: runtime_policy(entry.module, state.config),
+      workspace_policy: state.config.workspace,
       models: Map.get(entry, :models, []),
       status: entry.status
     }
@@ -400,7 +401,10 @@ defmodule ReyCode.Provider.Catalog do
   defp maybe_add_simulator(providers, opts) do
     allowed? =
       Keyword.get_lazy(opts, :allow_simulator?, fn ->
-        RuntimeConfig.policy(Keyword.get(opts, :config), :allow_simulator_provider, false)
+        case Keyword.get(opts, :config) do
+          %RuntimeConfig{} = config -> config.providers.allow_simulator?
+          _other -> false
+        end
       end)
 
     if allowed? do
@@ -420,6 +424,12 @@ defmodule ReyCode.Provider.Catalog do
       providers
     end
   end
+
+  defp runtime_policy(ReyCode.Provider.OpenCode, config), do: config.open_code
+  defp runtime_policy(ReyCode.Provider.OpenAICompatible, config), do: config.open_ai
+
+  defp runtime_policy(ReyCode.Provider.Simulator, config),
+    do: RuntimeConfig.simulator_policy(config)
 
   defp format_reason(reason) when is_binary(reason), do: reason
   defp format_reason(reason) when is_atom(reason), do: Atom.to_string(reason)

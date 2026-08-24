@@ -2,19 +2,13 @@ defmodule ReyCode.Tool.Write do
   @moduledoc "Writes (creating or overwriting) a file within the trusted roots."
   @behaviour ReyCode.Tool
 
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Tools.Write, as: WritePolicy
   alias ReyCode.Tool.{Request, Result, Support}
-
-  @max_bytes_default 512_000
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    max_bytes =
-      RuntimeConfig.policy(
-        Keyword.fetch!(opts, :policy),
-        :tool_write_max_bytes,
-        @max_bytes_default
-      )
+    %WritePolicy{} = policy = Keyword.fetch!(opts, :policy)
+    max_bytes = policy.max_bytes
 
     with {:ok, path} <- Support.require_arg(arguments, :path),
          {:ok, content} <- Support.require_arg(arguments, :content),

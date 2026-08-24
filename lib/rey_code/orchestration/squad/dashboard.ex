@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Squad.Dashboard do
   @moduledoc "Pure read model and presentation values for the squad dashboard."
 
-  alias ReyCode.Orchestration.Squad
+  alias ReyCode.Orchestration.{Projection, Room, Squad, Turn}
 
   @terminal_statuses [:completed, :failed, :partial, :cancelled]
 
@@ -13,7 +13,7 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
         }
 
   @doc "Builds dashboard data for the active or most recent squad turn in a room."
-  @spec data(map(), map()) :: map() | nil
+  @spec data(Room.t(), Projection.t()) :: map() | nil
   def data(room, projection) do
     case turn(room, projection) do
       nil ->
@@ -34,7 +34,7 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   end
 
   @doc "Returns the active squad turn, falling back to the room's most recent one."
-  @spec turn(map(), map()) :: map() | nil
+  @spec turn(Room.t(), Projection.t()) :: Turn.t() | nil
   def turn(room, projection) do
     active = projection.turns[room.active_turn_id]
 
@@ -49,12 +49,12 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   end
 
   @doc "Checks whether a projected turn contains squad workflow state."
-  @spec squad_turn?(map() | nil) :: boolean()
+  @spec squad_turn?(Turn.t() | nil) :: boolean()
   def squad_turn?(%{mode: :squad, squad: squad}) when not is_nil(squad), do: true
   def squad_turn?(_turn), do: false
 
   @doc "Returns the compact status marker for a workflow phase."
-  @spec phase_marker(non_neg_integer(), map()) :: String.t()
+  @spec phase_marker(non_neg_integer(), Turn.t()) :: String.t()
   def phase_marker(index, turn) do
     case phase_state(index, turn) do
       :completed -> "[x]"
@@ -64,7 +64,7 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   end
 
   @doc "Returns the presentation class for a workflow phase's status."
-  @spec phase_class(non_neg_integer(), map()) :: String.t()
+  @spec phase_class(non_neg_integer(), Turn.t()) :: String.t()
   def phase_class(index, turn) do
     case phase_state(index, turn) do
       :completed -> "text-success"
@@ -111,7 +111,7 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   end
 
   @doc "Aggregates available token and cost usage across a turn's invocations."
-  @spec summarize_usage(map(), map()) :: usage_summary()
+  @spec summarize_usage(Turn.t(), Projection.t()) :: usage_summary()
   def summarize_usage(turn, projection) do
     turn.invocation_order
     |> Enum.map(&projection.invocations[&1])

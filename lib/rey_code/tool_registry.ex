@@ -60,12 +60,21 @@ defmodule ReyCode.ToolRegistry do
     name = to_string(request.tool)
 
     case Map.fetch(@tools, name) do
-      {:ok, module} -> module.run(request, policy: policy)
+      {:ok, module} -> module.run(request, policy: tool_policy(policy, name))
       :error -> Result.error(:unknown_tool)
     end
   end
 
-  defp with_policy_roots(request, policy), do: %{request | roots: Workspace.roots(policy)}
+  defp with_policy_roots(request, policy),
+    do: %{request | roots: Workspace.roots(policy.workspace)}
+
+  defp tool_policy(config, "bash"), do: config.tools.bash
+  defp tool_policy(config, "read"), do: config.tools.read
+  defp tool_policy(config, "edit"), do: config.tools.edit
+  defp tool_policy(config, "write"), do: config.tools.write
+  defp tool_policy(config, "glob"), do: config.tools.glob
+  defp tool_policy(config, "list"), do: config.tools.list
+  defp tool_policy(config, "grep"), do: config.tools.grep
 
   @doc "Whether a tool name requires owner approval before execution."
   @spec requires_approval?(Request.t() | String.t() | atom()) :: boolean()

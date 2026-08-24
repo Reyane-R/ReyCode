@@ -10,14 +10,13 @@ defmodule ReyCode.Tool.Grep do
   """
   @behaviour ReyCode.Tool
 
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Tools.Grep, as: GrepPolicy
   alias ReyCode.Tool.{Request, Result, Support}
-
-  @defaults [max_matches: 1_000, max_file_bytes: 512_000, max_files: 10_000, timeout_ms: 10_000]
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    limits = limits(Keyword.fetch!(opts, :policy))
+    %GrepPolicy{} = policy = Keyword.fetch!(opts, :policy)
+    limits = limits(policy)
 
     with {:ok, pattern} <- Support.require_arg(arguments, :pattern),
          :ok <- Support.require_present(pattern, :missing_pattern),
@@ -147,13 +146,10 @@ defmodule ReyCode.Tool.Grep do
 
   defp limits(policy) do
     %{
-      max_matches: RuntimeConfig.policy(policy, :tool_grep_max_matches, @defaults[:max_matches]),
-      max_file_bytes:
-        RuntimeConfig.policy(policy, :tool_grep_max_file_bytes, @defaults[:max_file_bytes]),
-      max_files: RuntimeConfig.policy(policy, :tool_grep_max_files, @defaults[:max_files]),
-      deadline:
-        System.monotonic_time(:millisecond) +
-          RuntimeConfig.policy(policy, :tool_grep_timeout_ms, @defaults[:timeout_ms])
+      max_matches: policy.max_matches,
+      max_file_bytes: policy.max_file_bytes,
+      max_files: policy.max_files,
+      deadline: System.monotonic_time(:millisecond) + policy.timeout_ms
     }
   end
 end

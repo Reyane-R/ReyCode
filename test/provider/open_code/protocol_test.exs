@@ -234,7 +234,7 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
 
   test "flush_due emits pending text at its absolute latency deadline" do
     config =
-      RuntimeConfig.fresh(opencode_text_chunk_bytes: 1_000, opencode_text_chunk_latency_ms: 50)
+      RuntimeConfig.fresh(opencode_text_chunk_bytes: 1_000, opencode_text_chunk_latency_ms: 50).open_code
 
     emit = emit_frame(self())
     state = Protocol.new(request(), config)
@@ -288,7 +288,7 @@ defmodule ReyCode.Provider.OpenCode.ProtocolTest do
   defp run(elements, overrides \\ []) do
     test_pid = self()
     emit = emit_frame(test_pid)
-    state = Protocol.new(request(), RuntimeConfig.fresh(overrides))
+    state = Protocol.new(request(), RuntimeConfig.fresh(overrides).open_code)
 
     state = Enum.reduce_while(elements, state, &fold_element(&1, &2, emit))
 

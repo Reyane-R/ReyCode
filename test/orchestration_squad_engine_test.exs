@@ -291,7 +291,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert {:ok, turn_id} = Engine.post_message(room_id, "Freeze the authority", :squad, engine)
 
     on_exit(fn -> ReyCode.cancel_turn(turn_id) end)
-    assert RuntimeConfig.load!().squad_release_gate_human == false
+    assert RuntimeConfig.load!().squad.release_gate_human? == false
 
     turn = wait_until_pending_review(turn_id, engine)
     assert turn.squad.release_authority == "human"
@@ -384,11 +384,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     start_supervised!({Registry, keys: :duplicate, name: event_registry})
     start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: agent_supervisor})
 
-    config =
-      RuntimeConfig.load!()
-      |> Map.from_struct()
-      |> Map.merge(Map.new(config_overrides))
-      |> then(&struct!(RuntimeConfig, &1))
+    config = configured_runtime(config_overrides)
 
     server = :"engine_#{suffix}"
 
@@ -428,11 +424,7 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     start_supervised!({Registry, keys: :unique, name: agent_registry})
     start_supervised!({Registry, keys: :duplicate, name: event_registry})
 
-    config =
-      RuntimeConfig.load!()
-      |> Map.from_struct()
-      |> Map.merge(Map.new(config_overrides))
-      |> then(&struct!(RuntimeConfig, &1))
+    config = configured_runtime(config_overrides)
 
     supervisor_opts = [
       name: :"squad_restart_supervisor_#{suffix}",
@@ -457,6 +449,16 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     )
 
     %{engine: server, store: store}
+  end
+
+  defp configured_runtime(overrides) do
+    keys = RuntimeConfig.declared_defaults() |> Map.keys()
+
+    :rey_code
+    |> Application.get_all_env()
+    |> Keyword.take(keys)
+    |> Keyword.merge(overrides)
+    |> RuntimeConfig.fresh()
   end
 
   defp flush_projection_snapshots do

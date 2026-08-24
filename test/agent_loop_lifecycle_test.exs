@@ -12,7 +12,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.{Engine, ToolRun}
   alias ReyCode.Provider.Frame
   alias ReyCode.Test.Wait
 
@@ -223,6 +223,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     refute File.exists?(Path.join(workspace, "out.txt"))
 
     run = invocation.tool_runs[hd(invocation.tool_run_order)]
+    assert %ToolRun{} = run
     assert run.status == :awaiting_approval
     assert run.tool == "write"
     assert run.arguments == %{"path" => "out.txt", "content" => "paused"}

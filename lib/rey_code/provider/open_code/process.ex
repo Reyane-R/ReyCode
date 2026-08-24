@@ -2,12 +2,8 @@ defmodule ReyCode.Provider.OpenCode.Process do
   @moduledoc "Launches the OpenCode CLI and streams raw output within a total deadline."
 
   alias ReyCode.Provider.Request
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.OpenCode, as: OpenCodePolicy
   alias ReyCode.Security.Environment
-
-  @default_env_allowlist []
-  @default_cpu_seconds 900
-  @default_open_files 1_024
 
   @spec launch_args(Request.t()) :: [binary()]
   def launch_args(%Request{} = request) do
@@ -89,14 +85,13 @@ defmodule ReyCode.Provider.OpenCode.Process do
   Builds the sandboxed environment options for OpenCode child processes from
   the injected runtime configuration.
   """
-  @spec environment_opts(ReyCode.RuntimeConfig.t() | nil) :: keyword()
-  def environment_opts(config) do
+  @spec environment_opts(OpenCodePolicy.t()) :: keyword()
+  def environment_opts(%OpenCodePolicy{} = policy) do
     [
       source: System.get_env(),
-      additional_names:
-        RuntimeConfig.policy(config, :opencode_env_allowlist, @default_env_allowlist),
-      cpu_seconds: RuntimeConfig.policy(config, :opencode_cpu_seconds, @default_cpu_seconds),
-      open_files: RuntimeConfig.policy(config, :opencode_open_files, @default_open_files)
+      additional_names: policy.env_allowlist,
+      cpu_seconds: policy.cpu_seconds,
+      open_files: policy.open_files
     ]
   end
 

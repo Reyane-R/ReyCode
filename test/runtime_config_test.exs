@@ -28,19 +28,16 @@ defmodule ReyCode.RuntimeConfigTest do
 
     config = RuntimeConfig.load!()
 
-    for {key, default} <- RuntimeConfig.declared_defaults() do
-      assert Map.fetch!(config, key) == default,
-             "expected #{inspect(key)} to default to #{inspect(default)}"
-    end
+    assert flatten(config) == RuntimeConfig.declared_defaults()
 
     # Settings the issue called out as previously unvalidated drift risks.
     assert %RuntimeConfig{} = config
     refute Map.has_key?(config, :event_path)
     refute Map.has_key?(config, :data_dir)
     refute Map.has_key?(config, :start_tui)
-    assert config.opencode_max_prompt_bytes > 0
-    assert config.opencode_max_output_bytes > 0
-    assert config.opencode_max_diagnostic_bytes > 0
+    assert config.open_code.max_prompt_bytes > 0
+    assert config.open_code.max_output_bytes > 0
+    assert config.open_code.max_diagnostic_bytes > 0
   end
 
   test "reads configured values instead of defaults" do
@@ -50,9 +47,9 @@ defmodule ReyCode.RuntimeConfigTest do
 
     config = RuntimeConfig.load!()
 
-    assert config.provider_timeout_ms == 1_234
-    assert config.global_concurrency == 7
-    assert config.workspace_roots == ["/tmp/a", "/tmp/b"]
+    assert config.open_code.provider_timeout_ms == 1_234
+    assert config.orchestration.global_concurrency == 7
+    assert config.workspace.roots == ["/tmp/a", "/tmp/b"]
   end
 
   test "accepts :infinity only for concurrency and queue limits" do
@@ -141,15 +138,13 @@ defmodule ReyCode.RuntimeConfigTest do
     end
   end
 
-  test "policy uses its fallback only when no injected configuration exists" do
-    assert RuntimeConfig.policy(nil, :provider_timeout_ms, 123) == 123
+  test "assembles focused policies without flat runtime fields" do
+    config = RuntimeConfig.fresh(provider_timeout_ms: 456)
 
-    assert RuntimeConfig.policy(
-             RuntimeConfig.fresh(provider_timeout_ms: 456),
-             :provider_timeout_ms,
-             123
-           ) ==
-             456
+    assert config.open_code.provider_timeout_ms == 456
+    refute Map.has_key?(config, :provider_timeout_ms)
+    refute Map.has_key?(config, :tool_bash_timeout_ms)
+    refute Map.has_key?(config, :workspace_roots)
   end
 
   test "rejects an unloaded transport module but accepts a loaded one or nil" do
@@ -167,6 +162,62 @@ defmodule ReyCode.RuntimeConfigTest do
 
   test "validate!/0 returns :ok for the current environment" do
     assert :ok = RuntimeConfig.validate!()
+  end
+
+  defp flatten(config) do
+    %{
+      global_concurrency: config.orchestration.global_concurrency,
+      workspace_concurrency: config.orchestration.workspace_concurrency,
+      global_queue_limit: config.orchestration.global_queue_limit,
+      workspace_queue_limit: config.orchestration.workspace_queue_limit,
+      agent_delay_ms: config.orchestration.agent_delay_ms,
+      allow_simulator_provider: config.providers.allow_simulator?,
+      default_provider: config.providers.default_provider,
+      provider_discovery: config.providers.discovery?,
+      provider_timeout_ms: config.open_code.provider_timeout_ms,
+      provider_discovery_command_timeout_ms: config.providers.discovery_command_timeout_ms,
+      provider_discovery_output_bytes: config.providers.discovery_output_bytes,
+      opencode_path: config.open_code.path,
+      opencode_max_prompt_bytes: config.open_code.max_prompt_bytes,
+      opencode_max_output_bytes: config.open_code.max_output_bytes,
+      opencode_max_diagnostic_bytes: config.open_code.max_diagnostic_bytes,
+      opencode_text_chunk_bytes: config.open_code.text_chunk_bytes,
+      opencode_text_chunk_latency_ms: config.open_code.text_chunk_latency_ms,
+      opencode_cpu_seconds: config.open_code.cpu_seconds,
+      opencode_open_files: config.open_code.open_files,
+      opencode_env_allowlist: config.open_code.env_allowlist,
+      openai_compatible_chunk_bytes: config.open_ai.chunk_bytes,
+      openai_compatible_chunk_latency_ms: config.open_ai.chunk_latency_ms,
+      openai_compatible_base_url_overrides: config.open_ai.base_url_overrides,
+      openai_compatible_providers: config.open_ai.profiles,
+      openai_compatible_transport: config.open_ai.transport,
+      squad_release_gate_human: config.squad.release_gate_human?,
+      squad_rework_budget: config.squad.rework_budget,
+      squad_simulator: config.squad.simulator,
+      projection_checkpoint_interval: config.persistence.checkpoint_interval,
+      max_replay_events: config.persistence.max_replay_events,
+      max_checkpoint_bytes: config.persistence.max_checkpoint_bytes,
+      tool_bash_timeout_ms: config.tools.bash.timeout_ms,
+      tool_bash_max_output_bytes: config.tools.bash.max_output_bytes,
+      tool_bash_max_error_bytes: config.tools.bash.max_error_bytes,
+      tool_bash_env_allowlist: config.tools.bash.env_allowlist,
+      tool_bash_cpu_seconds: config.tools.bash.cpu_seconds,
+      tool_bash_open_files: config.tools.bash.open_files,
+      tool_read_max_bytes: config.tools.read.max_bytes,
+      tool_read_max_lines: config.tools.read.max_lines,
+      tool_edit_max_bytes: config.tools.edit.max_bytes,
+      tool_write_max_bytes: config.tools.write.max_bytes,
+      tool_glob_max_results: config.tools.glob.max_results,
+      tool_list_max_entries: config.tools.list.max_entries,
+      tool_list_timeout_ms: config.tools.list.timeout_ms,
+      tool_grep_max_matches: config.tools.grep.max_matches,
+      tool_grep_max_file_bytes: config.tools.grep.max_file_bytes,
+      tool_grep_max_files: config.tools.grep.max_files,
+      tool_grep_timeout_ms: config.tools.grep.timeout_ms,
+      workspace_roots: config.workspace.roots,
+      file_logging: config.logging.enabled?,
+      log_dir: config.logging.log_dir
+    }
   end
 
   defp restore(key, nil), do: Application.delete_env(:rey_code, key)

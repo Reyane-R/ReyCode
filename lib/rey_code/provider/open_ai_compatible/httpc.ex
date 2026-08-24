@@ -52,18 +52,18 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
 
     {collector, monitor} =
       spawn_monitor(fn ->
-        owner_monitor = Process.monitor(owner)
+        request = %{
+          context: context,
+          on_event: on_event,
+          acc: acc,
+          url: context.url,
+          headers: context.headers,
+          body: context.body,
+          redirects: 0,
+          owner_monitor: Process.monitor(owner)
+        }
 
-        case collect(
-               context,
-               context.url,
-               context.headers,
-               context.body,
-               on_event,
-               acc,
-               0,
-               owner_monitor
-             ) do
+        case collect(request) do
           :owner_down -> :ok
           result -> send(owner, {result_tag, result})
         end
@@ -84,18 +84,21 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     {:error, HTTP.error("request_failed", "Invalid transport context", false)}
   end
 
-  defp collect(context, url, headers, body, on_event, acc, redirects, owner_monitor)
-       when redirects >= 0 do
-    with {:ok, timeout} <- remaining_timeout(context.deadline),
+  # One request map threads every hop of the redirect chain: the fixed
+  # transport context, the callback and accumulator, and the per-hop URL,
+  # headers, body, redirect count, and owner monitor.
+  defp collect(%{redirects: redirects} = request) when redirects >= 0 do
+    with {:ok, timeout} <- remaining_timeout(request.context.deadline),
          {:ok, request_id} <-
-           request(context.method, url, headers, body, timeout, context.ssl) do
-      await_response(request_id, context, on_event, acc, %{
-        url: url,
-        headers: headers,
-        body: body,
-        redirects: redirects,
-        owner_monitor: owner_monitor
-      })
+           request(
+             request.context.method,
+             request.url,
+             request.headers,
+             request.body,
+             timeout,
+             request.context.ssl
+           ) do
+      await_response(request_id, request)
     else
       {:error, %{} = error} -> {:error, error}
       {:error, reason} -> {:error, HTTP.error("request_failed", inspect(reason), false)}
@@ -115,20 +118,20 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
   defp request_tuple(:post, url, headers, body),
     do: {to_charlist(url), headers, ~c"application/json", body}
 
-  defp await_response(request_id, context, on_event, acc, request) do
-    case remaining_timeout(context.deadline) do
-      {:ok, timeout} -> receive_response(request_id, context, on_event, acc, request, timeout)
+  defp await_response(request_id, request) do
+    case remaining_timeout(request.context.deadline) do
+      {:ok, timeout} -> receive_response(request_id, request, timeout)
       {:error, error} -> cancel_and_error(request_id, error)
     end
   end
 
-  defp receive_response(request_id, context, on_event, acc, request, timeout) do
+  defp receive_response(request_id, request, timeout) do
     receive do
       {:http, {^request_id, :stream_start, response_headers}} ->
-        await_stream(request_id, context, on_event, acc, request, response_headers)
+        await_stream(request_id, request, response_headers)
 
       {:http, {^request_id, {{_version, status, _reason}, response_headers, body}}} ->
-        handle_complete_response(status, response_headers, body, context, on_event, acc, request)
+        handle_complete_response(status, response_headers, body, request)
 
       {:http, {^request_id, {:error, reason}}} ->
         {:error, request_error(reason)}
@@ -143,21 +146,19 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     end
   end
 
-  defp await_stream(request_id, context, on_event, acc, request, response_headers) do
-    case remaining_timeout(context.deadline) do
+  defp await_stream(request_id, request, response_headers) do
+    case remaining_timeout(request.context.deadline) do
       {:ok, timeout} ->
         receive do
           {:http, {^request_id, :stream, data}} when is_binary(data) ->
-            case call_before(on_event, {:partial, data}, acc, context.deadline) do
+            case call_before(
+                   request.on_event,
+                   {:partial, data},
+                   request.acc,
+                   request.context.deadline
+                 ) do
               {:ok, {:cont, next}} ->
-                await_stream(
-                  request_id,
-                  context,
-                  on_event,
-                  next,
-                  request,
-                  response_headers
-                )
+                await_stream(request_id, %{request | acc: next}, response_headers)
 
               {:ok, {:halt, _next, error}} ->
                 cancel_and_error(request_id, error)
@@ -168,7 +169,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
 
           {:http, {^request_id, :stream_end, end_headers}} ->
             headers = normalize_response_headers(end_headers || response_headers)
-            {:ok, acc, %{status: 200, headers: headers}}
+            {:ok, request.acc, %{status: 200, headers: headers}}
 
           {:http, {^request_id, {:error, reason}}} ->
             {:error, request_error(reason)}
@@ -187,9 +188,14 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     end
   end
 
-  defp handle_complete_response(status, response_headers, body, context, on_event, acc, _request)
+  defp handle_complete_response(status, response_headers, body, request)
        when status in 200..299 do
-    case call_before(on_event, {:partial, IO.iodata_to_binary(body)}, acc, context.deadline) do
+    case call_before(
+           request.on_event,
+           {:partial, IO.iodata_to_binary(body)},
+           request.acc,
+           request.context.deadline
+         ) do
       {:ok, {:cont, next}} ->
         {:ok, next, %{status: status, headers: normalize_response_headers(response_headers)}}
 
@@ -201,21 +207,12 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     end
   end
 
-  defp handle_complete_response(status, response_headers, _body, context, on_event, acc, request)
+  defp handle_complete_response(status, response_headers, _body, request)
        when status in 300..399 do
-    maybe_follow_redirect(status, response_headers, %{
-      url: request.url,
-      headers: request.headers,
-      body: request.body,
-      context: context,
-      on_event: on_event,
-      acc: acc,
-      redirects: request.redirects,
-      owner_monitor: request.owner_monitor
-    })
+    maybe_follow_redirect(status, response_headers, request)
   end
 
-  defp handle_complete_response(status, _headers, body, _context, _on_event, _acc, _request) do
+  defp handle_complete_response(status, _headers, body, _request) do
     {:error, HTTP.status_error(status, IO.iodata_to_binary(body))}
   end
 
@@ -241,16 +238,12 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
       true ->
         next_headers = sanitize_headers_for_redirect(request.headers, request.url, location)
 
-        collect(
-          request.context,
-          location,
-          next_headers,
-          request.body,
-          request.on_event,
-          request.acc,
-          request.redirects + 1,
-          request.owner_monitor
-        )
+        collect(%{
+          request
+          | url: location,
+            headers: next_headers,
+            redirects: request.redirects + 1
+        })
     end
   end
 

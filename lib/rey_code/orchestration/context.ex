@@ -8,15 +8,20 @@ defmodule ReyCode.Orchestration.Context do
   provider-local state.
   """
 
-  alias ReyCode.Orchestration.ToolRuns
+  alias ReyCode.Orchestration.{Invocation, Projection, Room, ToolRuns, Turn}
   alias ReyCode.Provider.{Message, ToolCall}
 
-  @spec messages(map(), map(), map(), map()) :: [Message.t()]
+  @spec messages(Room.t(), Turn.t(), Invocation.t(), Projection.t()) :: [Message.t()]
   def messages(room, turn, invocation, projection) do
     room_messages(room, turn, invocation, projection) ++ round_messages(invocation)
   end
 
-  @spec include?(map(), map(), map(), map()) :: boolean()
+  @spec include?(
+          ReyCode.Orchestration.Message.t(),
+          Turn.t(),
+          Invocation.t(),
+          Projection.t()
+        ) :: boolean()
   def include?(message, %{mode: :debate} = turn, invocation, projection) do
     stage_visible?(message, turn, invocation, projection)
   end
@@ -48,9 +53,7 @@ defmodule ReyCode.Orchestration.Context do
   end
 
   defp round_messages(invocation) do
-    invocation
-    |> Map.get(:rounds, [])
-    |> Enum.flat_map(&round_message(invocation, &1))
+    Enum.flat_map(invocation.rounds, &round_message(invocation, &1))
   end
 
   defp round_message(invocation, round) do

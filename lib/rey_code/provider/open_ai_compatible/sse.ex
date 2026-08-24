@@ -38,7 +38,7 @@ defmodule ReyCode.Provider.OpenAICompatible.SSE do
       when is_binary(data) do
     {complete, rest} = split_events(buffer <> data)
 
-    case parse_events(complete, tools, [], done?) do
+    case parse_events(complete, %{tools: tools, events: [], done?: done?}) do
       {:ok, events, next_tools, next_done?} ->
         {events, %{parser | buffer: rest, tools: next_tools, done?: next_done?}}
 
@@ -85,53 +85,41 @@ defmodule ReyCode.Provider.OpenAICompatible.SSE do
     end
   end
 
-  defp parse_events([], tools, events, done?),
-    do: {:ok, Enum.reverse(events), tools, done?}
+  defp parse_events([], acc),
+    do: {:ok, Enum.reverse(acc.events), acc.tools, acc.done?}
 
-  defp parse_events([raw | rest], tools, events, done?) do
-    if done? and data_record?(raw) do
-      {:error, :data_after_done, Enum.reverse(events), tools, done?}
+  defp parse_events([raw | rest], acc) do
+    if acc.done? and data_record?(raw) do
+      {:error, :data_after_done, Enum.reverse(acc.events), acc.tools, acc.done?}
     else
-      continue_parsing(parse_event(raw, tools), rest, tools, events, done?)
+      parse_event(raw, acc.tools) |> continue_parsing(rest, acc)
     end
   end
 
-  defp continue_parsing({:ok, next_events, next_tools}, rest, tools, events, done?) do
+  defp continue_parsing({:ok, next_events, next_tools}, rest, acc) do
     continue_after_terminal_state(
-      terminal_state(next_events, done?),
+      terminal_state(next_events, acc.done?),
       rest,
-      tools,
       next_tools,
       next_events,
-      events,
-      done?
+      acc
     )
   end
 
-  defp continue_parsing({:error, reason, next_tools}, _rest, _tools, events, done?),
-    do: {:error, reason, Enum.reverse(events), next_tools, done?}
+  defp continue_parsing({:error, reason, next_tools}, _rest, acc),
+    do: {:error, reason, Enum.reverse(acc.events), next_tools, acc.done?}
 
-  defp continue_after_terminal_state(
-         {:ok, next_done?},
-         rest,
-         _tools,
-         next_tools,
-         next_events,
-         events,
-         _done?
-       ),
-       do: parse_events(rest, next_tools, Enum.reverse(next_events, events), next_done?)
+  defp continue_after_terminal_state({:ok, next_done?}, rest, next_tools, next_events, acc),
+    do:
+      parse_events(rest, %{
+        acc
+        | tools: next_tools,
+          events: Enum.reverse(next_events, acc.events),
+          done?: next_done?
+      })
 
-  defp continue_after_terminal_state(
-         {:error, reason},
-         _rest,
-         tools,
-         _next_tools,
-         _next_events,
-         events,
-         done?
-       ),
-       do: {:error, reason, Enum.reverse(events), tools, done?}
+  defp continue_after_terminal_state({:error, reason}, _rest, _next_tools, _next_events, acc),
+    do: {:error, reason, Enum.reverse(acc.events), acc.tools, acc.done?}
 
   defp terminal_state([], done?), do: {:ok, done?}
   defp terminal_state([:done], false), do: {:ok, true}

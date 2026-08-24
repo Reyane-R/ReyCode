@@ -10,21 +10,47 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
   alias ReyCode.EventStore.SQLite.{Backup, Checkpoint, Migrations, Sql}
   alias ReyCode.Hashing
 
+  alias ReyCode.Orchestration.{
+    Invocation,
+    Message,
+    Participant,
+    Projection,
+    Room,
+    ToolRun,
+    Turn
+  }
+
   describe "checkpoint codec" do
-    test "round-trips nested terms through the typed wire format" do
-      projection = %{
+    test "round-trips typed records through the map-based checkpoint wire format" do
+      participant = %Participant{
+        id: "builder",
+        name: "Builder",
+        perspective: "implementation",
+        provider: :simulator
+      }
+
+      projection = %Projection{
         sequence: 12,
-        rooms: %{"room-1" => %{slug: :alpha, ratio: 0.5, span: {1, 2}}},
+        rooms: %{
+          "room-1" => %Room{id: "room-1", slug: "alpha", participants: [participant]}
+        },
         room_order: ["room-1"],
-        messages: [],
-        turns: %{},
-        invocations: %{}
+        messages: %{"msg-1" => %Message{id: "msg-1", room_id: "room-1", body: "Hello"}},
+        turns: %{"turn-1" => %Turn{id: "turn-1", room_id: "room-1"}},
+        invocations: %{
+          "inv-1" => %Invocation{
+            id: "inv-1",
+            participant: participant,
+            usage: %{slug: :alpha, ratio: 0.5, span: {1, 2}},
+            tool_runs: %{"run-1" => %ToolRun{id: "run-1", status: :completed}}
+          }
+        }
       }
 
       payload = Jason.encode!(Checkpoint.encode_term(projection))
       checksum = Hashing.sha256_hex(payload)
 
-      assert {:ok, ^projection} =
+      assert {:ok, decoded} =
                Checkpoint.decode(
                  payload,
                  Checkpoint.projection_version(),
@@ -32,6 +58,10 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
                  checksum,
                  1_000_000
                )
+
+      refute Map.has_key?(decoded.rooms["room-1"], :__struct__)
+      refute Map.has_key?(decoded.invocations["inv-1"].tool_runs["run-1"], :__struct__)
+      assert Projection.from_map(decoded) == projection
     end
 
     test "rejects unsupported versions, size caps, and checksum mismatches" do

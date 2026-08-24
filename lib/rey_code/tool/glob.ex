@@ -15,20 +15,14 @@ defmodule ReyCode.Tool.Glob do
   """
   @behaviour ReyCode.Tool
 
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Tools.Glob, as: GlobPolicy
   alias ReyCode.Security.Workspace
   alias ReyCode.Tool.{Request, Result, Support}
 
-  @default_max_results 10_000
-
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    max_results =
-      RuntimeConfig.policy(
-        Keyword.fetch!(opts, :policy),
-        :tool_glob_max_results,
-        @default_max_results
-      )
+    %GlobPolicy{} = policy = Keyword.fetch!(opts, :policy)
+    max_results = policy.max_results
 
     with {:ok, canonical} <- Support.require_path(arguments, :path, request),
          {:ok, pattern} <- Support.require_arg(arguments, :pattern),

@@ -49,7 +49,7 @@ defmodule ReyCode.Provider.Registry do
 
   @doc "Returns the supported OpenAI-compatible provider profiles."
   @spec api_profiles(ReyCode.RuntimeConfig.t() | nil) :: [Profile.t()]
-  def api_profiles(config \\ nil), do: Profile.all(config)
+  def api_profiles(config \\ nil), do: Profile.all(open_ai_policy(config))
 
   @doc "Fetches an OpenAI-compatible profile by atom or known string ID."
   @spec fetch_api_profile(atom() | String.t(), ReyCode.RuntimeConfig.t() | nil) ::
@@ -108,11 +108,14 @@ defmodule ReyCode.Provider.Registry do
   defp simulator_enabled?(opts) do
     Keyword.get_lazy(opts, :allow_simulator?, fn ->
       case Keyword.fetch(opts, :config) do
-        {:ok, config} -> RuntimeConfig.policy(config, :allow_simulator_provider, false)
+        {:ok, %RuntimeConfig{} = config} -> config.providers.allow_simulator?
         :error -> false
       end
     end)
   end
+
+  defp open_ai_policy(nil), do: RuntimeConfig.fresh().open_ai
+  defp open_ai_policy(%RuntimeConfig{} = config), do: config.open_ai
 
   defp special_display_name(:simulator, _provider), do: "Simulator"
   defp special_display_name(_id, provider), do: to_string(provider)

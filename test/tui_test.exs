@@ -231,6 +231,21 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Provider discovery is disabled"
   end
 
+  test "keeps the settings flow usable at narrow and wide terminal sizes" do
+    narrow = start_session({50, 20})
+    wide = start_session({160, 32})
+    on_exit(fn -> Breeze.Test.stop(narrow) end)
+    on_exit(fn -> Breeze.Test.stop(wide) end)
+
+    for session <- [narrow, wide] do
+      assert {:noreply, "prompt", true} = Breeze.Test.input(session, ctrl("g"))
+      assert Breeze.Test.render!(session) =~ "Who should use this runtime?"
+
+      assert {:noreply, _focused, true} = Breeze.Test.input(session, "Enter")
+      assert Breeze.Test.render!(session) =~ "Select a runtime"
+    end
+  end
+
   test "lists DeepSeek as an API runtime and points to its key on selection" do
     session = start_session({120, 32})
     on_exit(fn -> Breeze.Test.stop(session) end)
@@ -450,11 +465,7 @@ defmodule ReyCode.TUITest do
     start_supervised!({Registry, keys: :duplicate, name: event_registry})
     start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: agent_supervisor})
 
-    config =
-      RuntimeConfig.load!()
-      |> Map.from_struct()
-      |> Map.merge(Map.new(config_overrides))
-      |> then(&struct!(RuntimeConfig, &1))
+    config = configured_runtime(config_overrides)
 
     engine = :"tui_engine_#{suffix}"
 
@@ -649,6 +660,16 @@ defmodule ReyCode.TUITest do
 
   defp wait_until_turn_status(server, turn_id, status),
     do: Wait.turn_status(server, turn_id, status, 1_000)
+
+  defp configured_runtime(overrides) do
+    keys = RuntimeConfig.declared_defaults() |> Map.keys()
+
+    :rey_code
+    |> Application.get_all_env()
+    |> Keyword.take(keys)
+    |> Keyword.merge(overrides)
+    |> RuntimeConfig.fresh()
+  end
 
   defp eventually_renders?(session, text, baseline_sequence, attempts \\ 300) do
     projection =

@@ -15,14 +15,6 @@ defmodule ReyCode.Diagnostics do
   alias ReyCode.Security.Workspace
 
   @default_catalog_wait_ms 15_000
-  @limit_keys ~w(
-    global_concurrency global_queue_limit max_checkpoint_bytes max_replay_events
-    opencode_cpu_seconds opencode_max_diagnostic_bytes opencode_max_output_bytes
-    opencode_max_prompt_bytes opencode_open_files opencode_text_chunk_bytes
-    opencode_text_chunk_latency_ms projection_checkpoint_interval
-    provider_discovery_command_timeout_ms provider_discovery_output_bytes
-    provider_timeout_ms squad_rework_budget workspace_concurrency workspace_queue_limit
-  )a
 
   @type report :: %{
           app: map(),
@@ -300,15 +292,30 @@ defmodule ReyCode.Diagnostics do
   defp explicit_port("https", 443), do: nil
   defp explicit_port(_scheme, port), do: port
 
-  defp limits(config) do
-    defaults = RuntimeConfig.declared_defaults()
-
-    Map.new(@limit_keys, fn key ->
-      {key, config_get(config, key, Map.fetch!(defaults, key))}
-    end)
+  defp limits(%RuntimeConfig{} = config) do
+    %{
+      global_concurrency: config.orchestration.global_concurrency,
+      global_queue_limit: config.orchestration.global_queue_limit,
+      max_checkpoint_bytes: config.persistence.max_checkpoint_bytes,
+      max_replay_events: config.persistence.max_replay_events,
+      opencode_cpu_seconds: config.open_code.cpu_seconds,
+      opencode_max_diagnostic_bytes: config.open_code.max_diagnostic_bytes,
+      opencode_max_output_bytes: config.open_code.max_output_bytes,
+      opencode_max_prompt_bytes: config.open_code.max_prompt_bytes,
+      opencode_open_files: config.open_code.open_files,
+      opencode_text_chunk_bytes: config.open_code.text_chunk_bytes,
+      opencode_text_chunk_latency_ms: config.open_code.text_chunk_latency_ms,
+      projection_checkpoint_interval: config.persistence.checkpoint_interval,
+      provider_discovery_command_timeout_ms: config.providers.discovery_command_timeout_ms,
+      provider_discovery_output_bytes: config.providers.discovery_output_bytes,
+      provider_timeout_ms: config.open_code.provider_timeout_ms,
+      squad_rework_budget: config.squad.rework_budget,
+      workspace_concurrency: config.orchestration.workspace_concurrency,
+      workspace_queue_limit: config.orchestration.workspace_queue_limit
+    }
   end
 
-  defp workspace_roots(%RuntimeConfig{} = config), do: Workspace.roots(config)
+  defp workspace_roots(%RuntimeConfig{} = config), do: Workspace.roots(config.workspace)
 
   defp normalize_config(%RuntimeConfig{} = config), do: config
 
@@ -322,6 +329,8 @@ defmodule ReyCode.Diagnostics do
   end
 
   defp config_get(config, key, default \\ nil)
+
+  defp config_get(%RuntimeConfig{}, _key, default), do: default
 
   defp config_get(config, key, default) when is_list(config),
     do: Keyword.get(config, key, default)

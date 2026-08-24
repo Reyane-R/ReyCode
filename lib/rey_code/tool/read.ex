@@ -13,15 +13,15 @@ defmodule ReyCode.Tool.Read do
   """
   @behaviour ReyCode.Tool
 
-  alias ReyCode.RuntimeConfig
+  alias ReyCode.RuntimeConfig.Tools.Read, as: ReadPolicy
   alias ReyCode.Tool.{Request, Result, Support}
 
   @chunk_bytes 64_000
-  @defaults [max_bytes: 512_000, max_lines: 2_000]
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
-    limits = limits(Keyword.fetch!(opts, :policy))
+    %ReadPolicy{} = policy = Keyword.fetch!(opts, :policy)
+    limits = limits(policy)
 
     with {:ok, canonical} <- Support.require_path(arguments, :path, request),
          {:ok, offset} <- window(arguments, :offset, 1, 1, :invalid_offset),
@@ -43,7 +43,16 @@ defmodule ReyCode.Tool.Read do
     case File.open(canonical, [:read, :binary]) do
       {:ok, device} ->
         try do
-          collect(device, "", offset, limit, 1, [], 0, max_bytes)
+          window = %{
+            offset: offset,
+            remaining: limit,
+            line_no: 1,
+            lines: [],
+            bytes: 0,
+            max_bytes: max_bytes
+          }
+
+          collect(device, "", window)
         after
           File.close(device)
         end
@@ -53,30 +62,29 @@ defmodule ReyCode.Tool.Read do
     end
   end
 
-  defp collect(device, buffer, offset, remaining, _line_no, lines, bytes, max_bytes)
-       when remaining <= 0 or bytes >= max_bytes,
-       do: finish(lines, offset, more_content?(device, buffer))
+  defp collect(device, buffer, window)
+       when window.remaining <= 0 or window.bytes >= window.max_bytes,
+       do: finish(window.lines, window.offset, more_content?(device, buffer))
 
   # Lines before the window are located, not retained: a newline is one byte,
   # so a chunk that lacks one can be discarded wholesale.
-  defp collect(device, buffer, offset, remaining, line_no, lines, bytes, max_bytes)
-       when line_no < offset do
+  defp collect(device, buffer, window) when window.line_no < window.offset do
     case skip_line(device, buffer) do
       {:ok, rest} ->
-        collect(device, rest, offset, remaining, line_no + 1, lines, bytes, max_bytes)
+        collect(device, rest, %{window | line_no: window.line_no + 1})
 
       :eof ->
-        finish(lines, offset, false)
+        finish(window.lines, window.offset, false)
 
       {:error, reason} ->
         Result.error(reason)
     end
   end
 
-  defp collect(device, buffer, offset, remaining, line_no, lines, bytes, max_bytes) do
-    case next_line(device, buffer, max_bytes - bytes) do
+  defp collect(device, buffer, window) do
+    case next_line(device, buffer, window.max_bytes - window.bytes) do
       :eof ->
-        finish(lines, offset, false)
+        finish(window.lines, window.offset, false)
 
       {:error, reason} ->
         Result.error(reason)
@@ -84,25 +92,24 @@ defmodule ReyCode.Tool.Read do
       {:ok, line, _rest, :budget} ->
         # The line was cut at the byte budget before its newline, so content
         # provably remains beyond the window.
-        finish([assemble(line, :budget) | lines], offset, true)
+        finish([assemble(line, :budget) | window.lines], window.offset, true)
 
       {:ok, line, rest, termination} ->
         line = assemble(line, termination)
 
-        if bytes + byte_size(line) > max_bytes do
-          available = max(max_bytes - bytes, 0)
-          finish([utf8_prefix(line, available) | lines], offset, true)
+        if window.bytes + byte_size(line) > window.max_bytes do
+          available = max(window.max_bytes - window.bytes, 0)
+          finish([utf8_prefix(line, available) | window.lines], window.offset, true)
         else
-          collect(
-            device,
-            rest,
-            offset,
-            remaining - 1,
-            line_no + 1,
-            [line | lines],
-            bytes + byte_size(line),
-            max_bytes
-          )
+          window = %{
+            window
+            | remaining: window.remaining - 1,
+              line_no: window.line_no + 1,
+              lines: [line | window.lines],
+              bytes: window.bytes + byte_size(line)
+          }
+
+          collect(device, rest, window)
         end
     end
   end
@@ -218,9 +225,6 @@ defmodule ReyCode.Tool.Read do
   end
 
   defp limits(policy) do
-    %{
-      max_bytes: RuntimeConfig.policy(policy, :tool_read_max_bytes, @defaults[:max_bytes]),
-      max_lines: RuntimeConfig.policy(policy, :tool_read_max_lines, @defaults[:max_lines])
-    }
+    %{max_bytes: policy.max_bytes, max_lines: policy.max_lines}
   end
 end
