@@ -2,10 +2,11 @@ defmodule ReyCode.Orchestration.SquadFSM do
   @moduledoc "Pure immutable state machine for the fixed leader-supervised squad workflow."
 
   alias ReyCode.Orchestration.Squad
+  alias ReyCode.Orchestration.Squad.Phase
 
   @enforce_keys [:room_id]
   defstruct room_id: nil,
-            phase: 0,
+            phase_index: 0,
             cycle: 0,
             rework_count: 0,
             rework_budget: 3,
@@ -13,17 +14,14 @@ defmodule ReyCode.Orchestration.SquadFSM do
 
   @type t :: %__MODULE__{
           room_id: String.t(),
-          phase: non_neg_integer(),
+          phase_index: non_neg_integer(),
           cycle: non_neg_integer(),
           rework_count: non_neg_integer(),
           rework_budget: pos_integer(),
           outcome: :completed | :failed | nil
         }
 
-  @type transition ::
-          {:continue, t()}
-          | {:complete, t()}
-          | {:error, atom()}
+  @type transition :: {:continue, t()} | {:complete, t()} | {:error, atom()}
 
   @doc "Creates squad workflow state for a room with an optional rework budget."
   @spec new(String.t(), keyword()) :: t()
@@ -34,36 +32,38 @@ defmodule ReyCode.Orchestration.SquadFSM do
     }
   end
 
-  @doc "Returns the workflow phase at the state's current position."
-  @spec phase(t()) :: map() | nil
-  def phase(state), do: Squad.phase(state.phase)
+  @doc "Returns the workflow Phase at the state's current PhaseIndex."
+  @spec phase(t()) :: Phase.t() | nil
+  def phase(state), do: Squad.phase(state.phase_index)
 
-  @doc "Returns the stable label for the current workflow stage."
-  @spec stage_label(t()) :: String.t()
-  def stage_label(state), do: Squad.stage_label(state.phase)
+  @doc "Returns the stable label for the current Phase."
+  @spec phase_label(t()) :: String.t()
+  def phase_label(state), do: Squad.phase_label(state.phase_index)
 
   @doc "Checks whether the state has reached the completion sentinel."
   @spec complete?(t()) :: boolean()
-  def complete?(state), do: state.phase >= Squad.complete_stage()
+  def complete?(state), do: state.phase_index >= Squad.complete_phase_index()
 
   @doc "Checks whether another rework cycle remains within budget."
   @spec rework_available?(t()) :: boolean()
   def rework_available?(state), do: state.rework_count < state.rework_budget
 
-  @doc "Moves to the next phase, completing when no phases remain."
+  @doc "Moves to the next Phase, completing when no Phases remain."
   @spec next(t()) :: {:continue, t()} | {:complete, t()}
   def next(state) do
-    next_phase = state.phase + 1
-    next = %{state | phase: next_phase}
+    next_phase_index = state.phase_index + 1
+    next = %{state | phase_index: next_phase_index}
 
-    if next_phase >= Squad.complete_stage(), do: complete(next), else: {:continue, next}
+    if next_phase_index >= Squad.complete_phase_index(),
+      do: complete(next),
+      else: {:continue, next}
   end
 
-  @doc "Applies an authorized approve, rework, or abort gate decision."
+  @doc "Applies an authorized approve, rework, or abort gate resolution."
   @spec gate(t(), map()) :: transition()
   def gate(state, gate) do
     current = phase(state)
-    role_id = fetch_key(gate, :role_id)
+    resolver_id = fetch_key(gate, :resolver_id) || fetch_key(gate, :role_id)
     decision = fetch_key(gate, :decision)
     target_phase = fetch_key(gate, :target_phase)
 
@@ -71,7 +71,7 @@ defmodule ReyCode.Orchestration.SquadFSM do
       not Squad.gate?(current) ->
         {:error, :not_a_gate}
 
-      role_id not in ["squad_leader", "human_owner"] ->
+      resolver_id not in ["squad_leader", "human_owner"] ->
         {:error, :leader_required}
 
       decision == "approve" ->
@@ -81,15 +81,15 @@ defmodule ReyCode.Orchestration.SquadFSM do
         complete(%{state | outcome: :failed})
 
       decision == "rework" ->
-        target = target_phase || current.rework_to
-        rework(owner_grant(state, role_id), target)
+        target = target_phase || current.rework_phase
+        rework(owner_grant(state, resolver_id), target)
 
       true ->
         {:error, :invalid_decision}
     end
   end
 
-  @doc "Returns to a valid target phase while enforcing the rework budget."
+  @doc "Returns to a valid target Phase while enforcing the rework budget."
   @spec rework(t(), String.t() | nil) :: transition()
   def rework(state, target_phase) do
     target = target_phase && Squad.phase_index(target_phase)
@@ -105,29 +105,27 @@ defmodule ReyCode.Orchestration.SquadFSM do
         {:continue,
          %{
            state
-           | phase: target,
+           | phase_index: target,
              cycle: state.cycle + 1,
              rework_count: state.rework_count + 1
          }}
     end
   end
 
-  # The human owner may authorize one rework cycle beyond an exhausted budget;
-  # the leader cannot. The grant is recomputed from the current count on every
-  # human resolution, so repeated owner overrides keep working; the projection
-  # budget itself is not extended (durable extension lands with the squad-v3
-  # schema pass).
+  # The Owner may authorize one rework cycle beyond an exhausted budget; the
+  # Squad Leader cannot. Each owner resolution recomputes the grant from the
+  # current count; the durable budget extension is recorded separately.
   defp owner_grant(%{rework_count: count, rework_budget: budget} = state, "human_owner")
        when count >= budget,
        do: %{state | rework_budget: max(budget, count) + 1}
 
-  defp owner_grant(state, _role_id), do: state
+  defp owner_grant(state, _resolver_id), do: state
 
-  @doc "Moves the workflow to its terminal stage while preserving a set outcome."
+  @doc "Moves the workflow to its terminal PhaseIndex while preserving a set outcome."
   @spec complete(t()) :: {:complete, t()}
   def complete(state) do
     outcome = state.outcome || :completed
-    {:complete, %{state | phase: Squad.complete_stage(), outcome: outcome}}
+    {:complete, %{state | phase_index: Squad.complete_phase_index(), outcome: outcome}}
   end
 
   @doc "Returns the terminal outcome, treating an unset outcome as failed."

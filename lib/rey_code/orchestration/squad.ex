@@ -1,149 +1,146 @@
 defmodule ReyCode.Orchestration.Squad do
   @moduledoc "Fixed leader-supervised squad roster and workflow definition."
 
+  alias ReyCode.Orchestration.Squad.{Phase, Role}
+
   @workflow_version "squad-v3"
   @max_rework 3
   @retry_limit 2
 
   @roles [
-    %{
-      id: "squad_leader",
-      name: "Squad Leader",
-      perspective: "supervision, gate decisions, and targeted rework",
-      artifacts: ["theme_brief"],
-      decisions: ["approve", "rework", "abort"]
-    },
-    %{
-      id: "analyst",
-      name: "Analyst",
-      perspective: "themes, requirements, and story decomposition",
-      artifacts: ["stories"],
-      decisions: []
-    },
-    %{
-      id: "reviewer",
-      name: "Reviewer",
-      perspective: "story gaps, contradictions, and delivery risks",
-      artifacts: ["story_review"],
-      decisions: []
-    },
-    %{
-      id: "gherkin_author",
-      name: "Gherkin Author",
-      perspective: "executable behavior and acceptance scenarios",
-      artifacts: ["gherkin"],
-      decisions: []
-    },
-    %{
-      id: "qa_author",
-      name: "QA Author",
-      perspective: "unit, integration, and acceptance test design",
-      artifacts: ["qa_plan"],
-      decisions: []
-    },
-    %{
-      id: "implementer",
-      name: "Implementer",
-      perspective: "code, unit tests, and acceptance tests",
-      artifacts: ["code", "unit_tests", "acceptance_tests"],
-      decisions: []
-    },
-    %{
-      id: "cleaner",
-      name: "Cleaner",
-      perspective: "simple, maintainable, dead-code-free implementation",
-      artifacts: ["cleaned_code"],
-      decisions: []
-    },
-    %{
-      id: "code_reviewer",
-      name: "Code Reviewer",
-      perspective: "independent correctness and maintainability review",
-      artifacts: ["code_review"],
-      decisions: []
-    },
-    %{
-      id: "hardener",
-      name: "Hardener",
-      perspective: "security, reliability, and failure boundaries",
-      artifacts: ["hardened_code"],
-      decisions: []
-    },
-    %{
-      id: "qa_tester",
-      name: "QA Tester",
-      perspective: "executed verification and regression evidence",
-      artifacts: ["qa_evidence"],
-      decisions: []
-    },
-    %{
-      id: "architect",
-      name: "Architect",
-      perspective: "final architecture and boundary validation",
-      artifacts: ["architecture_review"],
-      decisions: []
-    },
-    %{
-      id: "senior_implementer",
-      name: "Senior Implementer",
-      perspective: "integration and remediation of cross-cutting findings",
-      artifacts: ["integrated_implementation"],
-      decisions: []
-    }
-  ]
+           %{
+             id: "squad_leader",
+             name: "Squad Leader",
+             perspective: "supervision, gate decisions, and targeted rework",
+             artifacts: ["theme_brief"],
+             decisions: ["approve", "rework", "abort"]
+           },
+           %{
+             id: "analyst",
+             name: "Analyst",
+             perspective: "themes, requirements, and story decomposition",
+             artifacts: ["stories"],
+             decisions: []
+           },
+           %{
+             id: "reviewer",
+             name: "Reviewer",
+             perspective: "story gaps, contradictions, and delivery risks",
+             artifacts: ["story_review"],
+             decisions: []
+           },
+           %{
+             id: "gherkin_author",
+             name: "Gherkin Author",
+             perspective: "executable behavior and acceptance scenarios",
+             artifacts: ["gherkin"],
+             decisions: []
+           },
+           %{
+             id: "qa_author",
+             name: "QA Author",
+             perspective: "unit, integration, and acceptance test design",
+             artifacts: ["qa_plan"],
+             decisions: []
+           },
+           %{
+             id: "implementer",
+             name: "Implementer",
+             perspective: "code, unit tests, and acceptance tests",
+             artifacts: ["code", "unit_tests", "acceptance_tests"],
+             decisions: []
+           },
+           %{
+             id: "cleaner",
+             name: "Cleaner",
+             perspective: "simple, maintainable, dead-code-free implementation",
+             artifacts: ["cleaned_code"],
+             decisions: []
+           },
+           %{
+             id: "code_reviewer",
+             name: "Code Reviewer",
+             perspective: "independent correctness and maintainability review",
+             artifacts: ["code_review"],
+             decisions: []
+           },
+           %{
+             id: "hardener",
+             name: "Hardener",
+             perspective: "security, reliability, and failure boundaries",
+             artifacts: ["hardened_code"],
+             decisions: []
+           },
+           %{
+             id: "qa_tester",
+             name: "QA Tester",
+             perspective: "executed verification and regression evidence",
+             artifacts: ["qa_evidence"],
+             decisions: []
+           },
+           %{
+             id: "architect",
+             name: "Architect",
+             perspective: "final architecture and boundary validation",
+             artifacts: ["architecture_review"],
+             decisions: []
+           },
+           %{
+             id: "senior_implementer",
+             name: "Senior Implementer",
+             perspective: "integration and remediation of cross-cutting findings",
+             artifacts: ["integrated_implementation"],
+             decisions: []
+           }
+         ]
+         |> Enum.map(&Role.from_map/1)
 
   @phases [
-    %{id: "leader_intake", roles: ["squad_leader"], artifacts: ["theme_brief"]},
-    %{id: "stories", roles: ["analyst"], artifacts: ["stories"]},
-    %{id: "story_review", roles: ["reviewer"], artifacts: ["story_review"]},
-    %{id: "story_gate", roles: ["squad_leader"], gate: true, rework_to: "stories"},
-    %{
-      id: "specification",
-      roles: ["gherkin_author", "qa_author"],
-      artifacts: ["gherkin", "qa_plan"]
-    },
-    %{
-      id: "specification_gate",
-      roles: ["squad_leader"],
-      gate: true,
-      rework_to: "specification"
-    },
-    %{
-      id: "implementation",
-      roles: ["implementer"],
-      artifacts: ["code", "unit_tests", "acceptance_tests"]
-    },
-    %{
-      id: "integration",
-      roles: ["senior_implementer"],
-      artifacts: ["integrated_implementation"]
-    },
-    %{id: "cleanup", roles: ["cleaner"], artifacts: ["cleaned_code"]},
-    %{id: "code_review", roles: ["code_reviewer"], artifacts: ["code_review"]},
-    %{id: "code_gate", roles: ["squad_leader"], gate: true, rework_to: "integration"},
-    %{id: "hardening", roles: ["hardener"], artifacts: ["hardened_code"]},
-    %{id: "qa_validation", roles: ["qa_tester"], artifacts: ["qa_evidence"]},
-    %{
-      id: "architecture_review",
-      roles: ["architect"],
-      artifacts: ["architecture_review"]
-    },
-    %{id: "release_gate", roles: ["squad_leader"], gate: true, rework_to: "integration"}
-  ]
+            %{id: "leader_intake", roles: ["squad_leader"], artifacts: ["theme_brief"]},
+            %{id: "stories", roles: ["analyst"], artifacts: ["stories"]},
+            %{id: "story_review", roles: ["reviewer"], artifacts: ["story_review"]},
+            %{id: "story_gate", roles: ["squad_leader"], gate: true, rework_to: "stories"},
+            %{
+              id: "specification",
+              roles: ["gherkin_author", "qa_author"],
+              artifacts: ["gherkin", "qa_plan"]
+            },
+            %{
+              id: "specification_gate",
+              roles: ["squad_leader"],
+              gate: true,
+              rework_to: "specification"
+            },
+            %{
+              id: "implementation",
+              roles: ["implementer"],
+              artifacts: ["code", "unit_tests", "acceptance_tests"]
+            },
+            %{
+              id: "integration",
+              roles: ["senior_implementer"],
+              artifacts: ["integrated_implementation"]
+            },
+            %{id: "cleanup", roles: ["cleaner"], artifacts: ["cleaned_code"]},
+            %{id: "code_review", roles: ["code_reviewer"], artifacts: ["code_review"]},
+            %{id: "code_gate", roles: ["squad_leader"], gate: true, rework_to: "integration"},
+            %{id: "hardening", roles: ["hardener"], artifacts: ["hardened_code"]},
+            %{id: "qa_validation", roles: ["qa_tester"], artifacts: ["qa_evidence"]},
+            %{
+              id: "architecture_review",
+              roles: ["architect"],
+              artifacts: ["architecture_review"]
+            },
+            %{id: "release_gate", roles: ["squad_leader"], gate: true, rework_to: "integration"}
+          ]
+          |> Enum.map(&Phase.from_map/1)
 
   @role_by_id Map.new(@roles, &{&1.id, &1})
   @phase_by_id Map.new(@phases, &{&1.id, &1})
   @phase_index @phases |> Enum.with_index() |> Map.new(fn {phase, index} -> {phase.id, index} end)
 
-  @type role :: %{
-          id: String.t(),
-          name: String.t(),
-          perspective: String.t(),
-          artifacts: [String.t()],
-          decisions: [String.t()]
-        }
-
-  @type phase :: map()
+  @type role :: Role.t()
+  @type phase :: Phase.t()
 
   @doc "Returns the workflow version persisted with squad runs."
   @spec workflow_version() :: String.t()
@@ -170,29 +167,29 @@ defmodule ReyCode.Orchestration.Squad do
   @spec phase_index(String.t()) :: non_neg_integer() | nil
   def phase_index(id), do: @phase_index[id]
 
-  @doc "Returns a stage's stable phase label, or `\"complete\"` after the final stage."
-  @spec stage_label(non_neg_integer()) :: String.t()
-  def stage_label(index) do
+  @doc "Returns a stable Phase label, or `\"complete\"` after the final Phase."
+  @spec phase_label(non_neg_integer()) :: String.t()
+  def phase_label(index) do
     case phase(index) do
       nil -> "complete"
       value -> value.id
     end
   end
 
-  @doc "Returns the roles responsible for a workflow stage."
-  @spec roles_in_stage(non_neg_integer()) :: [role()]
-  def roles_in_stage(index) do
+  @doc "Returns the Roles responsible for a workflow Phase."
+  @spec roles_in_phase(non_neg_integer()) :: [Role.t()]
+  def roles_in_phase(index) do
     case phase(index) do
       nil -> []
-      value -> Enum.map(value.roles, &Map.fetch!(@role_by_id, &1))
+      value -> Enum.map(value.role_ids, &Map.fetch!(@role_by_id, &1))
     end
   end
 
-  @doc "Checks whether a stage or phase requires a gate decision."
-  @spec gate?(non_neg_integer() | phase()) :: boolean()
+  @doc "Checks whether a Phase requires a gate resolution."
+  @spec gate?(non_neg_integer() | Phase.t()) :: boolean()
   def gate?(index) when is_integer(index), do: gate?(phase(index))
   def gate?(nil), do: false
-  def gate?(phase), do: Map.get(phase, :gate, false)
+  def gate?(phase), do: phase.gate?
 
   @doc "Returns the default number of rework cycles allowed per squad run."
   @spec max_rework() :: pos_integer()
@@ -202,9 +199,9 @@ defmodule ReyCode.Orchestration.Squad do
   @spec retry_limit() :: pos_integer()
   def retry_limit, do: @retry_limit
 
-  @doc "Returns the sentinel stage index representing workflow completion."
-  @spec complete_stage() :: pos_integer()
-  def complete_stage, do: length(@phases)
+  @doc "Returns the sentinel PhaseIndex representing workflow completion."
+  @spec complete_phase_index() :: pos_integer()
+  def complete_phase_index, do: length(@phases)
 
   @doc "Checks whether a role may perform an action for the given artifact or decision."
   @spec eligible?(String.t(), atom(), atom() | String.t()) :: boolean()
@@ -226,9 +223,9 @@ defmodule ReyCode.Orchestration.Squad do
   @doc "Returns the artifacts a role is responsible for in a phase."
   @spec required_artifacts(String.t(), String.t()) :: [String.t()]
   def required_artifacts(phase_id, role_id) do
-    with %{artifacts: artifacts} <- phase(phase_id),
-         %{artifacts: role_artifacts} <- role(role_id) do
-      Enum.filter(artifacts, &(&1 in role_artifacts))
+    with %Phase{artifact_kinds: artifact_kinds} <- phase(phase_id),
+         %Role{artifacts: role_artifacts} <- role(role_id) do
+      Enum.filter(artifact_kinds, &(&1 in role_artifacts))
     else
       _ -> []
     end
@@ -250,7 +247,7 @@ defmodule ReyCode.Orchestration.Squad do
   @spec decides_gate?(String.t() | nil, String.t()) :: boolean()
   def decides_gate?(phase_id, role_id) do
     case phase(phase_id) do
-      %{gate: true, roles: roles} -> role_id in roles
+      %Phase{gate?: true, role_ids: role_ids} -> role_id in role_ids
       _other -> false
     end
   end
@@ -265,7 +262,7 @@ defmodule ReyCode.Orchestration.Squad do
   @doc "Checks whether the recorded artifact kinds satisfy a phase's requirements."
   @spec phase_artifacts_complete?(phase(), MapSet.t(String.t())) :: boolean()
   def phase_artifacts_complete?(phase, artifact_kinds) do
-    Enum.all?(Map.get(phase, :artifacts, []), &MapSet.member?(artifact_kinds, &1)) or
+    Enum.all?(phase.artifact_kinds, &MapSet.member?(artifact_kinds, &1)) or
       legacy_phase_artifacts_complete?(phase.id, artifact_kinds)
   end
 
