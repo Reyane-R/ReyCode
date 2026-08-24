@@ -1,5 +1,11 @@
 # Decisions
 
+> **Who this is for.** This is the team's architectural decision log — meeting
+> notes, not a tutorial. It uses internal identifiers (D1–D24), PR and issue
+> numbers, and assumes familiarity with the codebase. Newcomers: skip this
+> file; start with the [Documentation Index](docs/README.md) instead. Read a
+> decision here only when you want the recorded *why* behind a specific design.
+
 Accepted 2026-08-20 (Round 1–2 of design review), executed same day where noted.
 **Policy** = in effect now. **Planned** = accepted, not yet implemented; do not
 claim it in user-facing copy until it ships.

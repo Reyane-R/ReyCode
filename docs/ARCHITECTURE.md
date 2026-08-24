@@ -768,6 +768,7 @@ are in `test/support/`.
 
 ## 12. Reading further
 
+- [`README.md`](README.md) — The documentation index: which doc is for whom.
 - [`CONTEXT.md`](../CONTEXT.md) — The domain glossary. Read this when you see
   a term you don't recognize.
 - [`DECISIONS.md`](../DECISIONS.md) — Recorded architectural decisions. Read

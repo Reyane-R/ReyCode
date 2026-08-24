@@ -16,8 +16,69 @@ selection.
 Active decisions and their acceptance criteria are recorded in
 [DECISIONS.md](DECISIONS.md).
 
-New to Elixir or this codebase? Start with the [Architecture Guide](docs/ARCHITECTURE.md) —
-it walks through the entire program end-to-end, from keypress to database.
+New to Elixir or this codebase? Start with the [Documentation Index](docs/README.md)
+to find the right doc, or jump straight to the
+[Architecture Guide](docs/ARCHITECTURE.md) — it walks through the entire
+program end-to-end, from keypress to database.
+
+## Install
+
+ReyCode is an Elixir application, so you need the Elixir language and the
+Erlang/OTP runtime before you can run anything. **This project requires Elixir
+`~> 1.19` and Erlang/OTP 27 or newer** (`mix.exs` pins the constraint; CI
+builds against Elixir 1.19.5 on OTP 28.3.1). Check what you have:
+
+```sh
+elixir --version   # should report Elixir 1.19.x on Erlang/OTP 27+
+```
+
+**macOS (Homebrew):**
+
+```sh
+brew install elixir   # the formula installs a matching Erlang/OTP too
+```
+
+**Linux:** your distro's `elixir` package is usually years old and won't
+satisfy `~> 1.19`. Use a version manager instead — [mise] or [asdf]:
+
+```sh
+# mise — install Erlang, then Elixir, then pin both for this directory
+mise install erlang@28.3.1
+mise install elixir@1.19.5
+mise use erlang@28.3.1 elixir@1.19.5
+
+# or with asdf:
+asdf plugin add erlang https://github.com/asdf-vm/asdf-erlang.git
+asdf plugin add elixir https://github.com/asdf-vm/asdf-elixir.git
+asdf install erlang 28.3.1
+asdf install elixir 1.19.5
+asdf local erlang 28.3.1
+asdf local elixir 1.19.5
+```
+
+Prefer OTP 28.x to match CI. Building Erlang from source needs its development
+libraries (`libssl-dev`, `libncurses-dev`, etc. on Debian/Ubuntu). Some
+project dependencies (`exqlite`, `exile`) also compile native code, so you
+need a C toolchain: Xcode Command Line Tools on macOS, `build-essential` on
+Debian/Ubuntu.
+
+First time using Mix (Elixir's build tool)? Install the Hex package manager
+to fetch dependencies:
+
+```sh
+mix local.hex --force
+```
+
+Then verify and start:
+
+```sh
+elixir --version
+mix deps.get
+mix run --no-halt
+```
+
+[mise]: https://mise.jdx.dev
+[asdf]: https://asdf-vm.com
 
 ## Run
 
