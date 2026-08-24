@@ -3,16 +3,25 @@ defmodule ReyCode.Orchestration.Projector do
 
   import Kernel, except: [apply: 2]
 
-  alias ReyCode.Event
+  alias ReyCode.{Event, Failure}
 
   alias ReyCode.Orchestration.{
     Invocation,
     Message,
     Participant,
     Projection,
+    ProviderRound,
     Room,
+    SquadRun,
     ToolRun,
     Turn
+  }
+
+  alias ReyCode.Orchestration.Squad.{
+    GateRecommendation,
+    GateResolution,
+    GateReview,
+    Seat
   }
 
   alias ReyCode.Provider.Registry
@@ -36,7 +45,7 @@ defmodule ReyCode.Orchestration.Projector do
       title: data["title"],
       workspace: data["workspace"],
       participants: Enum.map(data["participants"], &participant/1),
-      squad_roles: %{},
+      squad_seats: %{},
       message_order: [],
       active_turn_id: nil,
       queued_turn_ids: [],
@@ -63,15 +72,16 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :squad_role_configured, data: data} = event, state) do
     update_room(state, data["room_id"], fn room ->
-      role = %{
+      seat = %Seat{
         id: data["role_id"],
+        role_id: data["role_id"],
         name: data["name"],
         perspective: data["perspective"],
         provider: provider(data["provider"]),
         model: data["model"]
       }
 
-      %{room | squad_roles: Map.put(room.squad_roles, role.id, role)}
+      %{room | squad_seats: Map.put(room.squad_seats, seat.id, seat)}
     end)
     |> put_sequence(event.sequence)
   end
@@ -130,7 +140,10 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :assistant_message_opened, data: data} = event, state) do
-    participant = participant(data["participant"])
+    participant =
+      if state.turns[data["turn_id"]].mode == :squad,
+        do: seat(data["participant"]),
+        else: participant(data["participant"])
 
     message = %Message{
       id: data["message_id"],
@@ -152,7 +165,7 @@ defmodule ReyCode.Orchestration.Projector do
       turn_id: data["turn_id"],
       message_id: data["message_id"],
       participant: participant,
-      stage: data["stage"],
+      phase_index: data["stage"],
       phase: data["phase"] || data["label"],
       cycle: data["cycle"] || 0,
       logical_work_id: data["logical_work_id"] || data["invocation_id"],
@@ -212,11 +225,7 @@ defmodule ReyCode.Orchestration.Projector do
     |> update_invocation(data["invocation_id"], fn invocation ->
       error =
         if status == :failed,
-          do: %{
-            "category" => "tool_denied",
-            "message" => "Tool request denied",
-            "retryable" => false
-          },
+          do: Failure.new(:tool_denied, "Tool request denied"),
           else: invocation.error
 
       %{invocation | status: status, pending_tool_review: nil, error: error}
@@ -231,12 +240,13 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :provider_round_recorded, data: data} = event, state) do
-    round = %{
-      index: data["round_index"],
-      text: data["text"],
-      tool_calls: data["tool_calls"],
-      usage: data["usage"]
-    }
+    round =
+      ProviderRound.from_map(%{
+        index: data["round_index"],
+        text: data["text"],
+        tool_calls: data["tool_calls"],
+        usage: data["usage"]
+      })
 
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
@@ -351,7 +361,7 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :invocation_failed, data: data} = event, state) do
-    error = data["error"]
+    error = failure_from_wire!(data["error"])
 
     state
     |> update_invocation(data["invocation_id"], &%{&1 | status: :failed, error: error})
@@ -360,20 +370,20 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :invocation_cancelled, data: data} = event, state) do
-    reason = %{"category" => "cancelled", "message" => data["reason"], "retryable" => false}
+    failure = Failure.new(:cancelled, data["reason"])
 
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
-      %{invocation | status: :cancelled, error: reason, pending_tool_review: nil}
+      %{invocation | status: :cancelled, error: failure, pending_tool_review: nil}
     end)
-    |> update_message(data["message_id"], &%{&1 | status: :cancelled, error: reason})
+    |> update_message(data["message_id"], &%{&1 | status: :cancelled, error: failure})
     |> put_sequence(event.sequence)
   end
 
   def apply(%Event{type: :turn_completed, data: data} = event, state) do
     outcome = outcome(data["outcome"])
 
-    update_turn(state, data["turn_id"], &%{&1 | status: outcome, outcome: outcome})
+    update_turn(state, data["turn_id"], &%{&1 | status: :terminal, outcome: outcome})
     |> update_room(data["room_id"], fn room ->
       if room.active_turn_id == data["turn_id"] do
         %{room | active_turn_id: nil}
@@ -386,29 +396,28 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :squad_configured, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      %{
-        turn
-        | squad: %{
-            room_id: turn.room_id,
-            workflow_version: data["workflow_version"] || "squad-v1",
-            release_authority: data["release_authority"] || "human",
-            stage: 0,
-            phase: data["phase"] || "leader_intake",
-            cycle: 0,
-            rework_count: 0,
-            rework_budget: data["rework_budget"],
-            seats: data["seats"],
-            decisions: [],
-            latest_gate: nil,
-            promotions: %{},
-            artifacts: [],
-            blockers: [],
-            retries: [],
-            directives: [],
-            gate_reviews: [],
-            pending_review: nil
-          }
+      run = %SquadRun{
+        room_id: turn.room_id,
+        workflow_version: data["workflow_version"] || "squad-v1",
+        release_authority: release_authority(data["release_authority"]),
+        phase_index: 0,
+        phase: data["phase"] || "leader_intake",
+        cycle: 0,
+        rework_count: 0,
+        rework_budget: data["rework_budget"],
+        role_ids: data["seats"],
+        resolutions: [],
+        latest_resolution: nil,
+        promotions: %{},
+        artifacts: [],
+        blockers: [],
+        retries: [],
+        directives: [],
+        reviews: [],
+        pending_review: nil
       }
+
+      %{turn | squad: run}
     end)
     |> put_sequence(event.sequence)
   end
@@ -417,7 +426,7 @@ defmodule ReyCode.Orchestration.Projector do
     update_turn(state, data["turn_id"], fn turn ->
       squad = %{
         turn.squad
-        | stage: data["stage"],
+        | phase_index: data["stage"],
           phase: data["phase"] || turn.squad.phase,
           cycle: data["cycle"] || turn.squad.cycle
       }
@@ -429,24 +438,16 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :squad_decision_recorded, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      decision = %{
-        role_id: data["seat_id"],
-        decision: data["decision"],
-        phase: data["phase"] || turn.squad.phase,
-        cycle: data["cycle"] || turn.squad.cycle,
-        target_phase: data["target_phase"],
-        reasons: data["reasons"] || []
+      resolution = gate_resolution(data, event.recorded_at, :squad_leader)
+
+      squad = %{
+        turn.squad
+        | resolutions: [resolution | turn.squad.resolutions],
+          latest_resolution: resolution,
+          blockers: resolution.reasons
       }
 
-      %{
-        turn
-        | squad: %{
-            turn.squad
-            | decisions: [decision | turn.squad.decisions],
-              latest_gate: decision,
-              blockers: decision.reasons
-          }
-      }
+      %{turn | squad: squad}
     end)
     |> put_sequence(event.sequence)
   end
@@ -494,7 +495,7 @@ defmodule ReyCode.Orchestration.Projector do
         if retry.kind == "rework" do
           %{
             squad
-            | stage: data["target_stage"],
+            | phase_index: data["target_stage"],
               phase: data["target_phase"],
               cycle: data["cycle"],
               rework_count: squad.rework_count + 1
@@ -517,22 +518,35 @@ defmodule ReyCode.Orchestration.Projector do
         recorded_at: event.recorded_at
       }
 
-      directives = [directive | Map.get(turn.squad, :directives, [])]
-      %{turn | squad: Map.put(turn.squad, :directives, directives)}
+      %{turn | squad: %{turn.squad | directives: [directive | turn.squad.directives]}}
     end)
     |> put_sequence(event.sequence)
   end
 
   def apply(%Event{type: :gate_review_requested, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      review = gate_decision(data, event.recorded_at, "agent")
-      reviews = [review | Map.get(turn.squad, :gate_reviews, [])]
+      recommendation = %GateRecommendation{
+        role_id: data["seat_id"],
+        decision: data["decision"],
+        target_phase: data["target_phase"],
+        reasons: data["reasons"] || [],
+        recommended_at: event.recorded_at
+      }
 
-      squad =
+      review = %GateReview{
+        id: review_id(data),
+        phase: data["phase"],
+        cycle: data["cycle"],
+        recommendation: recommendation,
+        requested_at: event.recorded_at
+      }
+
+      squad = %{
         turn.squad
-        |> Map.put(:gate_reviews, reviews)
-        |> Map.put(:pending_review, review)
-        |> Map.put(:blockers, review.reasons)
+        | reviews: [review | turn.squad.reviews],
+          pending_review: review,
+          blockers: recommendation.reasons
+      }
 
       %{turn | squad: squad}
     end)
@@ -541,15 +555,15 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :gate_resolved, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      decision = gate_decision(data, event.recorded_at, "human")
-      decisions = [decision | turn.squad.decisions]
+      resolution = gate_resolution(data, event.recorded_at, :owner)
 
-      squad =
+      squad = %{
         turn.squad
-        |> Map.put(:decisions, decisions)
-        |> Map.put(:latest_gate, decision)
-        |> Map.put(:pending_review, nil)
-        |> Map.put(:blockers, decision.reasons)
+        | resolutions: [resolution | turn.squad.resolutions],
+          latest_resolution: resolution,
+          pending_review: nil,
+          blockers: resolution.reasons
+      }
 
       %{turn | squad: squad}
     end)
@@ -558,7 +572,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :squad_budget_extended, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      %{turn | squad: Map.put(turn.squad, :rework_budget, data["budget"])}
+      %{turn | squad: %{turn.squad | rework_budget: data["budget"]}}
     end)
     |> put_sequence(event.sequence)
   end
@@ -688,20 +702,27 @@ defmodule ReyCode.Orchestration.Projector do
 
   defp put_sequence(state, sequence), do: %{state | sequence: sequence}
 
-  # The review id is derived from the gate's coordinates so replays of old
-  # events synthesize the same identity the TUI captured when it opened.
-  defp gate_decision(data, recorded_at, actor) do
-    %{
-      review_id: "#{data["turn_id"]}:#{data["phase"]}:#{data["cycle"]}",
-      role_id: data["seat_id"],
+  defp review_id(data), do: "#{data["turn_id"]}:#{data["phase"]}:#{data["cycle"]}"
+
+  defp gate_resolution(data, resolved_at, authority) do
+    %GateResolution{
+      review_id: review_id(data),
+      resolver_id: data["seat_id"],
+      authority: authority,
       decision: data["decision"],
       phase: data["phase"],
       cycle: data["cycle"],
       target_phase: data["target_phase"],
       reasons: data["reasons"] || [],
-      actor: actor,
-      recorded_at: recorded_at
+      resolved_at: resolved_at
     }
+  end
+
+  defp failure_from_wire!(failure) do
+    case Failure.from_wire(failure) do
+      {:ok, failure} -> failure
+      {:error, :invalid_failure} -> raise ArgumentError, "invalid durable failure"
+    end
   end
 
   defp apply_invocation_frame(invocation, "usage", data) do
@@ -726,6 +747,21 @@ defmodule ReyCode.Orchestration.Projector do
       model: data["model"]
     }
   end
+
+  defp seat(data) do
+    %Seat{
+      id: data["id"],
+      role_id: data["role_id"] || data["id"],
+      name: data["name"],
+      perspective: data["perspective"],
+      provider: provider(data["provider"]),
+      model: data["model"]
+    }
+  end
+
+  defp release_authority("leader"), do: :squad_leader
+  defp release_authority("human"), do: :owner
+  defp release_authority(nil), do: :owner
 
   defp configure_participant(%{id: id} = participant, %{"participant_id" => id} = data) do
     %{participant | provider: provider(data["provider"]), model: data["model"]}

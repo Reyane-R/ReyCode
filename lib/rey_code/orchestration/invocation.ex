@@ -1,7 +1,9 @@
 defmodule ReyCode.Orchestration.Invocation do
-  @moduledoc "A durable provider invocation in the orchestration projection."
+  @moduledoc "A durable provider execution in the orchestration projection."
 
-  alias ReyCode.Orchestration.{Participant, ToolRun}
+  alias ReyCode.Failure
+  alias ReyCode.Orchestration.{Participant, ProviderRound, ToolRun}
+  alias ReyCode.Orchestration.Squad.Seat
 
   @fields [
     :id,
@@ -9,7 +11,7 @@ defmodule ReyCode.Orchestration.Invocation do
     :turn_id,
     :message_id,
     :participant,
-    :stage,
+    :phase_index,
     :phase,
     :cycle,
     :logical_work_id,
@@ -34,7 +36,7 @@ defmodule ReyCode.Orchestration.Invocation do
             turn_id: nil,
             message_id: nil,
             participant: nil,
-            stage: nil,
+            phase_index: nil,
             phase: nil,
             cycle: 0,
             logical_work_id: nil,
@@ -58,8 +60,8 @@ defmodule ReyCode.Orchestration.Invocation do
           room_id: String.t() | nil,
           turn_id: String.t() | nil,
           message_id: String.t() | nil,
-          participant: Participant.t() | nil,
-          stage: non_neg_integer() | nil,
+          participant: Participant.t() | Seat.t() | nil,
+          phase_index: non_neg_integer() | nil,
           phase: String.t() | nil,
           cycle: non_neg_integer(),
           logical_work_id: String.t() | nil,
@@ -70,30 +72,41 @@ defmodule ReyCode.Orchestration.Invocation do
           attempt: pos_integer(),
           usage: map() | nil,
           tool_events: [map()],
-          rounds: [map()],
+          rounds: [ProviderRound.t()],
           tool_runs: %{optional(String.t()) => ToolRun.t()},
           tool_run_order: [String.t()],
           pending_tool_review: map() | nil,
           completion_metadata: map() | nil,
           last_frame_sequence: non_neg_integer(),
-          error: map() | nil
+          error: Failure.t() | nil
         }
 
   @doc "Converts a decoded or legacy invocation map into the current record."
   @spec from_map(t() | map()) :: t()
   def from_map(invocation) when is_map(invocation) do
-    invocation = struct!(__MODULE__, Map.take(invocation, @fields))
+    invocation =
+      invocation
+      |> Map.put_new(:phase_index, Map.get(invocation, :stage))
+      |> then(&struct!(__MODULE__, Map.take(&1, @fields)))
 
     %{
       invocation
       | participant: participant(invocation.participant),
+        rounds: Enum.map(invocation.rounds || [], &ProviderRound.from_map/1),
         tool_runs:
           Map.new(invocation.tool_runs || %{}, fn {id, run} ->
             {id, ToolRun.from_map(run)}
-          end)
+          end),
+        error: optional_failure(invocation.error)
     }
   end
 
   defp participant(nil), do: nil
+  defp participant(%Participant{} = participant), do: participant
+  defp participant(%Seat{} = seat), do: seat
+  defp participant(%{role_id: _role_id} = seat), do: Seat.from_map(seat)
   defp participant(value), do: Participant.from_map(value)
+
+  defp optional_failure(nil), do: nil
+  defp optional_failure(value), do: Failure.from_map(value)
 end

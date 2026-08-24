@@ -102,7 +102,7 @@ defmodule ReyCode.Orchestration.Context do
         message.created_sequence <= turn.context_through_sequence
 
       true ->
-        projection.invocations[message.invocation_id].stage < invocation.stage
+        projection.invocations[message.invocation_id].phase_index < invocation.phase_index
     end
   end
 end
