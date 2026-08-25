@@ -5,6 +5,14 @@ defmodule Mix.Tasks.ReyCode.Squad do
   Runs a leader-supervised squad turn.
 
       mix rey_code.squad --seed 42 --jitter-ms 10 "Implement the change"
+
+  Waiting is notification-driven: the command subscribes to Engine
+  projection broadcasts and returns promptly on every durable terminal
+  outcome, including cancelled turns. There is no implicit whole-run
+  deadline — each provider invocation is bounded by the configured
+  provider timeout — but an explicit monotonic cap can be set with
+  `--timeout-ms`; expiry is reported as a timeout, distinct from any
+  squad outcome.
   """
 
   use Mix.Task
@@ -12,6 +20,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
   alias ReyCode.Orchestration.Squad
   alias ReyCode.Orchestration.Squad.MonteCarlo
   alias ReyCode.Provider.Catalog
+  alias ReyCode.SquadWait
 
   @switches [
     seed: :integer,
@@ -25,7 +34,8 @@ defmodule Mix.Tasks.ReyCode.Squad do
     model: :string,
     workspace: :string,
     json: :boolean,
-    release: :string
+    release: :string,
+    timeout_ms: :integer
   ]
 
   @impl true
@@ -53,8 +63,16 @@ defmodule Mix.Tasks.ReyCode.Squad do
       turn = execute_turn(room_id, workspace, config)
       Mix.shell().info(render(turn, workspace, config.format))
 
-      if turn.status != :terminal or turn.outcome != :completed,
-        do: Mix.raise("Squad did not approve the theme")
+      case turn do
+        %{status: :terminal, outcome: :completed} ->
+          :ok
+
+        %{status: :terminal, outcome: outcome} ->
+          Mix.raise("Squad ended #{outcome}: theme not approved")
+
+        _other ->
+          Mix.raise("Squad did not finish")
+      end
     end)
   end
 
@@ -77,6 +95,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
       format: if(opts[:json], do: :json, else: :human),
       model: model,
       release: Keyword.get(opts, :release, "auto"),
+      timeout_ms: opts[:timeout_ms],
       theme: Enum.join(args, " "),
       workspace: opts[:workspace]
     }
@@ -149,8 +168,23 @@ defmodule Mix.Tasks.ReyCode.Squad do
     Mix.shell().info("Workspace: #{workspace}")
 
     case ReyCode.post_message(room_id, config.theme, :squad) do
-      {:ok, turn_id} -> wait(turn_id, config, nil, wait_attempts())
+      {:ok, turn_id} -> wait_for_turn(turn_id, config)
       {:error, reason} -> Mix.raise("Could not start squad turn: #{inspect(reason)}")
+    end
+  end
+
+  defp wait_for_turn(turn_id, config) do
+    case SquadWait.await(
+           turn_id,
+           timeout_ms: config.timeout_ms,
+           on_phase: fn phase -> Mix.shell().info("[squad] #{phase}") end,
+           on_gate_pending: fn turn -> resolve_human_gate(turn_id, turn) end
+         ) do
+      {:ok, turn} ->
+        turn
+
+      {:error, :timed_out} ->
+        Mix.raise("Squad timed out after #{config.timeout_ms} ms")
     end
   end
 
@@ -173,48 +207,6 @@ defmodule Mix.Tasks.ReyCode.Squad do
           "#{summary.failed} failed, max #{summary.max_steps} steps"
       )
     end
-  end
-
-  # The machine budget must exceed the permitted provider timeout so one slow
-  # provider round cannot exhaust it; human gate resolutions reset it.
-  @wait_poll_ms 25
-  @wait_timeout_ms 900_000
-
-  defp wait_attempts, do: div(@wait_timeout_ms, @wait_poll_ms)
-
-  defp wait(_turn_id, _config, _previous_phase, 0), do: Mix.raise("Squad timed out")
-
-  defp wait(turn_id, config, previous_phase, attempts) do
-    turn =
-      case Map.fetch(ReyCode.snapshot().turns, turn_id) do
-        {:ok, turn} -> turn
-        :error -> Mix.raise("Squad turn #{turn_id} is unavailable")
-      end
-
-    phase = turn.squad && turn.squad.phase
-    announce_phase(phase, previous_phase)
-    step(turn, turn_id, config, phase, attempts)
-  end
-
-  defp announce_phase(phase, previous_phase) do
-    if phase != nil and phase != previous_phase, do: Mix.shell().info("[squad] #{phase}")
-  end
-
-  defp step(%{status: :terminal} = turn, _turn_id, _config, _phase, _attempts), do: turn
-
-  defp step(turn, turn_id, config, phase, attempts) do
-    if human_gate_pending?(turn, config) do
-      resolve_human_gate(turn_id, turn)
-      wait(turn_id, config, phase, wait_attempts())
-    else
-      Process.sleep(@wait_poll_ms)
-      wait(turn_id, config, phase, attempts - 1)
-    end
-  end
-
-  defp human_gate_pending?(turn, config) do
-    config.release == "wait" and turn.squad != nil and
-      Map.get(turn.squad, :pending_review) != nil
   end
 
   # A headless --release wait run has no TUI, so the terminal itself is the
