@@ -108,8 +108,7 @@ defmodule ReyCode.TUITest do
       simulator: %{id: :simulator, name: "Simulator", status: :configured, models: []}
     }
 
-    assert {:noreply, _focused} =
-             Breeze.Test.info(session, {:provider_catalog_updated, providers})
+    assert {:noreply, _focused} = push_providers(session, providers)
 
     type(session, "/model")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
@@ -131,8 +130,7 @@ defmodule ReyCode.TUITest do
     session = start_session({120, 32})
     on_exit(fn -> Breeze.Test.stop(session) end)
 
-    assert {:noreply, _focused} =
-             Breeze.Test.info(session, {:provider_catalog_updated, %{}})
+    assert {:noreply, _focused} = push_providers(session, %{})
 
     type(session, "/model")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
@@ -361,8 +359,7 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     session_id = Breeze.Test.metadata(session).assigns.selected_room_id
-    projection = long_response_projection(session_id)
-    assert {:noreply, _focused} = Breeze.Test.info(session, {:projection_snapshot, projection})
+    push_projection(session, long_response_projection(session_id))
 
     type(session, "/resume")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
@@ -411,7 +408,7 @@ defmodule ReyCode.TUITest do
         }
       )
 
-    assert {:noreply, _focused} = Breeze.Test.info(session, {:projection_snapshot, projection})
+    assert %{sequence: _applied} = push_projection(session, projection)
     type(session, "/resume")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
@@ -424,16 +421,14 @@ defmodule ReyCode.TUITest do
         %{"tokens" => %{"input" => 100, "output" => 5}}
       )
 
-    assert {:noreply, _focused} =
-             Breeze.Test.info(session, {:projection_snapshot, split_projection})
+    assert %{sequence: _split} = push_projection(session, split_projection)
 
     assert plain(Breeze.Test.render!(session)) =~ "105/200k"
 
     total_projection =
       put_in(split_projection, [:invocations, "inv-layout", :usage], %{"total_tokens" => 42})
 
-    assert {:noreply, _focused} =
-             Breeze.Test.info(session, {:projection_snapshot, total_projection})
+    assert %{sequence: _total} = push_projection(session, total_projection)
 
     assert plain(Breeze.Test.render!(session)) =~ "42/200k"
   end
@@ -550,8 +545,7 @@ defmodule ReyCode.TUITest do
       unknown: %{name: "Unknown", status: :other, models: []}
     }
 
-    assert {:noreply, _focused} =
-             Breeze.Test.info(session, {:provider_catalog_updated, providers})
+    assert {:noreply, _focused} = push_providers(session, providers)
 
     type(session, "/help")
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
@@ -631,6 +625,24 @@ defmodule ReyCode.TUITest do
   end
 
   defp plain(screen), do: Regex.replace(~r/\e\[[0-9;]*m/, screen, "")
+
+  # Synthetic fixtures must respect the monotonic subscription contracts:
+  # each push advances the version the session currently holds.
+  defp push_projection(session, projection) do
+    next_sequence = Breeze.Test.metadata(session).assigns.projection.sequence + 1
+    projection = Map.put(projection, :sequence, next_sequence)
+
+    assert {:noreply, _focused} = Breeze.Test.info(session, {:projection_snapshot, projection})
+    projection
+  end
+
+  defp push_providers(session, providers) do
+    generation = Breeze.Test.metadata(session).assigns.providers_generation + 1
+
+    snapshot = %ReyCode.Provider.Catalog.Snapshot{generation: generation, providers: providers}
+
+    assert {:noreply, _focused} = Breeze.Test.info(session, {:provider_catalog_updated, snapshot})
+  end
 
   defp long_response_projection(session_id) do
     projection = ReyCode.snapshot()

@@ -16,6 +16,8 @@ defmodule ReyCode.Provider.Catalog do
   alias ReyCode.Provider.Registry, as: ProviderRegistry
   alias ReyCode.RuntimeConfig
 
+  alias ReyCode.Provider.Catalog.Snapshot
+
   @refresh_interval :timer.minutes(5)
   @retry_interval :timer.seconds(15)
   @probe_timeout :timer.seconds(15)
@@ -26,20 +28,36 @@ defmodule ReyCode.Provider.Catalog do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
-  @spec snapshot(GenServer.server()) :: map()
+  @spec snapshot(GenServer.server()) :: Snapshot.t()
   def snapshot(server \\ __MODULE__), do: GenServer.call(server, :snapshot)
   @spec refresh(GenServer.server()) :: :ok
   def refresh(server \\ __MODULE__), do: GenServer.cast(server, :refresh)
 
+  @doc """
+  Subscribes the caller to catalog broadcasts and returns the current view.
+
+  The returned snapshot carries the `generation` needed to continue the
+  stream monotonically. A broadcast dispatched after registration but before
+  this reply can still be queued ahead of it in the caller's mailbox, so
+  consumers must ignore snapshots whose generation is at or below the one
+  they already hold; generations strictly increase per broadcast.
+  """
+  @spec subscribe(GenServer.server()) :: Snapshot.t()
   def subscribe(server \\ __MODULE__) do
     registry = GenServer.call(server, :registry)
-
-    case Registry.register(registry, :providers, nil) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_registered, _pid}} -> :ok
-    end
+    ensure_registered(registry, :providers)
 
     snapshot(server)
+  end
+
+  # Duplicate registries append another entry when the same pid registers
+  # twice, so re-subscription checks the existing registration instead.
+  defp ensure_registered(registry, key) do
+    unless Enum.any?(Registry.lookup(registry, key), fn {pid, _value} -> pid == self() end) do
+      {:ok, _pid} = Registry.register(registry, key, nil)
+    end
+
+    :ok
   end
 
   @spec resolve(atom() | String.t(), String.t() | nil, GenServer.server()) ::
@@ -72,6 +90,7 @@ defmodule ReyCode.Provider.Catalog do
       registry: Keyword.get(opts, :registry, ReyCode.EventRegistry),
       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
       config: config,
+      generation: 0,
       discovery?: Keyword.get(opts, :discovery?, config.providers.discovery?),
       discover:
         Keyword.get(opts, :discover, fn ->
@@ -107,7 +126,9 @@ defmodule ReyCode.Provider.Catalog do
   def handle_continue(:refresh, state), do: {:noreply, start_probe(state)}
 
   @impl true
-  def handle_call(:snapshot, _from, state), do: {:reply, state.providers, state}
+  def handle_call(:snapshot, _from, state),
+    do: {:reply, build_snapshot(state), state}
+
   def handle_call(:registry, _from, state), do: {:reply, state.registry, state}
 
   def handle_call({:resolve, provider, model}, _from, state) do
@@ -157,8 +178,8 @@ defmodule ReyCode.Provider.Catalog do
       |> Map.put(:providers, providers)
       |> schedule_refresh(delay)
       |> reply_awaiters()
+      |> broadcast()
 
-    broadcast(next)
     {:noreply, next}
   end
 
@@ -200,8 +221,8 @@ defmodule ReyCode.Provider.Catalog do
       |> update_status(:checking)
       |> Map.put(:task, task)
       |> Map.put(:probe_timer, timer)
+      |> broadcast()
 
-    broadcast(next)
     next
   end
 
@@ -221,8 +242,8 @@ defmodule ReyCode.Provider.Catalog do
       |> Map.put(:providers, providers)
       |> schedule_refresh(state.retry_interval)
       |> reply_awaiters()
+      |> broadcast()
 
-    broadcast(next)
     next
   end
 
@@ -419,13 +440,22 @@ defmodule ReyCode.Provider.Catalog do
     %{state | awaiters: []}
   end
 
-  defp broadcast(state) do
+  # Every broadcast publishes a strictly higher generation so consumers can
+  # order snapshots without trusting wall-clock timestamps.
+  defp broadcast(%{generation: generation} = state) do
+    snapshot = %Snapshot{generation: generation + 1, providers: state.providers}
+
     Registry.dispatch(state.registry, :providers, fn entries ->
       Enum.each(entries, fn {pid, _value} ->
-        send(pid, {:provider_catalog_updated, state.providers})
+        send(pid, {:provider_catalog_updated, snapshot})
       end)
     end)
+
+    %{state | generation: generation + 1}
   end
+
+  defp build_snapshot(%{generation: generation, providers: providers}),
+    do: %Snapshot{generation: generation, providers: providers}
 
   defp provider_key(config, value), do: ProviderRegistry.normalize_provider_id(value, config)
 

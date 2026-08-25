@@ -23,7 +23,7 @@ defmodule ReyCode.TUI.State do
     provider_catalog = Keyword.get(opts, :provider_catalog, Catalog)
     config = Keyword.get_lazy(opts, :config, &ReyCode.RuntimeConfig.fresh/0)
     projection = Engine.subscribe(engine)
-    providers = Catalog.subscribe(provider_catalog)
+    catalog_snapshot = Catalog.subscribe(provider_catalog)
 
     {:ok,
      term
@@ -32,7 +32,8 @@ defmodule ReyCode.TUI.State do
        engine: engine,
        config: config,
        provider_catalog: provider_catalog,
-       providers: providers,
+       providers: catalog_snapshot.providers,
+       providers_generation: catalog_snapshot.generation,
        projection: projection,
        selected_room_id: List.last(projection.room_order),
        drafts: %{},
@@ -198,28 +199,50 @@ defmodule ReyCode.TUI.State do
     end)
   end
 
-  @doc "Updates the projection while retaining a valid session selection."
-  @spec projection_updated(map(), map()) :: map()
-  def projection_updated(term, projection) do
-    selected_room_id =
-      if Map.has_key?(projection.rooms, term.assigns.selected_room_id) do
-        term.assigns.selected_room_id
-      else
-        List.last(projection.room_order)
-      end
+  @doc """
+  Applies a projection broadcast unless it is older than the held one.
 
-    Component.assign(term, projection: projection, selected_room_id: selected_room_id)
+  Subscription registration and the snapshot reply are separate steps, so a
+  broadcast dispatched in between can sit ahead of the baseline reply in the
+  mailbox. Snapshots at or below the current `sequence` are ignored.
+  """
+  @spec projection_updated(map(), map()) :: map()
+  def projection_updated(term, %{sequence: sequence} = projection) do
+    if Map.has_key?(term.assigns, :projection) and
+         sequence <= term.assigns.projection.sequence do
+      term
+    else
+      selected_room_id =
+        if Map.has_key?(projection.rooms, term.assigns.selected_room_id) do
+          term.assigns.selected_room_id
+        else
+          List.last(projection.room_order)
+        end
+
+      Component.assign(term, projection: projection, selected_room_id: selected_room_id)
+    end
   end
 
-  @doc "Updates provider options and reconciles an open settings wizard."
-  @spec providers_updated(map(), map()) :: map()
-  def providers_updated(term, providers) do
-    notice =
-      if term.assigns.notice == Presentation.refresh_notice(), do: nil, else: term.assigns.notice
+  @doc "Applies a catalog snapshot unless its generation is not newer."
+  @spec providers_updated(map(), ReyCode.Provider.Catalog.Snapshot.t()) :: map()
+  def providers_updated(term, %{generation: generation} = snapshot) do
+    if generation <= term.assigns.providers_generation do
+      term
+    else
+      notice =
+        if term.assigns.notice == Presentation.refresh_notice(),
+          do: nil,
+          else: term.assigns.notice
 
-    term = Component.assign(term, providers: providers, notice: notice)
+      term =
+        Component.assign(term,
+          providers: snapshot.providers,
+          providers_generation: generation,
+          notice: notice
+        )
 
-    if term.assigns.modal == :settings, do: Settings.reconcile_options(term), else: term
+      if term.assigns.modal == :settings, do: Settings.reconcile_options(term), else: term
+    end
   end
 
   @doc "Updates the selected session's composer draft."

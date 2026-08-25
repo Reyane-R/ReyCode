@@ -34,22 +34,31 @@ defmodule ReyCode.Orchestration.Engine do
   def snapshot(server \\ __MODULE__), do: GenServer.call(server, :snapshot)
 
   @doc """
-  Subscribes the caller to projection broadcasts and returns the current projection.
+  Subscribes the caller to projection broadcasts and returns the baseline.
 
-  Registration and snapshot are performed together so the observable state is
-  guaranteed to be a consistent baseline: registering first means every later
-  broadcast is received, and the returned snapshot represents the state at
-  registration time.
+  Registration and snapshot are separate steps: a broadcast dispatched after
+  registration but before this reply can sit ahead of the returned baseline
+  in the caller's mailbox. Every notification carries a projection whose
+  `sequence` strictly increases with each committed batch, so consumers hold
+  the sequence of their current projection and ignore notifications at or
+  below it. Honoring that contract makes the observed stream monotonic from
+  the returned baseline.
   """
   def subscribe(server \\ __MODULE__) do
     event_registry = GenServer.call(server, :event_registry)
-
-    case Registry.register(event_registry, :orchestration, nil) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_registered, _pid}} -> :ok
-    end
+    ensure_registered(event_registry, :orchestration)
 
     snapshot(server)
+  end
+
+  # Duplicate registries append another entry when the same pid registers
+  # twice, so re-subscription checks the existing registration instead.
+  defp ensure_registered(registry, key) do
+    unless Enum.any?(Registry.lookup(registry, key), fn {pid, _value} -> pid == self() end) do
+      {:ok, _pid} = Registry.register(registry, key, nil)
+    end
+
+    :ok
   end
 
   @doc "Creates a room rooted at a workspace and returns its ID."

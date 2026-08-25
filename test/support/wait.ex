@@ -6,10 +6,17 @@ defmodule ReyCode.Test.Wait do
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.Catalog
 
+  # Subscription registration and the snapshot reply are separate steps, so a
+  # broadcast dispatched in between can sit ahead of the baseline in this
+  # process's mailbox. Both helpers therefore ignore notifications at or
+  # below the version of the baseline they returned.
   def projection(server, matcher, timeout \\ 5_000) do
-    server
-    |> Engine.subscribe()
-    |> match_or_wait(:projection_snapshot, matcher, deadline(timeout))
+    baseline = Engine.subscribe(server)
+
+    baseline
+    |> match_or_wait(:projection_snapshot, matcher, deadline(timeout), fn value ->
+      match?(%{sequence: sequence} when sequence <= baseline.sequence, value)
+    end)
   end
 
   def turn_status(server, turn_id, statuses, timeout \\ 5_000) do
@@ -31,19 +38,25 @@ defmodule ReyCode.Test.Wait do
   end
 
   def catalog(server, matcher, timeout \\ 5_000) do
-    server
-    |> Catalog.subscribe()
-    |> match_or_wait(:provider_catalog_updated, matcher, deadline(timeout))
+    baseline = Catalog.subscribe(server)
+
+    baseline.providers
+    |> match_or_wait(:provider_catalog_updated, matcher, deadline(timeout), fn value ->
+      match?(
+        %Catalog.Snapshot{generation: generation} when generation <= baseline.generation,
+        value
+      )
+    end)
   end
 
   def registry_entry(registry, key, timeout \\ 1_000) do
     wait_for_registry(registry, key, deadline(timeout))
   end
 
-  defp match_or_wait(value, message_tag, matcher, deadline) do
+  defp match_or_wait(value, message_tag, matcher, deadline, stale?) do
     case matcher.(value) do
       result when result in [false, nil] ->
-        wait_for(message_tag, matcher, deadline)
+        wait_for(message_tag, matcher, deadline, stale?)
 
       result ->
         if message_tag == :provider_catalog_updated, do: drain(message_tag)
@@ -51,15 +64,24 @@ defmodule ReyCode.Test.Wait do
     end
   end
 
-  defp wait_for(message_tag, matcher, deadline) do
+  defp wait_for(message_tag, matcher, deadline, stale?) do
     remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
     receive do
-      {^message_tag, value} -> match_or_wait(value, message_tag, matcher, deadline)
+      {^message_tag, value} ->
+        if stale?.(value) do
+          wait_for(message_tag, matcher, deadline, stale?)
+        else
+          payload = unwrap(message_tag, value)
+          match_or_wait(payload, message_tag, matcher, deadline, stale?)
+        end
     after
       remaining -> flunk("timed out waiting for #{message_tag}")
     end
   end
+
+  defp unwrap(:provider_catalog_updated, %Catalog.Snapshot{} = snapshot), do: snapshot.providers
+  defp unwrap(_tag, value), do: value
 
   defp deadline(timeout), do: System.monotonic_time(:millisecond) + timeout
 
