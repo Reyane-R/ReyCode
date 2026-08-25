@@ -3,11 +3,173 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.{Engine, Projector}
+  alias ReyCode.Orchestration.Engine.Lifecycle
   alias ReyCode.Orchestration.Supervisor, as: OrchestrationSupervisor
   alias ReyCode.Provider.Frame
   alias ReyCode.Test.Wait
 
-  test "compare posts durable parallel agent messages into a project room" do
+  test "ordinary messages invoke only the primary assistant" do
+    room_id = default_room_id()
+    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Handle this directly")
+
+    turn = wait_until_terminal(turn_id)
+    snapshot = ReyCode.snapshot()
+    [invocation_id] = turn.invocation_order
+
+    assert turn.mode == :direct
+    assert snapshot.invocations[invocation_id].participant.kind == :primary
+  end
+
+  test "adds and persists a primary assistant when restoring a legacy room" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_primary_migration_#{System.unique_integer([:positive])}.sqlite3"
+      )
+
+    id = {EventStore, System.unique_integer([:positive])}
+    spec = Supervisor.child_spec({EventStore, [name: nil, path: path]}, id: id)
+    store = start_supervised!(spec)
+
+    legacy_participant = %{
+      "id" => "builder",
+      "name" => "Builder",
+      "perspective" => "implementation",
+      "provider" => "simulator",
+      "model" => nil
+    }
+
+    assert {:ok, _event} =
+             EventStore.append(
+               :room_created,
+               %{
+                 "room_id" => "room-legacy",
+                 "slug" => "legacy",
+                 "title" => "Legacy",
+                 "workspace" => System.tmp_dir!(),
+                 "participants" => [legacy_participant]
+               },
+               store,
+               aggregate_type: :room,
+               aggregate_id: "room-legacy",
+               room_id: "room-legacy"
+             )
+
+    state = %{
+      projection: store |> EventStore.load() |> Projector.replay(),
+      event_store: store,
+      config: RuntimeConfig.fresh(allow_simulator_provider: true)
+    }
+
+    migrated = Lifecycle.ensure_primary_participants(state)
+
+    assistant =
+      Enum.find(migrated.projection.rooms["room-legacy"].participants, &(&1.kind == :primary))
+
+    assert assistant.name == "Assistant"
+    assert assistant.provider == :simulator
+
+    stop_supervised!(id)
+    restarted = start_supervised!(spec)
+    replayed = restarted |> EventStore.load() |> Projector.replay()
+
+    assert Enum.any?(replayed.rooms["room-legacy"].participants, &(&1.kind == :primary))
+  end
+
+  test "new sessions copy configured agent profiles without transcript history" do
+    %{engine: engine} = start_isolated_engine([])
+    source_room_id = default_room_id(engine)
+
+    assert {:ok, task_participant_id} =
+             Engine.add_task_participant(
+               source_room_id,
+               "Documentation",
+               "Write and update project documentation",
+               engine
+             )
+
+    assert :ok =
+             Engine.configure_participants(
+               source_room_id,
+               task_participant_id,
+               :simulator,
+               nil,
+               engine
+             )
+
+    assert {:ok, source_turn_id} =
+             Engine.post_message(source_room_id, "Old transcript", :direct, engine)
+
+    assert wait_until_terminal_on(engine, source_turn_id).outcome == :completed
+
+    assert {:ok, session_id} = Engine.create_session(source_room_id, "Copy profiles", engine)
+
+    snapshot = Engine.snapshot(engine)
+    source = snapshot.rooms[source_room_id]
+    session = snapshot.rooms[session_id]
+
+    assert session.id != source.id
+    assert session.workspace == source.workspace
+    assert session.message_order == []
+
+    assert Enum.map(session.participants, &{&1.id, &1.kind, &1.provider, &1.model}) ==
+             Enum.map(source.participants, &{&1.id, &1.kind, &1.provider, &1.model})
+  end
+
+  test "owner commands run bash and post a durable transcript message" do
+    %{engine: engine} = start_isolated_engine([])
+    room_id = default_room_id(engine)
+
+    assert :ok = Engine.run_owner_command(room_id, "echo reycode-owner", engine)
+
+    projection =
+      Wait.projection(engine, fn projection ->
+        if Enum.any?(projection.rooms[room_id].message_order, fn message_id ->
+             String.contains?(projection.messages[message_id].body || "", "reycode-owner")
+           end),
+           do: projection
+      end)
+
+    [message_id] = projection.rooms[room_id].message_order
+    body = projection.messages[message_id].body
+
+    assert body =~ "! echo reycode-owner"
+    assert body =~ "reycode-owner"
+    assert projection.messages[message_id].status == :completed
+
+    assert {:error, :empty_command} = Engine.run_owner_command(room_id, "   ", engine)
+    assert {:error, :room_not_found} = Engine.run_owner_command("missing", "echo x", engine)
+  end
+
+  test "created task agents run only when explicitly delegated" do
+    %{engine: engine} = start_isolated_engine([])
+    room_id = default_room_id(engine)
+
+    assert {:ok, participant_id} =
+             Engine.add_task_participant(
+               room_id,
+               "Release",
+               "Commit, push, and deploy approved changes",
+               engine
+             )
+
+    assert :ok =
+             Engine.configure_participants(room_id, participant_id, :simulator, nil, engine)
+
+    assert {:ok, turn_id} =
+             Engine.delegate_task(room_id, participant_id, "Deploy the current release", engine)
+
+    turn = wait_until_terminal_on(engine, turn_id)
+    snapshot = Engine.snapshot(engine)
+    [invocation_id] = turn.invocation_order
+
+    assert turn.mode == :delegate
+    assert turn.participant_id == participant_id
+    assert snapshot.invocations[invocation_id].participant.id == participant_id
+    assert snapshot.invocations[invocation_id].participant.model == nil
+  end
+
+  test "advanced compare invokes only participants explicitly present in the room" do
     room_id = default_room_id()
     assert {:ok, turn_id} = ReyCode.post_message(room_id, "How should this ship?", :compare)
 
@@ -17,9 +179,8 @@ defmodule ReyCode.Orchestration.EngineTest do
     messages = Enum.map(room.message_order, &snapshot.messages[&1])
 
     assert turn.outcome == :completed
-    assert Enum.count(messages, &(&1.turn_id == turn_id)) == 4
-    assert Enum.count(messages, &(&1.role == :assistant and &1.turn_id == turn_id)) == 3
-    assert Enum.any?(messages, &String.contains?(&1.body, "smallest end-to-end implementation"))
+    assert Enum.count(messages, &(&1.turn_id == turn_id)) == 2
+    assert Enum.count(messages, &(&1.role == :assistant and &1.turn_id == turn_id)) == 1
   end
 
   test "debate schedules proposal, critiques, and revision in durable stages" do
@@ -31,8 +192,8 @@ defmodule ReyCode.Orchestration.EngineTest do
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
     assert turn.outcome == :completed
-    assert Enum.map(invocations, & &1.phase_index) == [0, 1, 1, 2]
-    assert Enum.map(invocations, & &1.label) == ["proposal", "critique", "critique", "revision"]
+    assert Enum.map(invocations, & &1.phase_index) == [0, 2]
+    assert Enum.map(invocations, & &1.label) == ["proposal", "revision"]
   end
 
   test "fan-out records independent parallel branches" do
@@ -44,7 +205,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
     assert turn.outcome == :completed
-    assert length(invocations) == 3
+    assert length(invocations) == 1
     assert Enum.all?(invocations, &(&1.label == "parallel branch"))
   end
 
@@ -114,7 +275,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     assert {:error, :unchecked} =
              ReyCode.configure_participants(
                room_id,
-               ["builder", "critic"],
+               ["assistant"],
                :opencode,
                "openai/gpt-5.6-sol"
              )
@@ -158,7 +319,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     Process.exit(pid, :kill)
 
     terminal = wait_until_terminal_on(engine, turn_id, 5_000)
-    assert terminal.outcome == :partial
+    assert terminal.outcome == :failed
     assert Engine.snapshot(engine).invocations[invocation_id].error.category == :worker_exit
   end
 
@@ -407,7 +568,9 @@ defmodule ReyCode.Orchestration.EngineTest do
   defp start_isolated_engine(options) do
     stack = stack_options(options)
     stack = start_stack_dependencies(stack)
+
     start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: stack.agent_supervisor})
+    start_supervised!({Task.Supervisor, name: stack.task_supervisor})
     start_supervised!({Engine, engine_options(stack)})
     Map.take(stack, [:engine, :store, :agent_registry])
   end
@@ -454,6 +617,7 @@ defmodule ReyCode.Orchestration.EngineTest do
       agent_registry: :"engine_test_agents_#{suffix}",
       event_registry: :"engine_test_events_#{suffix}",
       agent_supervisor: :"engine_test_agent_sup_#{suffix}",
+      task_supervisor: :"engine_test_tasks_#{suffix}",
       engine: :"engine_test_engine_#{suffix}",
       supervisor: :"engine_test_sup_#{suffix}"
     }
@@ -477,6 +641,7 @@ defmodule ReyCode.Orchestration.EngineTest do
       agent_supervisor: stack.agent_supervisor,
       agent_registry: stack.agent_registry,
       event_registry: stack.event_registry,
+      task_supervisor: stack.task_supervisor,
       provider_catalog: ReyCode.Provider.Catalog,
       agent_delay_ms: stack.agent_delay_ms,
       simulator_opts: stack.simulator_opts,

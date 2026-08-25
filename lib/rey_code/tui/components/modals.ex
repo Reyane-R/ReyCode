@@ -11,13 +11,13 @@ defmodule ReyCode.TUI.Components.Modals do
   use Breeze.Component
 
   alias ReyCode.TUI.{
+    AgentProfile,
     Cancellation,
-    Directive,
-    GateReview,
-    NewRoom,
+    Delegation,
+    ModelPicker,
+    SessionPicker,
     Settings,
     SlashPalette,
-    SquadStatus,
     ToolReview,
     Workspace
   }
@@ -25,13 +25,13 @@ defmodule ReyCode.TUI.Components.Modals do
   alias ReyCode.TUI.Components.SettingsModal
 
   @registry %{
-    new_room: NewRoom,
+    agent_profile: AgentProfile,
+    delegation: Delegation,
+    model_picker: ModelPicker,
+    session_picker: SessionPicker,
     settings: Settings,
     workspace: Workspace,
     cancel: Cancellation,
-    squad_dashboard: SquadStatus,
-    directive: Directive,
-    gate_review: GateReview,
     tool_review: ToolReview,
     slash: SlashPalette
   }
@@ -52,13 +52,13 @@ defmodule ReyCode.TUI.Components.Modals do
     dispatch(Map.get(term || %{}, :modal), Map.put(assigns, :term, term))
   end
 
-  defp dispatch(:new_room, assigns), do: NewRoom.modal(assigns)
-  defp dispatch(:settings, assigns), do: SettingsModal.modal(assigns)
+  defp dispatch(:agent_profile, assigns), do: AgentProfile.modal(assigns)
+  defp dispatch(:delegation, assigns), do: Delegation.modal(assigns)
+  defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)
+  defp dispatch(:session_picker, assigns), do: SessionPicker.modal(assigns)
   defp dispatch(:workspace, assigns), do: Workspace.modal(assigns)
+  defp dispatch(:settings, assigns), do: SettingsModal.modal(assigns)
   defp dispatch(:cancel, assigns), do: Cancellation.modal(assigns)
-  defp dispatch(:squad_dashboard, assigns), do: SquadStatus.modal(assigns)
-  defp dispatch(:directive, assigns), do: Directive.modal(assigns)
-  defp dispatch(:gate_review, assigns), do: GateReview.modal(assigns)
   defp dispatch(:tool_review, assigns), do: ToolReview.modal(assigns)
   defp dispatch(_modal, assigns), do: empty(assigns)
 

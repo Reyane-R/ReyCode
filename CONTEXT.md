@@ -4,15 +4,23 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 ## Core conversation
 
-**Workspace** — Canonical filesystem directory in which a Room's work is scoped.
+**Workspace** — Canonical filesystem directory in which a Session's work is scoped.
 
-**Room** — Durable workspace-rooted conversation containing participants, messages, and ordered turns.
+**Session** — Durable user-visible conversation with one Workspace, agent profiles, Messages, and ordered Turns.
 
-**Operator** — Human supplying ordinary room input.
+**Room** — Internal orchestration aggregate backing one Session. Never shown in the user interface.
+
+**Operator** — Human supplying ordinary Session input.
 
 **Owner** — Human authority for tool approvals and owner-controlled release decisions.
 
-**Participant** — Configured logical actor available to a Room's non-squad workflows.
+**Participant** — Configured logical actor available to a Session's non-squad workflows.
+
+**Primary Participant** — The one Participant that receives ordinary Operator messages. Every Session has exactly one.
+
+**Task Participant** — User-created Participant with a standing responsibility and independently selected provider/model. It runs only through explicit Delegation.
+
+**Delegation** — A Turn explicitly addressed to one Task Participant for one task.
 
 **Message** — Durable communication authored by an Operator or produced by an Invocation.
 
@@ -88,10 +96,12 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 ## Relationships
 
-- A Workspace contains zero or more Rooms.
-- A Room owns ordered Messages and Turns.
-- A Room has Participants and may have Squad Seats.
-- A Turn belongs to one Room and may own multiple Invocations.
+- A Workspace contains zero or more Sessions.
+- Every Session is backed by one internal Room aggregate.
+- A Session owns ordered Messages and Turns.
+- A Session has exactly one Primary Participant, zero or more Task Participants, and may have Squad Seats.
+- An ordinary Turn invokes only the Session's Primary Participant.
+- A Delegation invokes exactly one Task Participant.
 - An Invocation belongs to one Turn and one Participant or Seat.
 - An Invocation owns ordered ProviderRounds and ToolRuns.
 - A ToolRun realizes exactly one ToolCall.
@@ -102,7 +112,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 ## Authority
 
-- Operators may create Rooms, post Messages, and cancel their work.
+- Operators may create Sessions, create Task Participants, post Messages, delegate tasks, and cancel their work.
 - Owners resolve ToolRun approvals and owner-controlled release reviews.
 - Squad Leaders may recommend or resolve gates according to ReleaseAuthority.
 - Provider output never grants authority by itself; it requests transitions that ReyCode validates.

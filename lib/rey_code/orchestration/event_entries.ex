@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   @moduledoc "Pure construction of orchestration event entries."
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.{Invocation, Room, Squad, ToolRun, Turn}
+  alias ReyCode.Orchestration.{Invocation, Participant, Room, Squad, ToolRun, Turn}
   alias ReyCode.Orchestration.Squad.Seat
   alias ReyCode.Provider.Frame
 
@@ -18,16 +18,72 @@ defmodule ReyCode.Orchestration.EventEntries do
         "slug" => slug,
         "title" => title,
         "workspace" => workspace,
-        "participants" => participants
+        "participants" => Enum.map(participants, &room_participant/1)
       },
       [aggregate_type: :room, aggregate_id: room_id, room_id: room_id]
     }
   end
 
+  @doc "Builds the event that adds one durable room participant."
+  @spec participant_added(
+          String.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          atom(),
+          atom(),
+          String.t() | nil
+        ) ::
+          event_entry()
+  def participant_added(room_id, participant_id, name, responsibility, kind, provider, model) do
+    event(
+      :participant_added,
+      %{
+        "room_id" => room_id,
+        "participant_id" => participant_id,
+        "name" => name,
+        "responsibility" => responsibility,
+        "kind" => Atom.to_string(kind),
+        "provider" => wire_provider(provider),
+        "model" => model
+      },
+      :room,
+      room_id,
+      room_id,
+      room_id
+    )
+  end
+
+  @doc "Builds the transcript message recorded for one owner-typed shell command."
+  @spec owner_command_posted(String.t(), String.t(), String.t()) :: event_entry()
+  def owner_command_posted(room_id, message_id, body) do
+    event(
+      :message_posted,
+      %{
+        "message_id" => message_id,
+        "room_id" => room_id,
+        "turn_id" => nil,
+        "author_name" => "You",
+        "body" => body
+      },
+      :room,
+      room_id,
+      room_id,
+      room_id
+    )
+  end
+
   @doc "Builds the user-message and queued-turn events for a new turn."
-  @spec queue_turn(String.t(), String.t(), atom(), String.t(), String.t(), non_neg_integer()) ::
-          [event_entry()]
-  def queue_turn(room_id, body, mode, turn_id, message_id, context_sequence) do
+  @spec queue_turn(
+          String.t(),
+          String.t(),
+          atom(),
+          String.t(),
+          String.t(),
+          non_neg_integer(),
+          String.t() | nil
+        ) :: [event_entry()]
+  def queue_turn(room_id, body, mode, turn_id, message_id, context_sequence, participant_id) do
     [
       event(
         :message_posted,
@@ -50,7 +106,8 @@ defmodule ReyCode.Orchestration.EventEntries do
           "room_id" => room_id,
           "user_message_id" => message_id,
           "mode" => Atom.to_string(mode),
-          "context_through_sequence" => context_sequence
+          "context_through_sequence" => context_sequence,
+          "participant_id" => participant_id
         },
         :turn,
         turn_id,
@@ -608,6 +665,9 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  defp room_participant(%Participant{} = participant), do: wire_participant(participant)
+  defp room_participant(participant) when is_map(participant), do: participant
+
   defp wire_participant(%Seat{} = seat) do
     seat
     |> Map.from_struct()
@@ -621,12 +681,16 @@ defmodule ReyCode.Orchestration.EventEntries do
       "name" => participant.name,
       "perspective" => participant.perspective,
       "provider" => wire_provider(participant.provider),
-      "model" => participant.model
+      "model" => participant.model,
+      "kind" => wire_kind(Map.get(participant, :kind))
     }
   end
 
   defp wire_provider(provider) when is_atom(provider), do: Atom.to_string(provider)
   defp wire_provider(provider), do: provider
+
+  defp wire_kind(kind) when kind in [:primary, :task], do: Atom.to_string(kind)
+  defp wire_kind(_kind), do: "legacy"
 
   defp wire_release_authority(:owner), do: "human"
   defp wire_release_authority(:squad_leader), do: "leader"

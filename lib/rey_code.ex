@@ -9,11 +9,25 @@ defmodule ReyCode do
   @spec create_room(String.t(), String.t()) :: {:ok, String.t()} | {:error, atom()}
   def create_room(title, workspace \\ File.cwd!()), do: Engine.create_room(title, workspace)
 
-  @doc "Posts a message to a room using the selected orchestration mode."
-  @spec post_message(String.t(), String.t(), :compare | :debate | :fan_out | :squad) ::
+  @doc "Posts an ordinary message to the room's primary assistant."
+  @spec post_message(String.t(), String.t(), :direct | :compare | :debate | :fan_out | :squad) ::
           {:ok, String.t()} | {:error, term()}
-  def post_message(room_id, body, mode \\ :compare) do
+  def post_message(room_id, body, mode \\ :direct) do
     Engine.post_message(room_id, body, mode)
+  end
+
+  @doc "Creates a durable task-agent profile in a room."
+  @spec create_agent(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, atom()}
+  def create_agent(room_id, name, responsibility) do
+    Engine.add_task_participant(room_id, name, responsibility)
+  end
+
+  @doc "Delegates one task to one user-created task agent."
+  @spec delegate_task(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def delegate_task(room_id, participant_id, task) do
+    Engine.delegate_task(room_id, participant_id, task)
   end
 
   @doc "Durably cancels a queued or running turn."

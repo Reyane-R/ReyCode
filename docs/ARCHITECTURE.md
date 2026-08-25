@@ -12,43 +12,73 @@ concepts.
 
 ## Before you read: what the program looks like
 
-When you run `mix run --no-halt`, the terminal fills with a three-panel layout:
+When you run `mix run --no-halt`, ReyCode starts at a clean session home:
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Ctrl+N new room   Ctrl+O mode   Ctrl+P commands   Ctrl+Q quit │  ← top bar
-├──────────┬───────────────────────────────────────┬───────────┤
-│          │                                       │           │
-│  ROOMS   │         #reycode  — compare          │  AGENTS   │
-│          │                                       │           │
-│ #reycode │  You: Fix the login bug              │ Builder   │
-│          │  Builder: I'll look at the auth...    │  opencode │
-│          │  Builder: [reads auth.ex]            │ Critic    │
-│          │  Builder: Found the issue — ...      │  opencode │
-│          │                                       │ Explorer  │
-│          │                                       │  opencode │
-│          │                                       │           │
-├──────────┴───────────────────────────────────────┴───────────┤
-│  / Fix the login bug                     │ compare │  Ctrl+S │  ← composer
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Welcome to ReyCode                                         │
+│  One assistant by default. Task agents run only on demand.  │
+│                                                             │
+│  Primary assistant                                          │
+│  Assistant  ·  gpt-5.6-sol                                  │
+│                                                             │
+│  Quick start                                                 │
+│  /agent  create a task agent with its own model              │
+│  /model  switch the Assistant model                          │
+│  /task   delegate one explicit task                          │
+│  !cmd    run a shell command                                 │
+│  /new    start another clean session                         │
+│                                                             │
+│  Task agents                                                 │
+│  None yet                                                    │
+│                                                             │
+│  Recent sessions                                             │
+│  None yet                                                    │
+├─────────────────────────────────────────────────────────────┤
+│  ┌ Ask anything…  / for commands                           ┐ │
+│  └─────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-- **Left panel:** room list. `Tab` moves focus between panels.
-- **Center:** the selected room's message timeline (scrolls with `j`/`k`).
-- **Right panel:** the room's configured agents and their providers.
-- **Bottom bar:** composer. Type a message, `Ctrl+S` sends it.
+The first ordinary message creates a fresh durable Session and invokes only its
+Primary Participant. `/agent` creates a durable Task Participant with a
+standing responsibility and independently selected provider/model. `/task`
+creates a Delegation addressed to exactly one Task Participant. `/resume`
+explicitly opens the latest prior Session.
 
-Everything you see is rendered by the TUI layer (Section 5, Layer 1). The panels,
-the timeline, and the composer are all built in `lib/rey_code/tui/render.ex`.
+
+The active transcript shows only useful execution context:
+
+│
+- **Header:** `ReyCode · model · ⑂ branch · workspace · tok 12.4k/200k`,
+  switching to `thinking · 8s` while a turn runs. Token usage is the durable
+  session total against `context_budget_tokens`; the branch is read from
+  `.git/HEAD` with no process execution.
+- **Timeline:** user messages and addressed responses; assistant messages
+  list their tool runs as collapsed one-line blocks (`Tool · read · path ·
+  ok`). Tool-run rows are precomputed in `State.room_messages` from
+  `invocation.tool_run_order`/`tool_runs`.
+- **Composer:** Enter sends. Typing `/` opens the command palette. `@path`
+  and `#path` tokens attach a workspace file's content to the message
+  (expanded by `ReyCode.TUI.Mentions` before posting — workspace-contained
+  paths only, 512 KB per file, 2 MB total; failures surface as a composer
+  notice).
+- **Focus:** Tab moves directly between prompt and transcript.
+
+`Room` remains an internal event-sourced aggregate for compatibility. It is
+never rendered or named by the TUI.
+
+The TUI is rendered primarily through
+`lib/rey_code/tui/components/main_screen.ex`.
 
 ---
 
 ## 1. What is this program?
 
-ReyCode is a terminal application. A user opens it, sees a TUI (text user
-interface) with rooms, a composer, and timelines, types messages, and gets
-responses from AI models. Behind the scenes, it also runs headless (no TUI)
-for automated squad workflows.
+ReyCode is a terminal application. A user opens it, sees a clean Session,
+types messages, and gets responses from the Primary Assistant or explicitly
+addressed task agents. Behind the scenes, it also runs headless for automated
+squad workflows.
 
 The program never exits after a single request. It stays running, like a
 database or a web server, waiting for input. Elixir calls this an
@@ -250,14 +280,12 @@ implements the `Breeze.View` behaviour: it defines a `render/1` function that
 returns HTML-like markup, which Breeze paints to the terminal.
 
 Key files:
-- `tui.ex` — Global keybindings, focus, mode cycling, message submission
-- `tui/state.ex` — Manages the TUI's local state (selected room, drafts)
-- `tui/render.ex` — Builds the terminal markup from the projection
+- `tui.ex` — Global keybindings and message submission
+- `tui/state.ex` — Manages the current Session and drafts
+- `tui/render.ex` — Builds terminal markup from the projection
 - `tui/slash_palette.ex` — The `/` command menu
-- `tui/tool_review.ex` — The modal for approving/denying tool runs
-- `tui/gate_review.ex` — The modal for squad release gate decisions
-- `tui/squad_status.ex` — The squad dashboard modal
-- `tui/settings.ex` — Provider/model configuration screen
+- `tui/tool_review.ex` — Approves or denies tool runs
+- `tui/settings.ex` — Configures each agent's provider/model
 
 ### Layer 2: Engine (orchestration)
 

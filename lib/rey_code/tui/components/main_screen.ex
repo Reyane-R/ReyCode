@@ -4,20 +4,16 @@ defmodule ReyCode.TUI.Components.MainScreen do
   use Breeze.Component
   import Breeze.Blocks
 
-  import ReyCode.TUI.Components.MainScreen.RoomPresentation,
-    only: [mode_label: 1, room_label: 1, visible_participants: 2]
-
-  import ReyCode.TUI.Components.MainScreen.Sidebar, only: [sidebar: 1]
   import ReyCode.TUI.Components.MainScreen.Timeline, only: [timeline: 1]
 
   alias ReyCode.Orchestration.Projection
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.Spinner
 
+  @compile {:no_warn_undefined, ReyCode.TUI.Spinner}
   attr :modal, :any, required: true
-  attr :show_sidebar, :boolean, default: false
+  attr :home, :boolean, required: true
   attr :rooms, :list, required: true
-  attr :selected_room_id, :string, required: true
   attr :mode, :atom, required: true
   attr :room, :map, required: true
   attr :projection, :map, required: true
@@ -27,46 +23,64 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :message_width, :integer, required: true
   attr :draft, :string, required: true
   attr :notice, :any, required: true
-  attr :slash, :any, required: true
+
   attr :terminal_width, :integer, required: true
   attr :terminal_height, :integer, required: true
 
   def main_screen(assigns) do
     ~H"""
     <box :if={@modal in [nil, :slash]} class="w-screen h-screen bg">
-      <box class={shell_class(@show_sidebar)}>
-        <.sidebar
-          show_sidebar={@show_sidebar}
-          rooms={@rooms}
-          selected_room_id={@selected_room_id}
-          mode={@mode}
+      <box class={content_class(@home)}>
+        <.home_panel :if={@home} room={@room} recent_session_rows={@recent_session_rows}/>
+        <.room_header
+          :if={room_visible?(@home)}
           room={@room}
           projection={@projection}
           providers={@providers}
+          mode={@mode}
+          git_branch={@git_branch}
+          token_label={@token_label}
+          elapsed_seconds={@elapsed_seconds}
+          terminal_width={@terminal_width}
         />
-        <box class="grid grid-cols-1 grid-rows-3 h-full w-full overflow-hidden">
-          <.room_header room={@room} projection={@projection} providers={@providers} mode={@mode}/>
-          <.timeline
-            messages={@messages}
-            timeline_id={@timeline_id}
-            message_width={@message_width}
-            room={@room}
-          />
-          <.composer
-            room={@room}
-            mode={@mode}
-            terminal_width={@terminal_width}
-            draft={@draft}
-            notice={@notice}
-          />
-          <.slash_palette
-            modal={@modal}
-            show_sidebar={@show_sidebar}
-            terminal_width={@terminal_width}
-            terminal_height={@terminal_height}
-            slash={@slash}
-          />
-        </box>
+        <.timeline
+          :if={room_visible?(@home)}
+          messages={@messages}
+          timeline_id={@timeline_id}
+          message_width={@message_width}
+        />
+        <.composer draft={@draft} notice={@notice}/>
+        <.slash_palette modal={@modal} slash_rows={@slash_rows} slash_style={@slash_style}/>
+      </box>
+    </box>
+    """
+  end
+
+  attr :room, :map, required: true
+  attr :recent_session_rows, :list, required: true
+
+  defp home_panel(assigns) do
+    ~H"""
+    <box class="h-full w-full px-4 pt-2 overflow-hidden">
+      <box class="font-bold text-primary">Welcome to ReyCode</box>
+      <box class="text-muted">One assistant by default. Task agents run only when you delegate.</box>
+      <box class="pt-1 font-bold">Primary assistant</box>
+      <box class="text-muted">{primary_summary(@room)}</box>
+      <box class="pt-1 font-bold">Quick start</box>
+      <box>/  commands</box>
+      <box>/agent  create a task agent with its own model</box>
+      <box>@file  attach a file to your message</box>
+      <box class="pt-1 font-bold">Task agents</box>
+      <box :if={task_participants(@room) == []} class="text-muted">
+        None yet. Create one only when a repeatable responsibility is worth keeping.
+      </box>
+      <box :for={participant <- task_participants(@room)}>
+        {participant.name}  ·  {Presentation.short_runtime_label(participant)}
+      </box>
+      <box class="pt-1 font-bold">Recent sessions</box>
+      <box :if={@recent_session_rows == []} class="text-muted">None yet</box>
+      <box :for={session <- @recent_session_rows} class="text-muted">
+        {session.title}  ·  {session.meta}
       </box>
     </box>
     """
@@ -75,111 +89,98 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :room, :map, required: true
   attr :projection, :map, required: true
   attr :providers, :map, required: true
+
   attr :mode, :atom, required: true
+  attr :git_branch, :any, required: true
+  attr :token_label, :string, required: true
+  attr :elapsed_seconds, :any, required: true
+  attr :terminal_width, :integer, required: true
 
   defp room_header(assigns) do
     ~H"""
-    <box class="h-4 w-full bg-surface border-b border-muted px-2 pt-1">
+    <box class="h-3 w-full bg-surface border-b border-muted px-2 pt-1">
       <box class="inline w-full">
-        <box class="font-bold"># {@room.slug}</box>
+        <box class="font-bold">ReyCode</box>
+        <box class="text-muted">{header_context(@room, @terminal_width, @git_branch)}</box>
+        <box class="text-muted">{@token_label}</box>
         <box class={room_status_class(@room, @projection, @providers, @mode)}>
-          {room_status(@room, @projection, @providers, @mode)}
+          {room_status(@room, @projection, @providers, @mode, @elapsed_seconds)}
         </box>
-      </box>
-      <box class="text-muted">
-        {@room.title}  /  {length(visible_participants(@room, @mode))} agents  /  {mode_label(@mode)}
-      </box>
-      <box :if={squad_status(@room, @projection) != ""} class="text-primary">
-        {squad_status(@room, @projection)}
-      </box>
-      <box :if={release_review_status(@room, @projection) != ""} class="text-warning">
-        {release_review_status(@room, @projection)}
-      </box>
-      <box :if={tool_approval_status(@room, @projection) != ""} class="text-warning">
-        {tool_approval_status(@room, @projection)}
       </box>
     </box>
     """
   end
 
-  attr :room, :map, required: true
-  attr :mode, :atom, required: true
-  attr :terminal_width, :integer, required: true
   attr :draft, :string, required: true
   attr :notice, :any, required: true
 
   defp composer(assigns) do
     ~H"""
-    <box class="h-7 w-full bg-surface border-t border-muted px-2 pt-1 overflow-hidden">
-      <box class="inline w-full">
-        <box class="text-muted">Message {room_label(@room)}</box>
-        <box class="w-full text-right text-primary">{composer_controls(@mode, @terminal_width)}</box>
-      </box>
+    <box class="h-6 w-full bg-surface border-t border-muted px-2 pt-1 overflow-hidden">
       <.textarea
         id="prompt"
         textarea-value={@draft}
-        textarea-placeholder="Ask the room..."
+        textarea-placeholder="Ask anything…  / for commands"
         textarea-submit-on-enter={true}
         br-change="prompt_changed"
         br-submit="prompt_submitted"
         class="w-full h-2 border focus:border-primary bg-surface"
       />
       <box :if={not is_nil(@notice)} class="text-error">{@notice}</box>
-      <box class="text-muted">{workspace_label(@room.workspace, @terminal_width)}</box>
-      <box class="text-muted">{room_model_summary(@room, @mode)}</box>
     </box>
     """
   end
 
   attr :modal, :any, required: true
-  attr :show_sidebar, :boolean, required: true
-  attr :terminal_width, :integer, required: true
-  attr :terminal_height, :integer, required: true
-  attr :slash, :any, required: true
+  attr :slash_rows, :list, required: true
+  attr :slash_style, :map, required: true
 
   defp slash_palette(assigns) do
     ~H"""
     <box
       :if={@modal == :slash}
       class="bg-panel border-l border-r border-muted overflow-hidden layer-40"
-      style={SlashPalette.style(@show_sidebar, @terminal_width, @terminal_height, @slash)}
+      style={@slash_style}
     >
-      <box
-        :for={{command, index} <- SlashPalette.rows(@slash, @terminal_height)}
-        class={SlashPalette.option_class(index, @slash.index)}
-      >
-        <box class={SlashPalette.command_class(index, @slash.index)}>{command.command}</box>
-        <box class={SlashPalette.description_class(index, @slash.index)}>{command.description}</box>
+      <box :for={row <- @slash_rows} class={row.option_class}>
+        <box class={row.command_class}>{row.command}</box>
+        <box class={row.description_class}>{row.description}</box>
       </box>
-      <box :if={SlashPalette.matches(@slash.query) == []} class="w-full px-1 text-muted">
-        No matching commands
-      </box>
+      <box :if={@slash_rows == []} class="w-full px-1 text-muted">No matching commands</box>
     </box>
     """
   end
 
-  defp room_status(room, projection, providers, mode) do
+  defp room_status(room, projection, _providers, _mode, elapsed_seconds) do
     cond do
-      room.active_turn_id != nil ->
-        turn = projection.turns[room.active_turn_id]
-        "#{mode_label(turn.mode)} running"
+      tool_approval_status(room, projection) != "" ->
+        tool_approval_status(room, projection)
+
+      turn = projection.turns[room.active_turn_id] ->
+        if turn && turn.status == :running,
+          do: Spinner.glyph() <> " " <> running_label(elapsed_seconds),
+          else: "working"
 
       room.queued_turn_ids != [] ->
-        "#{length(room.queued_turn_ids)} queued"
+        "queued"
 
       true ->
-        participants = visible_participants(room, mode)
-        configured = Enum.count(participants, &Presentation.ready?(providers[&1.provider], &1))
-        label = if mode == :squad, do: "squad roles", else: "agents"
-        "#{configured}/#{length(participants)} #{label} configured"
+        "ready"
     end
   end
 
-  defp room_status_class(room, _projection, providers, mode) do
-    participants = visible_participants(room, mode)
+  defp running_label(elapsed_seconds) do
+    if is_integer(elapsed_seconds), do: "thinking · #{elapsed_seconds}s", else: "thinking"
+  end
+
+  defp room_status_class(room, projection, providers, _mode) do
+    participants = primary_participants(room)
 
     class =
       cond do
+        tool_approval_status(room, projection) != "" ->
+          "text-warning"
+
         room.active_turn_id != nil ->
           "text-warning"
 
@@ -196,28 +197,48 @@ defmodule ReyCode.TUI.Components.MainScreen do
     "w-full text-right #{class}"
   end
 
-  defp room_model_summary(room, mode) do
-    labels =
-      room
-      |> visible_participants(mode)
-      |> Enum.map(&Presentation.runtime_label(&1, %{}))
-      |> Enum.uniq()
+  defp primary_participants(room), do: Enum.filter(room.participants, &(&1.kind == :primary))
 
-    case labels do
-      [label] -> "Runtime: #{label}"
-      [] -> "Runtime: OpenCode configuration required"
-      _labels -> "Runtimes: mixed"
+  defp primary_summary(room) do
+    case Enum.find(room.participants, &(&1.kind == :primary)) do
+      nil -> "Assistant setup required"
+      participant -> "#{participant.name}  ·  #{Presentation.short_runtime_label(participant)}"
     end
   end
 
-  defp composer_controls(_mode, terminal_width) when terminal_width < 80,
-    do: "Ctrl+P commands   Ctrl+S send"
+  defp task_participants(room), do: Enum.filter(room.participants, &(&1.kind == :task))
 
-  defp composer_controls(mode, _terminal_width),
-    do: "Ctrl+O #{mode_label(mode)}   Ctrl+P commands   Ctrl+S send   Ctrl+G agents"
+  defp primary_runtime(room) do
+    case Enum.find(room.participants, &(&1.kind == :primary)) do
+      nil -> "model required"
+      participant -> Presentation.short_runtime_label(participant)
+    end
+  end
 
-  defp workspace_label(path, terminal_width) do
-    "Workspace: " <> middle_truncate(path, max(terminal_width - 13, 20))
+  defp header_context(room, terminal_width, git_branch) do
+    branch = if is_binary(git_branch), do: "  ·  " <> git_branch, else: ""
+
+    "  ·  " <>
+      primary_runtime(room) <>
+      branch <>
+      "  ·  " <>
+      workspace_context(room.workspace, terminal_width)
+  end
+
+  defp workspace_context(path, terminal_width) do
+    path
+    |> compact_home()
+    |> middle_truncate(max(terminal_width - 18, 20))
+  end
+
+  defp compact_home(path) do
+    home = System.user_home!()
+
+    cond do
+      path == home -> "~"
+      String.starts_with?(path, home <> "/") -> "~/" <> Path.relative_to(path, home)
+      true -> path
+    end
   end
 
   defp middle_truncate(value, max_length) do
@@ -232,31 +253,11 @@ defmodule ReyCode.TUI.Components.MainScreen do
     end
   end
 
-  defp shell_class(true), do: "grid grid-cols-2 w-full h-full overflow-hidden"
-  defp shell_class(_show_sidebar), do: "grid grid-cols-1 w-full h-full overflow-hidden"
+  defp room_visible?(true), do: false
+  defp room_visible?(_home), do: true
 
-  defp squad_status(room, projection) do
-    with turn_id when not is_nil(turn_id) <- room.active_turn_id,
-         %{mode: :squad, squad: squad} when not is_nil(squad) <- projection.turns[turn_id] do
-      blockers = length(squad.blockers)
-
-      "squad #{squad.phase}  /  cycle #{squad.cycle}  /  rework #{squad.rework_count}/#{squad.rework_budget}  /  #{blockers} blockers"
-    else
-      _value -> ""
-    end
-  end
-
-  defp release_review_status(room, projection) do
-    turn = projection.turns[room.active_turn_id]
-    review = turn && turn.squad && turn.squad.pending_review
-
-    if review do
-      "release approval required  /  leader recommends " <>
-        "#{review.recommendation.decision}  /  /release"
-    else
-      ""
-    end
-  end
+  defp content_class(true), do: "grid grid-cols-1 grid-rows-2 h-full w-full overflow-hidden"
+  defp content_class(_home), do: "grid grid-cols-1 grid-rows-3 h-full w-full overflow-hidden"
 
   defp tool_approval_status(room, projection) do
     case Projection.pending_tool_invocation(projection, room.active_turn_id) do

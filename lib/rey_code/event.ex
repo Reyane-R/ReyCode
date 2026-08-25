@@ -44,7 +44,7 @@ defmodule ReyCode.Event do
         }
 
   @types ~w(
-    room_created participant_configured message_posted turn_queued turn_started assistant_message_opened
+    room_created participant_added participant_configured message_posted turn_queued turn_started assistant_message_opened
     invocation_started provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
     turn_completed snapshot_recorded squad_configured squad_stage_entered squad_decision_recorded
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
@@ -62,6 +62,7 @@ defmodule ReyCode.Event do
 
   @required_data %{
     room_created: ~w(room_id slug title workspace participants),
+    participant_added: ~w(room_id participant_id name responsibility provider model kind),
     participant_configured: ~w(room_id participant_id provider model),
     message_posted: ~w(message_id room_id turn_id body),
     turn_queued: ~w(turn_id room_id user_message_id mode context_through_sequence),
@@ -161,17 +162,19 @@ defmodule ReyCode.Event do
   @spec encode!(t()) :: String.t()
   def encode!(event), do: Jason.encode!(event)
 
-  @doc "Decodes and validates a JSON event in the current schema."
+  @doc "Decodes and validates a JSON event, normalizing compatible schema-v2 event types."
   @spec decode!(String.t()) :: t()
   def decode!(line), do: line |> Jason.decode!() |> decode_value!()
 
-  @doc "Converts a decoded JSON map into a validated current-schema event."
+  @doc "Converts a decoded JSON map into a validated canonical event."
   @spec decode_value!(map()) :: t()
   def decode_value!(value) when is_map(value) do
     if value["schema_version"] != @schema_version do
       raise ArgumentError,
             "unsupported ReyCode event schema #{inspect(value["schema_version"])}; expected #{@schema_version}"
     end
+
+    value = normalize_schema_v2_event(value)
 
     event = %__MODULE__{
       id: value["id"],
@@ -189,6 +192,36 @@ defmodule ReyCode.Event do
 
     validate!(event)
   end
+
+  # These schema-v2 types were replaced by provider frames. Persisted events
+  # retain their original wire shape and normalize at this compatibility seam.
+  defp normalize_schema_v2_event(%{"type" => "message_delta_appended", "data" => data} = value) do
+    frame_data = %{
+      "invocation_id" => Map.fetch!(data, "invocation_id"),
+      "message_id" => Map.fetch!(data, "message_id"),
+      "frame_sequence" => Map.fetch!(data, "frame_sequence"),
+      "kind" => "text_delta",
+      "data" => %{"text" => Map.fetch!(data, "delta")}
+    }
+
+    %{value | "type" => "provider_frame_recorded", "data" => frame_data}
+  end
+
+  defp normalize_schema_v2_event(
+         %{"type" => "invocation_session_recorded", "data" => data} = value
+       ) do
+    frame_data = %{
+      "invocation_id" => Map.fetch!(data, "invocation_id"),
+      "message_id" => nil,
+      "frame_sequence" => Map.fetch!(data, "frame_sequence"),
+      "kind" => "session_started",
+      "data" => %{"session_id" => Map.fetch!(data, "session_id")}
+    }
+
+    %{value | "type" => "provider_frame_recorded", "data" => frame_data}
+  end
+
+  defp normalize_schema_v2_event(value), do: value
 
   defp aggregate_type("room"), do: :room
   defp aggregate_type("turn"), do: :turn

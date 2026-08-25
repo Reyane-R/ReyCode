@@ -34,12 +34,53 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
   def ensure_default_room(state), do: state
 
-  def queue_message(state, room_id, body, mode) do
+  @doc "Adds one primary participant to rooms created before the single-assistant policy."
+  def ensure_primary_participants(state) do
+    Enum.reduce(state.projection.room_order, state, &ensure_primary_participant(&2, &1))
+  end
+
+  defp ensure_primary_participant(state, room_id) do
+    room = state.projection.rooms[room_id]
+
+    if Enum.any?(room.participants, &(&1.kind == :primary)) do
+      state
+    else
+      source =
+        Enum.find(room.participants, &(not is_nil(&1.model))) || List.first(room.participants)
+
+      provider = if source, do: source.provider, else: state.config.providers.default_provider
+      model = if source, do: source.model, else: nil
+
+      entry =
+        EventEntries.participant_added(
+          room.id,
+          "assistant",
+          "Assistant",
+          "general coding assistance",
+          :primary,
+          provider,
+          model
+        )
+
+      Persistence.append_and_project!(state, [entry])
+    end
+  end
+
+  def queue_message(state, room_id, body, mode, participant_id) do
     turn_id = Identity.new_id("turn")
     message_id = Identity.new_id("msg")
     context_sequence = state.projection.sequence + 1
 
-    entries = EventEntries.queue_turn(room_id, body, mode, turn_id, message_id, context_sequence)
+    entries =
+      EventEntries.queue_turn(
+        room_id,
+        body,
+        mode,
+        turn_id,
+        message_id,
+        context_sequence,
+        participant_id
+      )
 
     next = Persistence.append_and_apply!(state, entries)
     room = next.projection.rooms[room_id]

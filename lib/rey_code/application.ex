@@ -36,7 +36,7 @@ defmodule ReyCode.Application do
              view: ReyCode.TUI,
              start_opts: [config: runtime_config],
              theme: ReyCode.Theme.default(),
-             logger: :attach,
+             logger: :replace,
              global_keybindings: ReyCode.TUI.global_keybindings()},
             restart: :transient
           )

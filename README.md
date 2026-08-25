@@ -1,8 +1,8 @@
 # ReyCode
 
-ReyCode is a terminal-native, standalone harness where project rooms contain
-humans, agents, and durable orchestration history. Every message can run as a
-parallel comparison, an ordered debate, or an independent fan-out.
+ReyCode is a terminal-native coding harness with OMP-style sessions: one
+Primary Assistant for ordinary conversation and explicit task agents for
+specialized work.
 
 ReyCode owns the agent loop and tool execution itself. Providers stream
 responses; ReyCode executes tools through its trusted workspace registry with
@@ -10,8 +10,7 @@ durable authorization and owner approval. OpenCode is one provider among
 several behind the `ReyCode.Provider` behaviour. A deterministic simulator
 remains available for automated FSM, failure-injection, and Monte Carlo
 testing. OpenCode credentials remain in OpenCode; ReyCode discovers its
-configured models and stores only each room agent's runtime and model
-selection.
+configured models and stores each agent profile's runtime and model selection.
 
 Active decisions and their acceptance criteria are recorded in
 [DECISIONS.md](DECISIONS.md).
@@ -87,27 +86,52 @@ mix deps.get
 mix run --no-halt
 ```
 
-The default `#reycode` project room contains Builder, Critic, and Explorer.
-Each room is rooted at an absolute workspace path shown below the composer. New
-rooms preview that path before creation; submit `/workspace` to see it in full.
+Startup opens a clean session home. No prior transcript is shown. The first
+message creates a fresh durable Session with one Primary Assistant.
 
-- `Tab`: move between rooms, timeline, and composer
-- `Ctrl+N`: create a project room
-- `Ctrl+O`: select compare, debate, or fan-out
-- `Ctrl+P`: open the slash command palette
-- `Ctrl+S`: send the current draft
-- `Ctrl+R`: switch rooms
+Task agents are opt-in durable profiles:
+
+1. Run `/agent`, give the agent a name and standing responsibility, then select
+   its provider and model.
+2. Run `/task`, choose exactly one task agent, and enter a concrete task.
+
+Creating an agent never runs it. Ordinary conversation never invokes task
+agents. This allows a Release agent, Test agent, and Documentation agent to use
+different models without automatically multiplying token cost.
+
+- `Enter` or `Ctrl+S`: send the current draft
+
+- `/` or `Ctrl+P`: open the command palette (fuzzy: `/res` finds `/resume`)
+- `/new` or `Ctrl+N`: start a clean Session
+- `/resume`: pick and reopen a previous Session
+- `/home`: return to the session home
+- `/agent`: create a task agent
+- `/agents`: change an agent's provider/model
+- `/model`: switch the Assistant model in one step
+- `/task`: delegate one task to one task agent
+
+│
+- `!cmd`: run a shell command in the workspace; output lands in the transcript
+- `@file` / `#file`: attach a file's content to the next message (workspace
+  files only, 512 KB per file, 2 MB total)
+- `Tab`: move between the prompt and current transcript
 - `Ctrl+G`: configure agent runtimes and models
 - `Ctrl+T`: cycle the theme
-- `j` / `k`: scroll a focused timeline
+- `j` / `k`: scroll the focused transcript
 - `Ctrl+Q`: exit
 
-Typing `/` in the composer opens the same command palette. Arrow keys move the
-selection, Tab completes it, Enter runs it, and Escape returns to the draft.
+Each message shows the tool runs it produced as compact one-line blocks
+(`Tool · read · path · ok`), with the tool, its target, and the run's
+outcome.
 
-Project owners can use `/status` for the squad dashboard, `/direct` to add a
-durable directive to a running squad, `/cancel` to stop the active turn after a
-confirmation, and `/release` to resolve a pending release gate.
+The header is the ambient status line: `ReyCode · model · ⑂ branch ·
+workspace · tok 12.4k/200k`, with `thinking · 8s` while a turn runs. Token
+usage is summed from durable provider usage records against the configured
+`context_budget_tokens` budget (`REYCODE_CONTEXT_BUDGET_TOKENS`).
+
+In the command palette, arrow keys move the selection, Tab completes it, Enter
+runs it, and Escape returns to the draft. `/cancel` stops the current task and
+`/tools` reviews a pending tool approval.
 
 On macOS, event data is stored transactionally in
 `~/Library/Application Support/ReyCode/rey_code.sqlite3`. On first launch, a
@@ -175,17 +199,11 @@ decisions, provider retries, logical work IDs, and attempts are durable and
 replayable. The implementer must return code, unit tests, and acceptance tests
 as three separately validated artifacts.
 
-The `/status` dashboard shows phase progress, gate history, artifacts, blockers,
-retries, owner directives, and aggregated token/cost usage. A `/direct` directive
-is included in every subsequently scheduled role's prompt; it does not restart
-work already running.
-
-Select it with `Ctrl+O` or `/squad`. Use `Ctrl+G` while squad mode is selected to
-assign a provider and model independently to all twelve fixed roles. ReyCode blocks
-a squad turn until every role has a valid provider and model.
+The squad dashboard and directive controls are headless operational surfaces;
+they are intentionally absent from the ordinary session TUI.
 
 Run one live squad from the command line. Use `--workspace` to choose the project
-directory; otherwise the default room's workspace is used. The `--release` flag
+directory; otherwise the current workspace is used. The `--release` flag
 selects the release authority (`auto` for leader-authoritative, `wait` for owner
 review):
 
@@ -217,7 +235,7 @@ Each command batch is written as one SQLite transaction. Versioned, checksummed
 
 OpenCode is one provider behind the `ReyCode.Provider` behaviour. Press `Ctrl+G`
 or submit `/connect` or `/models` to configure one agent or every agent in the
-current room. ReyCode reports whether OpenCode is installed, checking,
+current Session. ReyCode reports whether OpenCode is installed, checking,
 configured, or missing rather than treating process presence as an online state.
 
 If OpenCode has no available models, authenticate in another terminal and press
@@ -274,10 +292,11 @@ Override any profile's base URL at runtime without changing config:
 export REYCODE_DEEPSEEK_BASE_URL=https://your-proxy.example
 ```
 
-New rooms begin unconfigured, and sending is blocked until the required runtime
-assignments are ready. The ReyCode-owned tool loop is active for all providers
-with the `:reycode_tools` capability (OpenAI-compatible and the simulator);
-OpenCode's stdio adapter uses the legacy `:provider_managed_tools` capability.
+Fresh Sessions copy the current Assistant and task-agent runtime assignments.
+Sending is blocked only when the addressed agent has no ready runtime. The
+ReyCode-owned tool loop is active for all providers with the `:reycode_tools`
+capability (OpenAI-compatible and the simulator); OpenCode's stdio adapter uses
+the legacy `:provider_managed_tools` capability.
 
 ## Tool approval
 
@@ -287,7 +306,7 @@ at a time, inside the trusted workspace roots. `read`, `grep`, `glob`, `list`,
 and `edit` run without prompting; `bash` and `write` always wait for owner
 approval first. Unknown tools fail closed.
 
-When a tool needs approval, a banner appears above the room timeline:
+When a tool needs approval, a banner appears above the current transcript:
 
     tool approval required  /  write  /  /tools
 

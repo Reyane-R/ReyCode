@@ -191,6 +191,102 @@ defmodule ReyCode.EventStoreSQLiteTest do
              store |> EventStore.load() |> Projector.replay()
   end
 
+  test "normalizes retired schema-v2 events while restoring a checkpoint tail" do
+    path = tmp_path("legacy-tail.sqlite3")
+    {store, id} = start_store(path)
+
+    assert {:ok, room} =
+             EventStore.append(:room_created, room_data(), store, metadata())
+
+    assert :ok = EventStore.checkpoint(Projector.replay([room]), store)
+
+    invocation_metadata = [
+      aggregate_type: :invocation,
+      aggregate_id: "inv-1",
+      room_id: "room-1"
+    ]
+
+    assert {:ok, delta} =
+             EventStore.append(
+               :provider_frame_recorded,
+               %{
+                 "invocation_id" => "inv-1",
+                 "message_id" => "msg-1",
+                 "frame_sequence" => 1,
+                 "kind" => "text_delta",
+                 "data" => %{"text" => "legacy text"}
+               },
+               store,
+               invocation_metadata
+             )
+
+    assert {:ok, session} =
+             EventStore.append(
+               :provider_frame_recorded,
+               %{
+                 "invocation_id" => "inv-1",
+                 "message_id" => "msg-1",
+                 "frame_sequence" => 2,
+                 "kind" => "session_started",
+                 "data" => %{"session_id" => "session-1"}
+               },
+               store,
+               invocation_metadata
+             )
+
+    stop_supervised!(id)
+    connection = open_sqlite(path)
+
+    replace_event_with_legacy_payload(
+      connection,
+      delta,
+      "message_delta_appended",
+      %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-1",
+        "frame_sequence" => 1,
+        "delta" => "legacy text"
+      }
+    )
+
+    replace_event_with_legacy_payload(
+      connection,
+      session,
+      "invocation_session_recorded",
+      %{
+        "invocation_id" => "inv-1",
+        "frame_sequence" => 2,
+        "session_id" => "session-1"
+      }
+    )
+
+    assert :ok = Exqlite.Sqlite3.close(connection)
+    {restarted, _id} = start_store(path)
+
+    assert {:ok, _checkpoint, [replayed_delta, replayed_session]} =
+             EventStore.load_projection(restarted)
+
+    assert replayed_delta.type == :provider_frame_recorded
+
+    assert replayed_delta.data == %{
+             "invocation_id" => "inv-1",
+             "message_id" => "msg-1",
+             "frame_sequence" => 1,
+             "kind" => "text_delta",
+             "data" => %{"text" => "legacy text"}
+           }
+
+    assert replayed_session.type == :provider_frame_recorded
+
+    assert replayed_session.data == %{
+             "invocation_id" => "inv-1",
+             "message_id" => nil,
+             "frame_sequence" => 2,
+             "kind" => "session_started",
+             "data" => %{"session_id" => "session-1"}
+           }
+  end
+
   test "fails closed when the latest projection checkpoint is corrupted" do
     path = tmp_path("corrupt-checkpoint.sqlite3")
     {store, id} = start_store(path)
@@ -380,6 +476,22 @@ defmodule ReyCode.EventStoreSQLiteTest do
     after
       Exqlite.Sqlite3.release(connection, statement)
     end
+  end
+
+  defp replace_event_with_legacy_payload(connection, event, type, data) do
+    payload =
+      event
+      |> Event.encode!()
+      |> Jason.decode!()
+      |> Map.merge(%{"type" => type, "data" => data})
+      |> Jason.encode!()
+
+    assert :done =
+             sqlite_run(
+               connection,
+               "UPDATE events SET type = ?, payload = ? WHERE sequence = ?",
+               [type, payload, event.sequence]
+             )
   end
 
   defp room_data(room_id \\ "room-1") do

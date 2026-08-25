@@ -3,9 +3,18 @@ defmodule ReyCode.TUI.State do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
-  alias ReyCode.Orchestration.Squad.Dashboard
   alias ReyCode.Provider.{Catalog, Presentation}
-  alias ReyCode.TUI.{Directive, GateReview, NewRoom, Settings, ToolReview}
+
+  alias ReyCode.TUI.{
+    AgentProfile,
+    Delegation,
+    ModelPicker,
+    SessionPicker,
+    Settings,
+    SlashPalette,
+    TimeAgo,
+    ToolReview
+  }
 
   @doc "Subscribes the root view and initializes its stable assign shapes."
   @spec mount(keyword(), map()) :: {:ok, map()}
@@ -25,16 +34,18 @@ defmodule ReyCode.TUI.State do
        provider_catalog: provider_catalog,
        providers: providers,
        projection: projection,
-       selected_room_id: List.first(projection.room_order),
+       selected_room_id: List.last(projection.room_order),
        drafts: %{},
-       mode: :compare,
+       mode: :direct,
+       home: true,
        modal: nil,
        cancel_turn_id: nil,
-       directive: Directive.initial(),
-       gate_review: GateReview.initial(),
+       agent_profile: AgentProfile.initial(),
+       delegation: Delegation.initial(),
        tool_review: ToolReview.initial(),
        slash: nil,
-       new_room: NewRoom.initial(),
+       model_picker: ModelPicker.initial(),
+       session_picker: SessionPicker.initial(),
        settings: Settings.initial(),
        notice: nil
      )}
@@ -44,31 +55,128 @@ defmodule ReyCode.TUI.State do
   @spec prepare_render(map()) :: map()
   def prepare_render(assigns) do
     width = assigns.breeze.terminal.width
-    sidebar? = show_sidebar?(width)
+    height = assigns.breeze.terminal.height
     room = assigns.projection.rooms[assigns.selected_room_id]
 
     Component.assign(assigns,
-      show_sidebar?: sidebar?,
       room: room,
       rooms: Enum.map(assigns.projection.room_order, &assigns.projection.rooms[&1]),
       messages: room_messages(room, assigns.projection),
-      dashboard: Dashboard.data(room, assigns.projection),
       draft: Map.get(assigns.drafts, assigns.selected_room_id, ""),
-      message_width: message_width(width, sidebar?),
+      git_branch: git_branch(room && room.workspace),
+      token_label: token_label(room, assigns.projection, assigns.config),
+      elapsed_seconds: running_elapsed(room, assigns.projection),
+      message_width: message_width(width),
       timeline_id: timeline_id(room.id),
-      gate_review_options: GateReview.options(),
+      recent_session_rows: recent_session_rows(assigns),
+      slash_rows: slash_rows(assigns.slash, height),
+      slash_style: SlashPalette.style(width, height, assigns.slash),
       tool_review_options: ToolReview.options()
     )
   end
 
-  @doc "Updates the projection while retaining a valid room selection."
+  defp recent_session_rows(assigns) do
+    assigns.projection.room_order
+    |> Enum.reverse()
+    |> Enum.map(&assigns.projection.rooms[&1])
+    |> Enum.filter(&(&1.message_order != []))
+    |> Enum.take(3)
+    |> Enum.map(fn session ->
+      %{
+        title: session.title,
+        meta: TimeAgo.format(session.created_at) <> "  ·  " <> Path.basename(session.workspace)
+      }
+    end)
+  end
+
+  defp git_branch(nil), do: nil
+
+  defp git_branch(workspace) do
+    case File.read(Path.join(workspace, ".git/HEAD")) do
+      {:ok, "ref: refs/heads/" <> branch} -> "⑂ " <> String.trim(branch)
+      {:ok, _detached} -> "⑂ detached"
+      _other -> nil
+    end
+  end
+
+  defp token_label(room, projection, config) do
+    tokens = token_usage(room, projection)
+
+    "#{meter_bar(room, projection, config)}  tok #{format_tokens(tokens)}/#{format_tokens(config.orchestration.context_budget_tokens)}"
+  end
+
+  defp meter_bar(room, projection, config) do
+    used = token_usage(room, projection)
+    budget = config.orchestration.context_budget_tokens
+    ratio = if budget > 0, do: used / budget, else: 0.0
+    cells = 5
+    filled = round(ratio * cells) |> min(cells) |> max(0)
+    String.duplicate("■", filled) <> String.duplicate("□", cells - filled)
+  end
+
+  defp token_usage(room, projection) do
+    Enum.reduce(projection.invocations, 0, fn {_id, invocation}, acc ->
+      if invocation.room_id == room.id,
+        do: acc + usage_tokens(invocation.usage),
+        else: acc
+    end)
+  end
+
+  defp usage_tokens(nil), do: 0
+
+  defp usage_tokens(usage) when is_map(usage) do
+    Map.get(usage, "total_tokens") ||
+      Map.get(usage, "tokens") ||
+      Map.get(usage, "prompt_tokens", 0) + Map.get(usage, "completion_tokens", 0)
+  end
+
+  defp usage_tokens(_other), do: 0
+
+  defp format_tokens(value) when value >= 1_000 do
+    text = :erlang.float_to_binary(value / 1_000.0, [{:decimals, 1}])
+    text = if String.ends_with?(text, ".0"), do: String.trim_trailing(text, ".0"), else: text
+    text <> "k"
+  end
+
+  defp format_tokens(value), do: Integer.to_string(value)
+
+  defp running_elapsed(room, projection) do
+    with turn_id when not is_nil(turn_id) <- room && room.active_turn_id,
+         %{status: :running, created_at: created_at} <- projection.turns[turn_id] do
+      case DateTime.from_iso8601(created_at) do
+        {:ok, started, _offset} ->
+          max(DateTime.to_unix(DateTime.utc_now()) - DateTime.to_unix(started), 0)
+
+        _other ->
+          nil
+      end
+    else
+      _other -> nil
+    end
+  end
+
+  defp slash_rows(nil, _height), do: []
+
+  defp slash_rows(slash, height) do
+    Enum.map(SlashPalette.rows(slash, height), fn {command, index} ->
+      %{
+        command: command.command,
+        description: command.description,
+        option_class: SlashPalette.option_class(index, slash.index),
+        command_class: SlashPalette.command_class(index, slash.index),
+        description_class: SlashPalette.description_class(index, slash.index)
+      }
+    end)
+  end
+
+  @doc "Updates the projection while retaining a valid session selection."
   @spec projection_updated(map(), map()) :: map()
   def projection_updated(term, projection) do
     selected_room_id =
       if Map.has_key?(projection.rooms, term.assigns.selected_room_id) do
         term.assigns.selected_room_id
       else
-        List.first(projection.room_order)
+        List.last(projection.room_order)
       end
 
     Component.assign(term, projection: projection, selected_room_id: selected_room_id)
@@ -85,34 +193,70 @@ defmodule ReyCode.TUI.State do
     if term.assigns.modal == :settings, do: Settings.reconcile_options(term), else: term
   end
 
-  @doc "Updates the selected room's composer draft."
+  @doc "Updates the selected session's composer draft."
   @spec assign_draft(map(), String.t()) :: map()
   def assign_draft(term, value) do
     drafts = Map.put(term.assigns.drafts, term.assigns.selected_room_id, value)
     Component.assign(term, drafts: drafts)
   end
 
-  @doc "Selects an adjacent room, wrapping in projection order."
-  @spec select_adjacent_room(map(), integer()) :: map()
-  def select_adjacent_room(term, offset) do
-    ids = term.assigns.projection.room_order
+  @doc "Creates and selects a fresh titled durable session for the session's first input."
+  @spec ensure_session(map(), String.t()) :: {:ok, map()} | {:error, term()}
+  def ensure_session(%{assigns: %{home: true}} = term, first_input) do
+    case Engine.create_session(
+           term.assigns.selected_room_id,
+           session_title(first_input),
+           term.assigns.engine
+         ) do
+      {:ok, session_id} ->
+        projection = Engine.snapshot(term.assigns.engine)
+        drafts = Map.put(term.assigns.drafts, session_id, "")
 
-    if ids == [] do
-      term
-    else
-      index = Enum.find_index(ids, &(&1 == term.assigns.selected_room_id)) || 0
-      selected_room_id = Enum.at(ids, Integer.mod(index + offset, length(ids)))
-      Component.assign(term, selected_room_id: selected_room_id)
+        {:ok,
+         Component.assign(term,
+           selected_room_id: session_id,
+           projection: projection,
+           drafts: drafts,
+           home: false,
+           notice: nil
+         )}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  @doc "Returns whether the room sidebar is visible at a terminal width."
-  @spec show_sidebar?(integer()) :: boolean()
-  def show_sidebar?(width), do: width >= 140
+  def ensure_session(term, _first_input), do: {:ok, term}
 
-  @doc "Returns the selected room timeline element ID."
+  defp session_title(text) do
+    title =
+      text
+      |> String.split(~r/\s+/, trim: true)
+      |> Enum.join(" ")
+
+    if String.length(title) > 60,
+      do: String.slice(title, 0, 60) <> "…",
+      else: title
+  end
+
+  @doc "Returns to a clean session home without creating persistence yet."
+  @spec start_session(map()) :: map()
+  def start_session(term) do
+    source_session_id = List.last(term.assigns.projection.room_order)
+    drafts = Map.put(term.assigns.drafts, source_session_id, "")
+
+    Component.assign(term,
+      selected_room_id: source_session_id,
+      home: true,
+      drafts: drafts,
+      modal: nil,
+      notice: nil
+    )
+  end
+
+  @doc "Returns the selected session timeline element ID."
   @spec timeline_id(term()) :: String.t()
-  def timeline_id(room_id), do: "timeline-#{room_id}"
+  def timeline_id(session_id), do: "timeline-#{session_id}"
 
   defp room_messages(nil, _projection), do: []
 
@@ -124,10 +268,67 @@ defmodule ReyCode.TUI.State do
 
       message
       |> Map.put(:invocation, projection.invocations[message.invocation_id])
+      |> Map.put(:tool_run_rows, tool_run_rows(projection.invocations[message.invocation_id]))
       |> Map.put(:turn, projection.turns[message.turn_id])
     end)
   end
 
-  defp message_width(width, true), do: max(width - 38, 24)
-  defp message_width(width, false), do: max(width - 8, 16)
+  defp tool_run_rows(invocation) when is_map(invocation) do
+    invocation.tool_run_order
+    |> List.wrap()
+    |> Enum.flat_map(fn run_id ->
+      case Map.get(invocation.tool_runs || %{}, run_id) do
+        nil -> []
+        run -> [tool_run_row(run)]
+      end
+    end)
+  end
+
+  defp tool_run_rows(_invocation), do: []
+
+  defp tool_run_row(run) do
+    %{
+      tool: to_string(run.tool),
+      target: argument_summary(run.arguments),
+      status: run_status_label(run)
+    }
+  end
+
+  defp run_status_label(%{status: :completed, result: %{"ok" => true}}), do: "ok"
+
+  defp run_status_label(%{status: :completed, result: %{"ok" => false, "error" => error}}),
+    do: "failed · " <> truncate_text(inspect(error), 40)
+
+  defp run_status_label(%{status: status}) when status in [:completed, :failed],
+    do: Atom.to_string(status)
+
+  defp run_status_label(%{status: :denied}), do: "denied"
+  defp run_status_label(%{status: :interrupted}), do: "interrupted"
+  defp run_status_label(%{status: :awaiting_approval}), do: "awaiting approval"
+  defp run_status_label(%{status: :running}), do: "running"
+  defp run_status_label(_run), do: ""
+
+  defp argument_summary(arguments) when is_map(arguments) do
+    cond do
+      is_binary(arguments["path"]) -> arguments["path"]
+      is_binary(arguments["command"]) -> truncate_text(arguments["command"], 48)
+      is_binary(arguments["pattern"]) -> arguments["pattern"]
+      true -> first_argument(arguments)
+    end
+  end
+
+  defp argument_summary(_arguments), do: ""
+
+  defp first_argument(arguments) do
+    case Enum.at(Map.to_list(arguments), 0) do
+      nil -> ""
+      {key, value} -> "#{key}=#{truncate_text(to_string(value), 40)}"
+    end
+  end
+
+  defp truncate_text(value, limit) do
+    if String.length(value) <= limit, do: value, else: String.slice(value, 0, limit - 1) <> "…"
+  end
+
+  defp message_width(width), do: max(width - 14, 16)
 end

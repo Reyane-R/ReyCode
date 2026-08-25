@@ -40,6 +40,7 @@ if config_env() == :prod do
     opencode_path: System.get_env("REYCODE_OPENCODE_PATH"),
     opencode_env_allowlist: split_list.("REYCODE_OPENCODE_ENV_ALLOWLIST"),
     global_concurrency: parse_integer.("REYCODE_GLOBAL_CONCURRENCY", 2, 1),
+    context_budget_tokens: parse_integer.("REYCODE_CONTEXT_BUDGET_TOKENS", 200_000, 1_000),
     workspace_concurrency: parse_integer.("REYCODE_WORKSPACE_CONCURRENCY", 1, 1),
     global_queue_limit: parse_integer.("REYCODE_GLOBAL_QUEUE_LIMIT", 100, 0),
     workspace_queue_limit: parse_integer.("REYCODE_WORKSPACE_QUEUE_LIMIT", 20, 0),

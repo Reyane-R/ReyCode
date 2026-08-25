@@ -8,32 +8,30 @@ defmodule ReyCode.TUI.SlashPalette do
   alias ReyCode.TUI.State
 
   alias ReyCode.TUI.{
+    AgentProfile,
     Cancellation,
-    Directive,
-    GateReview,
-    NewRoom,
+    Delegation,
+    ModelPicker,
+    SessionPicker,
     Settings,
-    SquadStatus,
     ToolReview,
     Workspace
   }
 
   @commands [
-    %{command: "/agents", description: "Configure room agents", action: :settings},
-    %{command: "/cancel", description: "Cancel the running turn", action: :cancel},
+    %{command: "/agent", description: "Create a task agent", action: :agent_profile},
+    %{command: "/agents", description: "Configure agent models", action: :settings},
+    %{command: "/cancel", description: "Cancel the current task", action: :cancel},
     %{command: "/connect", description: "Connect a provider", action: :settings},
-    %{command: "/direct", description: "Steer the running squad", action: :directive},
-    %{command: "/mode", description: "Change orchestration mode", action: :cycle_mode},
-    %{command: "/models", description: "Choose a model", action: :settings},
-    %{command: "/new", description: "Create a project room", action: :new_room},
+    %{command: "/home", description: "Open the session home", action: :home},
+    %{command: "/model", description: "Switch the Assistant model", action: :model_picker},
+    %{command: "/new", description: "Start a clean session", action: :new_session},
     %{command: "/quit", description: "Quit ReyCode", action: :quit},
-    %{command: "/release", description: "Review the release gate", action: :gate_review},
-    %{command: "/room", description: "Switch to the next room", action: :next_room},
-    %{command: "/squad", description: "Select the leader-supervised squad", action: :squad},
-    %{command: "/status", description: "Open the squad status dashboard", action: :squad_status},
+    %{command: "/resume", description: "Resume a previous session", action: :session_picker},
+    %{command: "/task", description: "Delegate to one task agent", action: :delegation},
     %{command: "/theme", description: "Change theme", action: :theme},
     %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
-    %{command: "/workspace", description: "Show the full workspace path", action: :workspace}
+    %{command: "/workspace", description: "Show the workspace path", action: :workspace}
   ]
 
   @doc "Completes the palette query when Tab is pressed while it is open."
@@ -106,9 +104,17 @@ defmodule ReyCode.TUI.SlashPalette do
     |> View.focus("prompt")
   end
 
-  @doc "Returns commands whose names begin with the query."
+  @doc "Returns commands matching the query: exact, prefix, substring, then subsequence."
   @spec matches(String.t()) :: [map()]
-  def matches(query), do: Enum.filter(@commands, &String.starts_with?(&1.command, query))
+  def matches(query) do
+    query = String.downcase(query)
+
+    @commands
+    |> Enum.map(&{&1, fuzzy_rank(&1.command, query)})
+    |> Enum.reject(fn {_command, rank} -> is_nil(rank) end)
+    |> Enum.sort_by(fn {_command, rank} -> rank end)
+    |> Enum.map(&elem(&1, 0))
+  end
 
   @doc "Starts slash completion for a slash-prefixed prompt value."
   @spec start(map(), String.t()) :: map()
@@ -135,15 +141,13 @@ defmodule ReyCode.TUI.SlashPalette do
   end
 
   @doc "Returns the fixed-position style for the command palette."
-  @spec style(boolean(), pos_integer(), pos_integer(), map() | nil) :: map()
-  def style(show_sidebar?, terminal_width, terminal_height, slash) do
-    left = if show_sidebar?, do: 30, else: 0
-
+  @spec style(pos_integer(), pos_integer(), map() | nil) :: map()
+  def style(terminal_width, terminal_height, slash) do
     %{
       position: :fixed,
-      left: left,
-      bottom: 7,
-      width: max(terminal_width - left, 1),
+      left: 0,
+      bottom: 6,
+      width: terminal_width,
       height: height(slash, terminal_height),
       layer: 40
     }
@@ -182,7 +186,7 @@ defmodule ReyCode.TUI.SlashPalette do
     end
   end
 
-  @doc "Updates the command query and current room draft."
+  @doc "Updates the command query and current session draft."
   @spec set_query(map(), String.t()) :: map()
   def set_query(%{assigns: %{slash: slash}} = term, query) do
     Component.assign(term,
@@ -218,7 +222,7 @@ defmodule ReyCode.TUI.SlashPalette do
   @spec clear(map()) :: map()
   def clear(term), do: Component.assign(term, slash: nil)
 
-  @doc "Clears the current room draft."
+  @doc "Clears the current session draft."
   @spec clear_draft(map()) :: map()
   def clear_draft(term) do
     drafts = Map.put(term.assigns.drafts, term.assigns.selected_room_id, "")
@@ -251,32 +255,39 @@ defmodule ReyCode.TUI.SlashPalette do
     end
   end
 
-  defp run_action(term, :new_room), do: {:noreply, term |> NewRoom.open() |> clear()}
+  defp run_action(term, :new_session),
+    do: {:noreply, term |> State.start_session() |> close()}
 
+  defp run_action(term, :agent_profile), do: {:noreply, AgentProfile.open(term)}
+  defp run_action(term, :delegation), do: {:noreply, Delegation.open(term)}
   defp run_action(term, :cancel), do: {:noreply, Cancellation.open(term)}
 
-  defp run_action(term, :directive), do: {:noreply, Directive.open(term)}
-
-  defp run_action(term, :next_room),
-    do: {:noreply, term |> State.select_adjacent_room(1) |> close()}
-
-  defp run_action(term, :cycle_mode),
-    do: {:noreply, term |> close() |> ReyCode.TUI.cycle_mode_state()}
-
-  defp run_action(term, :squad), do: {:noreply, term |> close() |> Component.assign(mode: :squad)}
-
-  defp run_action(term, :squad_status), do: {:noreply, SquadStatus.open(term)}
+  defp run_action(term, :home),
+    do: {:noreply, term |> close() |> Component.assign(home: true)}
 
   defp run_action(term, :workspace), do: {:noreply, Workspace.open(term)}
 
+  defp run_action(term, :session_picker), do: {:noreply, SessionPicker.open(term)}
+  defp run_action(term, :model_picker), do: {:noreply, ModelPicker.open(term)}
   defp run_action(term, :settings), do: {:noreply, term |> Settings.open() |> clear()}
-
   defp run_action(term, :theme), do: ReyCode.TUI.cycle_theme(nil, close(term))
-
   defp run_action(term, :quit), do: ReyCode.TUI.quit(nil, clear(term))
-
-  defp run_action(term, :gate_review), do: {:noreply, GateReview.open(term)}
   defp run_action(term, :tool_review), do: {:noreply, ToolReview.open(term)}
+
+  defp fuzzy_rank(command, query) do
+    cond do
+      command == query -> 0
+      String.starts_with?(command, query) -> 1
+      String.contains?(command, query) -> 2
+      subsequence?(String.graphemes(command), String.graphemes(query)) -> 3
+      true -> nil
+    end
+  end
+
+  defp subsequence?(_command, []), do: true
+  defp subsequence?([], _query), do: false
+  defp subsequence?([char | rest], [char | query]), do: subsequence?(rest, query)
+  defp subsequence?([_other | rest], query), do: subsequence?(rest, query)
 
   defp height(nil, _terminal_height), do: 1
 

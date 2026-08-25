@@ -28,6 +28,15 @@ defmodule ReyCode.Orchestration.AdmissionTest do
   test "serializes provider workers under global and workspace limits", %{store: store} do
     start_engine(store, global_concurrency: 1, workspace_concurrency: 1)
     room_id = Engine.snapshot(@engine).room_order |> hd()
+
+    Enum.each(["Tests", "Docs"], fn name ->
+      assert {:ok, participant_id} =
+               Engine.add_task_participant(room_id, name, "Exercise admission limits", @engine)
+
+      assert :ok =
+               Engine.configure_participants(room_id, participant_id, :simulator, nil, @engine)
+    end)
+
     assert {:ok, turn_id} = Engine.post_message(room_id, "Bound this work", :compare, @engine)
 
     Wait.projection(@engine, fn projection ->
