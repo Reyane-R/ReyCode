@@ -2,8 +2,17 @@ defmodule ReyCode.Orchestration.RecoveryTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.Engine
-  alias ReyCode.Orchestration.Projector
+
+  alias ReyCode.Orchestration.{
+    Engine,
+    EventEntries,
+    Invocation,
+    Participant,
+    Projector,
+    Room,
+    Turn
+  }
+
   alias ReyCode.Provider.{Frame, Runtime}
   alias ReyCode.Test.Wait
 
@@ -76,75 +85,52 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     room_id = "room-midstream"
     turn_id = "turn-midstream"
 
-    assert {:ok, _events} =
-             EventStore.append_many(
-               [
-                 {
-                   :room_created,
-                   %{
-                     "room_id" => room_id,
-                     "slug" => "midstream",
-                     "title" => "Midstream",
-                     "workspace" => System.tmp_dir!(),
-                     "participants" => participants()
-                   },
-                   metadata(:room, room_id, room_id, turn_id)
-                 },
-                 {
-                   :message_posted,
-                   %{
-                     "message_id" => "msg-user",
-                     "room_id" => room_id,
-                     "turn_id" => turn_id,
-                     "author_name" => "You",
-                     "body" => "Recover this"
-                   },
-                   metadata(:room, room_id, room_id, turn_id)
-                 },
-                 {
-                   :turn_queued,
-                   %{
-                     "turn_id" => turn_id,
-                     "room_id" => room_id,
-                     "user_message_id" => "msg-user",
-                     "mode" => "compare",
-                     "context_through_sequence" => 2
-                   },
-                   metadata(:turn, turn_id, room_id, turn_id)
-                 },
-                 {
-                   :turn_started,
-                   %{"turn_id" => turn_id, "room_id" => room_id},
-                   metadata(:turn, turn_id, room_id, turn_id)
-                 },
-                 {
-                   :assistant_message_opened,
-                   %{
-                     "invocation_id" => "inv-builder",
-                     "message_id" => "msg-builder",
-                     "turn_id" => turn_id,
-                     "room_id" => room_id,
-                     "participant" => hd(participants()),
-                     "stage" => 0,
-                     "label" => "independent response",
-                     "system_prompt" => "Respond independently",
-                     "attempt" => 1
-                   },
-                   metadata(:invocation, "inv-builder", room_id, turn_id)
-                 },
-                 {
-                   :invocation_started,
-                   %{
-                     "invocation_id" => "inv-builder",
-                     "message_id" => "msg-builder",
-                     "turn_id" => turn_id,
-                     "room_id" => room_id
-                   },
-                   metadata(:invocation, "inv-builder", room_id, turn_id)
-                 }
-               ],
-               store
-             )
+    builder_participant = %Participant{
+      id: "builder",
+      name: "Builder",
+      perspective: "builder",
+      provider: :simulator,
+      model: nil,
+      kind: :primary
+    }
+
+    entries =
+      [
+        EventEntries.room_created(
+          room_id,
+          "midstream",
+          "Midstream",
+          System.tmp_dir!(),
+          participants()
+        )
+      ] ++
+        EventEntries.queue_turn(room_id, "Recover this", :compare, turn_id, "msg-user", 2, nil) ++
+        [EventEntries.turn_started(%Turn{id: turn_id, room_id: room_id})] ++
+        EventEntries.open_invocations(
+          %Room{id: room_id},
+          %Turn{id: turn_id, room_id: room_id},
+          [
+            %{
+              participant_id: builder_participant.id,
+              participant: builder_participant,
+              phase_index: 0,
+              label: "independent response",
+              system_prompt: "Respond independently",
+              attempt: 1
+            }
+          ],
+          [{"inv-builder", "msg-builder"}]
+        ) ++
+        [
+          EventEntries.invocation_started(%Invocation{
+            id: "inv-builder",
+            room_id: room_id,
+            turn_id: turn_id,
+            message_id: "msg-builder"
+          })
+        ]
+
+    assert {:ok, _events} = EventStore.append_many(entries, store)
 
     parent = self()
 

@@ -1,6 +1,7 @@
 defmodule ReyCode.Orchestration.Workflow do
   @moduledoc "Scheduling contract for room turn strategies."
 
+  alias ReyCode.Failure
   alias ReyCode.Orchestration.{EventEntries, Invocation, Message, Projection, Room, Turn}
 
   @type spec :: %{
@@ -10,7 +11,9 @@ defmodule ReyCode.Orchestration.Workflow do
           system_prompt: String.t()
         }
 
-  @type invocation_outcome :: {:completed, map()} | {:failed, map()}
+  # Completed metadata is provider wire data; failed outcomes are typed
+  # internal failures converted to wire only at the event boundary.
+  @type invocation_outcome :: {:completed, map()} | {:failed, Failure.t()}
   @type finalization ::
           {:advance, [EventEntries.event_entry()]}
           | {:retry, [EventEntries.event_entry()], spec()}

@@ -2,6 +2,7 @@ defmodule ReyCode.Orchestration.Message do
   @moduledoc "A durable user or assistant message in the orchestration projection."
 
   alias ReyCode.Failure
+  alias ReyCode.Orchestration.Author
 
   @fields [
     :id,
@@ -34,7 +35,7 @@ defmodule ReyCode.Orchestration.Message do
           room_id: String.t() | nil,
           turn_id: String.t() | nil,
           invocation_id: String.t() | nil,
-          author: map() | nil,
+          author: Author.t() | nil,
           role: atom() | nil,
           status: atom() | nil,
           body: String.t(),
@@ -47,8 +48,16 @@ defmodule ReyCode.Orchestration.Message do
   @spec from_map(t() | map()) :: t()
   def from_map(message) when is_map(message) do
     message = struct!(__MODULE__, Map.take(message, @fields))
-    %{message | error: optional_failure(message.error)}
+
+    %{
+      message
+      | author: optional_author(message.author),
+        error: optional_failure(message.error)
+    }
   end
+
+  defp optional_author(nil), do: nil
+  defp optional_author(author), do: Author.from_map(author)
 
   defp optional_failure(nil), do: nil
   defp optional_failure(value), do: Failure.from_map(value)

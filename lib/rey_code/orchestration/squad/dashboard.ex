@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   @moduledoc "Pure read model and presentation values for the squad dashboard."
 
   alias ReyCode.Orchestration.{Projection, Room, Squad, Turn}
-  alias ReyCode.Orchestration.Squad.{GateResolution, GateReview}
+  alias ReyCode.Orchestration.Squad.{Artifact, GateResolution, GateReview, Phase, Retry}
 
   @type usage_summary :: %{
           tokens: integer(),
@@ -73,9 +73,9 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   end
 
   @doc "Returns the gate suffix for phases that require a decision."
-  @spec gate_label(map()) :: String.t()
-  def gate_label(phase) do
-    if Squad.gate?(phase), do: "  [gate]", else: ""
+  @spec gate_label(Phase.t()) :: String.t()
+  def gate_label(%Phase{} = phase) do
+    if phase.gate?, do: "  [gate]", else: ""
   end
 
   @doc "Formats an authoritative GateResolution for display."
@@ -100,13 +100,13 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
   end
 
   @doc "Formats a recorded squad artifact for display."
-  @spec artifact_label(map()) :: String.t()
+  @spec artifact_label(Artifact.t()) :: String.t()
   def artifact_label(artifact) do
     "#{artifact.kind} / #{artifact.phase} / cycle #{artifact.cycle}"
   end
 
   @doc "Formats a squad retry or rework record for display."
-  @spec retry_label(map()) :: String.t()
+  @spec retry_label(Retry.t()) :: String.t()
   def retry_label(retry) do
     "#{retry.phase} / #{retry.role_id} / attempt #{retry.attempt} / #{retry.kind}"
   end

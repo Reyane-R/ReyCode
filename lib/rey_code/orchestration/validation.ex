@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Validation do
   @moduledoc "Normalizes and validates commands before durable orchestration state changes."
 
-  alias ReyCode.Orchestration.Squad
+  alias ReyCode.Orchestration.{Invocation, Squad, Turn}
   alias ReyCode.Security.Workspace
 
   @max_room_title 120
@@ -68,7 +68,7 @@ defmodule ReyCode.Orchestration.Validation do
     do: text(directive, :empty_directive, :invalid_directive, @max_directive)
 
   @doc "Validates a turn cancellation and normalizes its reason."
-  @spec cancellation(map() | nil, term()) ::
+  @spec cancellation(Turn.t() | nil, term()) ::
           {:ok, String.t()} | {:ok, :already_finished} | {:error, atom()}
   def cancellation(nil, _reason), do: {:error, :turn_not_found}
 
@@ -86,7 +86,7 @@ defmodule ReyCode.Orchestration.Validation do
   end
 
   @doc "Checks squad directive preconditions before normalizing its text."
-  @spec squad_directive(map() | nil, term()) :: {:ok, String.t()} | {:error, atom()}
+  @spec squad_directive(Turn.t() | nil, term()) :: {:ok, String.t()} | {:error, atom()}
   def squad_directive(turn, raw_directive) do
     case directive_turn_ready(turn) do
       :ok -> directive(raw_directive)
@@ -100,7 +100,7 @@ defmodule ReyCode.Orchestration.Validation do
   The decision must carry the review id of the gate that was displayed, so a
   stale modal can never resolve a newer gate opened by the same turn.
   """
-  @spec gate_resolution(map() | nil, term(), term(), term(), term()) ::
+  @spec gate_resolution(Turn.t() | nil, term(), term(), term(), term()) ::
           {:ok, map(), atom(), String.t() | nil, [String.t()]} | {:error, atom()}
   def gate_resolution(turn, raw_review_id, raw_decision, raw_target_phase, raw_reasons) do
     with {:ok, review} <- pending_gate_review(turn),
@@ -118,7 +118,7 @@ defmodule ReyCode.Orchestration.Validation do
   The decision must be addressed to the ToolRun ID carried by the pending
   review, so a stale UI can never resolve a different request.
   """
-  @spec tool_run_resolution(map() | nil, term(), term()) ::
+  @spec tool_run_resolution(Invocation.t() | nil, term(), term()) ::
           {:ok, map(), atom()} | {:error, atom()}
   def tool_run_resolution(invocation, raw_run_id, raw_decision) do
     with {:ok, review} <- pending_tool_review(invocation),

@@ -3,8 +3,20 @@ defmodule ReyCode.Orchestration.ProjectorTest do
   use ExUnitProperties
 
   alias ReyCode.Event
-  alias ReyCode.Orchestration.{Invocation, Message, Participant, Projector, Room, Turn}
-  alias ReyCode.Orchestration.Squad.{GateResolution, GateReview}
+
+  alias ReyCode.Orchestration.{
+    Author,
+    Invocation,
+    Message,
+    Participant,
+    Projector,
+    Room,
+    SquadRun,
+    ToolAsk,
+    Turn
+  }
+
+  alias ReyCode.Orchestration.Squad.{Artifact, Directive, GateResolution, GateReview, Retry}
 
   test "replay rebuilds room messages, turns, and streamed invocations" do
     participant = %{
@@ -362,5 +374,226 @@ defmodule ReyCode.Orchestration.ProjectorTest do
       data: data,
       recorded_at: "2026-08-03T00:00:00Z"
     }
+  end
+
+  describe "typed projected records" do
+    test "messages attribute authors as Author structs" do
+      state = replay_room_message("Signed message")
+
+      assert %Author{kind: :user, id: "user", name: "You"} =
+               state.messages["msg-user"].author
+    end
+
+    test "assistant messages attribute agents from participants" do
+      state =
+        Projector.replay(opened_invocation_events())
+
+      assert %Author{kind: :agent, id: "builder", name: "Builder"} =
+               state.messages["msg-assistant"].author
+    end
+
+    test "tool asks project into ToolAsk structs from events and tool runs" do
+      ask_event =
+        event(3, :tool_ask_requested, :invocation, "inv-1", %{
+          "invocation_id" => "inv-1",
+          "message_id" => "msg-assistant",
+          "turn_id" => "turn-1",
+          "room_id" => "room-1",
+          "request_id" => "ask-1",
+          "tool" => "shell",
+          "arguments" => %{"command" => "ls"},
+          "workspace" => "/tmp/alpha"
+        })
+
+      state = Projector.replay(opened_invocation_events() ++ [ask_event])
+
+      assert %ToolAsk{} =
+               review = state.invocations["inv-1"].pending_tool_review
+
+      assert review.request_id == "ask-1"
+      assert review.tool == "shell"
+      assert review.arguments == %{"command" => "ls"}
+    end
+
+    test "squad artifacts, retries, and directives project as typed records" do
+      state =
+        Projector.replay(
+          squad_seed_events() ++
+            [
+              event(4, :squad_artifact_recorded, :turn, "turn-squad", %{
+                "turn_id" => "turn-squad",
+                "seat_id" => "analyst",
+                "kind" => "stories",
+                "phase" => "stories",
+                "cycle" => 0,
+                "invocation_id" => "inv-analyst",
+                "message_id" => "msg-analyst",
+                "summary" => "wrote stories",
+                "blockers" => [],
+                "digest" => "abc"
+              }),
+              event(5, :squad_retry_scheduled, :turn, "turn-squad", %{
+                "turn_id" => "turn-squad",
+                "seat_id" => "implementer",
+                "attempt" => 2,
+                "kind" => "provider_retry",
+                "phase" => "implementation",
+                "cycle" => 0,
+                "reason" => "rate_limit"
+              }),
+              event(6, :squad_directive_added, :turn, "turn-squad", %{
+                "turn_id" => "turn-squad",
+                "text" => "Keep the first release read-only.",
+                "phase" => "stories",
+                "cycle" => 0
+              })
+            ]
+        )
+
+      squad = state.turns["turn-squad"].squad
+
+      assert [%Artifact{} = artifact] = squad.artifacts
+      assert artifact.role_id == "analyst"
+      assert artifact.summary == "wrote stories"
+
+      assert [%Retry{} = retry] = squad.retries
+      assert retry.role_id == "implementer"
+      assert retry.kind == "provider_retry"
+
+      assert [%Directive{} = directive] = squad.directives
+      assert directive.text == "Keep the first release read-only."
+    end
+
+    test "legacy snapshots normalize nested maps into typed records" do
+      legacy_invocation = %{
+        id: "inv-1",
+        room_id: "room-1",
+        turn_id: "turn-1",
+        message_id: "msg-assistant",
+        pending_tool_review: %{
+          request_id: "ask-legacy",
+          tool: "read",
+          arguments: %{},
+          workspace: "/tmp",
+          requested_at: "2026-08-03T00:00:00Z"
+        }
+      }
+
+      assert %ToolAsk{request_id: "ask-legacy"} =
+               Invocation.from_map(legacy_invocation).pending_tool_review
+
+      legacy_run = %{
+        artifacts: [
+          %{
+            seat_id: "analyst",
+            kind: "stories",
+            phase: "stories",
+            invocation_id: "inv-analyst",
+            message_id: "msg-a"
+          }
+        ],
+        directives: [%{"text" => "focus", "phase" => "plan", "recorded_at" => "t"}],
+        retries: [%{"role_id" => "implementer", "attempt" => 2, "phase" => "build"}]
+      }
+
+      run = SquadRun.from_map(legacy_run)
+
+      assert [%Artifact{role_id: "analyst", summary: ""}] =
+               run.artifacts
+
+      assert [%Directive{text: "focus", cycle: 0}] = run.directives
+      assert [%Retry{role_id: "implementer", cycle: 0}] = run.retries
+    end
+  end
+
+  defp seed_events do
+    [
+      room_created_event(),
+      event(2, :message_posted, :room, "room-1", user_message_data())
+    ]
+  end
+
+  defp replay_room_message(body) do
+    Projector.replay([
+      room_created_event(),
+      event(2, :message_posted, :room, "room-1", %{user_message_data() | "body" => body})
+    ])
+  end
+
+  defp room_created_event do
+    event(1, :room_created, :room, "room-1", %{
+      "room_id" => "room-1",
+      "slug" => "alpha",
+      "title" => "Alpha",
+      "workspace" => "/tmp/alpha",
+      "participants" => [participant_wire()]
+    })
+  end
+
+  defp participant_wire do
+    %{
+      "id" => "builder",
+      "name" => "Builder",
+      "perspective" => "implementation",
+      "provider" => "demo",
+      "model" => nil,
+      "kind" => "primary"
+    }
+  end
+
+  defp user_message_data do
+    %{
+      "message_id" => "msg-user",
+      "room_id" => "room-1",
+      "turn_id" => "turn-1",
+      "author_name" => "You",
+      "body" => "Hello"
+    }
+  end
+
+  defp opened_invocation_events do
+    seed_events() ++
+      [
+        event(3, :turn_queued, :turn, "turn-1", %{
+          "turn_id" => "turn-1",
+          "room_id" => "room-1",
+          "user_message_id" => "msg-user",
+          "mode" => "direct",
+          "context_through_sequence" => 2
+        }),
+        event(4, :assistant_message_opened, :invocation, "inv-1", %{
+          "invocation_id" => "inv-1",
+          "message_id" => "msg-assistant",
+          "turn_id" => "turn-1",
+          "room_id" => "room-1",
+          "participant" => participant_wire(),
+          "stage" => 0,
+          "label" => "response",
+          "system_prompt" => nil,
+          "cycle" => 0,
+          "dependencies" => [],
+          "attempt" => 1
+        })
+      ]
+  end
+
+  defp squad_seed_events do
+    [
+      room_created_event(),
+      event(2, :message_posted, :room, "room-1", user_message_data()),
+      event(3, :turn_queued, :turn, "turn-squad", %{
+        "turn_id" => "turn-squad",
+        "room_id" => "room-1",
+        "user_message_id" => "msg-user",
+        "mode" => "squad",
+        "context_through_sequence" => 2
+      }),
+      event(4, :squad_configured, :turn, "turn-squad", %{
+        "turn_id" => "turn-squad",
+        "room_id" => "room-1",
+        "seats" => ["squad_leader"],
+        "rework_budget" => 2
+      })
+    ]
   end
 end
