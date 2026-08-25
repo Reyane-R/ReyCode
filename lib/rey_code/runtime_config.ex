@@ -14,6 +14,7 @@ defmodule ReyCode.RuntimeConfig do
 
   alias ReyCode.RuntimeConfig.{
     Logging,
+    OMP,
     OpenAICompatible,
     OpenCode,
     Orchestration,
@@ -30,6 +31,7 @@ defmodule ReyCode.RuntimeConfig do
     :orchestration,
     :providers,
     :open_code,
+    :omp,
     :open_ai,
     :squad,
     :persistence,
@@ -43,6 +45,7 @@ defmodule ReyCode.RuntimeConfig do
           orchestration: Orchestration.t(),
           providers: Providers.t(),
           open_code: OpenCode.t(),
+          omp: OMP.t(),
           open_ai: OpenAICompatible.t(),
           squad: Squad.t(),
           persistence: Persistence.t(),
@@ -124,6 +127,19 @@ defmodule ReyCode.RuntimeConfig do
         cpu_seconds: values.opencode_cpu_seconds,
         open_files: values.opencode_open_files,
         env_allowlist: values.opencode_env_allowlist
+      },
+      omp: %OMP{
+        path: values.omp_path,
+        provider_timeout_ms: values.provider_timeout_ms,
+        max_prompt_bytes: values.omp_max_prompt_bytes,
+        max_output_bytes: values.omp_max_output_bytes,
+        max_diagnostic_bytes: values.omp_max_diagnostic_bytes,
+        text_chunk_bytes: values.omp_text_chunk_bytes,
+        text_chunk_latency_ms: values.omp_text_chunk_latency_ms,
+        cpu_seconds: values.omp_cpu_seconds,
+        open_files: values.omp_open_files,
+        env_allowlist: values.omp_env_allowlist,
+        discovery_output_bytes: values.omp_discovery_output_bytes
       },
       open_ai: %OpenAICompatible{
         chunk_bytes: values.openai_compatible_chunk_bytes,

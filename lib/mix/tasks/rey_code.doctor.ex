@@ -2,7 +2,7 @@ defmodule Mix.Tasks.ReyCode.Doctor do
   @shortdoc "Reports production readiness diagnostics"
 
   @moduledoc """
-  Reports runtime, storage path, OpenCode readiness, and configured limits.
+  Reports runtime, storage path, CLI provider readiness, and configured limits.
 
       mix rey_code.doctor
       mix rey_code.doctor --json
@@ -50,6 +50,7 @@ defmodule Mix.Tasks.ReyCode.Doctor do
       path_line("Data path", report.paths.data),
       path_line("Database path", report.paths.database),
       opencode_line(report.opencode),
+      omp_line(report.omp),
       api_providers_lines(report.api_providers),
       "Limits:",
       limits_lines(report.limits)
@@ -81,6 +82,11 @@ defmodule Mix.Tasks.ReyCode.Doctor do
   defp opencode_line(opencode) do
     "OpenCode: status=#{opencode.status}, ready=#{answer(opencode.ready)}, " <>
       "executable=#{opencode.executable || "not found"}, version=#{opencode.version || "unknown"}"
+  end
+
+  defp omp_line(omp) do
+    "OMP: status=#{omp.status}, ready=#{answer(omp.ready)}, " <>
+      "executable=#{omp.executable || "not found"}, version=#{omp.version || "unknown"}"
   end
 
   defp api_providers_lines([]), do: "API providers: none configured"

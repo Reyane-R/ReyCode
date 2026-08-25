@@ -22,6 +22,7 @@ defmodule ReyCode.Diagnostics do
           runtime: map(),
           paths: map(),
           opencode: map(),
+          omp: map(),
           api_providers: [map()],
           limits: map(),
           security: map()
@@ -36,6 +37,7 @@ defmodule ReyCode.Diagnostics do
     {data_path, database_path} = resolved_paths(path_config, opts)
     path_probe = Keyword.get(opts, :path_probe, &probe_path/1)
     free_space_probe = Keyword.get(opts, :free_space_probe, &probe_free_space/1)
+    catalog = catalog_snapshot(opts)
 
     %{
       app: %{
@@ -48,9 +50,10 @@ defmodule ReyCode.Diagnostics do
         data: path_report(data_path, path_probe, free_space_probe),
         database: path_report(database_path, path_probe, free_space_probe)
       },
-      opencode: opencode_report(catalog_snapshot(opts)),
-      api_providers: api_providers_report(config),
+      opencode: opencode_report(catalog),
+      omp: omp_report(catalog),
       limits: limits(config),
+      api_providers: api_providers_report(config),
       security: %{workspace_roots: workspace_roots(config)}
     }
   end
@@ -227,7 +230,7 @@ defmodule ReyCode.Diagnostics do
   defp read_catalog(source, deadline) do
     snapshot = safe_snapshot(source)
 
-    if opencode_status(snapshot) == :checking and System.monotonic_time(:millisecond) < deadline do
+    if discovery_checking?(snapshot) and System.monotonic_time(:millisecond) < deadline do
       Process.sleep(50)
       read_catalog(source, deadline)
     else
@@ -241,14 +244,28 @@ defmodule ReyCode.Diagnostics do
     :exit, _reason -> %{}
   end
 
-  defp opencode_status(snapshot) do
+  defp discovery_checking?(snapshot) do
     snapshot
-    |> entry_get(:opencode, %{})
-    |> entry_get(:status, :unavailable)
+    |> Enum.filter(fn {key, _entry} -> key in [:opencode, :omp, "opencode", "omp"] end)
+    |> Enum.any?(fn {_key, entry} -> entry_get(entry, :status, :unavailable) == :checking end)
   end
 
   defp opencode_report(snapshot) do
     entry = entry_get(snapshot, :opencode, %{})
+    status = entry_get(entry, :status, :unavailable)
+    executable = entry_get(entry, :executable)
+
+    %{
+      status: status,
+      ready: status in [:configured, "configured"],
+      installed: is_binary(executable) and executable != "",
+      executable: executable,
+      version: entry_get(entry, :version)
+    }
+  end
+
+  defp omp_report(snapshot) do
+    entry = entry_get(snapshot, :omp, %{})
     status = entry_get(entry, :status, :unavailable)
     executable = entry_get(entry, :executable)
 
@@ -305,6 +322,14 @@ defmodule ReyCode.Diagnostics do
       opencode_open_files: config.open_code.open_files,
       opencode_text_chunk_bytes: config.open_code.text_chunk_bytes,
       opencode_text_chunk_latency_ms: config.open_code.text_chunk_latency_ms,
+      omp_cpu_seconds: config.omp.cpu_seconds,
+      omp_max_diagnostic_bytes: config.omp.max_diagnostic_bytes,
+      omp_max_output_bytes: config.omp.max_output_bytes,
+      omp_max_prompt_bytes: config.omp.max_prompt_bytes,
+      omp_open_files: config.omp.open_files,
+      omp_text_chunk_bytes: config.omp.text_chunk_bytes,
+      omp_text_chunk_latency_ms: config.omp.text_chunk_latency_ms,
+      omp_discovery_output_bytes: config.omp.discovery_output_bytes,
       projection_checkpoint_interval: config.persistence.checkpoint_interval,
       provider_discovery_command_timeout_ms: config.providers.discovery_command_timeout_ms,
       provider_discovery_output_bytes: config.providers.discovery_output_bytes,

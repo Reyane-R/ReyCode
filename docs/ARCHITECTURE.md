@@ -386,6 +386,7 @@ owns the logic.
 ```
 lib/rey_code/provider.ex              ← behaviour (interface)
 lib/rey_code/provider/open_code.ex    ← OpenCode CLI adapter
+lib/rey_code/provider/omp.ex          ← OMP RPC CLI adapter
 lib/rey_code/provider/open_ai_compatible.ex ← HTTP API adapter
 lib/rey_code/provider/simulator.ex    ← Test-only deterministic provider
 lib/rey_code/provider/catalog.ex      ← Discovery, readiness, runtime resolution
@@ -397,6 +398,8 @@ implements it:
 - **OpenCode** runs the `opencode` CLI as a subprocess, parses its NDJSON
   output, and emits frames. This is the legacy `provider_managed_tools` mode
   — OpenCode executes tools itself.
+- **OMP** runs the `omp` CLI in RPC mode, parses JSONL assistant events, and
+  emits normalized text frames. OMP executes its own coding-agent tools.
 - **OpenAI-compatible** makes HTTP streaming requests to chat completion APIs,
   assembles normalized tool calls from SSE chunks, and returns a `Response`.
 - **Simulator** returns deterministic responses for testing. It can inject

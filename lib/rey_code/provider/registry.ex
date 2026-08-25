@@ -7,7 +7,7 @@ defmodule ReyCode.Provider.Registry do
   they are not live providers.
   """
 
-  alias ReyCode.Provider.{OpenAICompatible, OpenCode}
+  alias ReyCode.Provider.{OMP, OpenAICompatible, OpenCode}
   alias ReyCode.Provider.OpenAICompatible.Profile
   alias ReyCode.RuntimeConfig
 
@@ -82,6 +82,12 @@ defmodule ReyCode.Provider.Registry do
         name: "OpenCode",
         description: "CLI runtime",
         module: OpenCode
+      },
+      %{
+        id: :omp,
+        name: "OMP",
+        description: "CLI runtime",
+        module: OMP
       }
       | Enum.map(api_profiles(config), fn profile ->
           %{

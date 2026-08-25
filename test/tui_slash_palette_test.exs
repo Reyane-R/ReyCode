@@ -44,6 +44,20 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert result.assigns.drafts["room-1"] == ""
   end
 
+  test "direct help command opens the transient capability modal" do
+    direct_term =
+      term()
+      |> put_in([Access.key(:assigns), :modal], nil)
+      |> put_in([Access.key(:assigns), :slash], nil)
+
+    assert {:noreply, result} =
+             ReyCode.TUI.handle_event("prompt_submitted", %{value: "/help"}, direct_term)
+
+    assert result.assigns.modal == :help
+    assert result.assigns.slash == nil
+    assert result.assigns.drafts["room-1"] == ""
+  end
+
   test "open/1 preserves the room draft and focuses the prompt" do
     result = SlashPalette.open(term(draft: "keep me"))
 

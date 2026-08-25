@@ -102,6 +102,7 @@ different models without automatically multiplying token cost.
 - `Enter` or `Ctrl+S`: send the current draft
 
 - `/` or `Ctrl+P`: open the command palette (fuzzy: `/res` finds `/resume`)
+- `/help`: open the deterministic capability reference without invoking a provider
 - `/new` or `Ctrl+N`: start a clean Session
 - `/resume`: pick and reopen a previous Session
 - `/home`: return to the session home
@@ -231,24 +232,33 @@ Each command batch is written as one SQLite transaction. Versioned, checksummed
  ignores an incomplete final record without modifying the preserved source.
  Complete malformed records fail loudly.
 
-## OpenCode
+## OpenCode and OMP
 
-OpenCode is one provider behind the `ReyCode.Provider` behaviour. Press `Ctrl+G`
-or submit `/connect` or `/models` to configure one agent or every agent in the
-current Session. ReyCode reports whether OpenCode is installed, checking,
-configured, or missing rather than treating process presence as an online state.
+OpenCode and OMP are CLI providers behind the `ReyCode.Provider` behaviour.
+Press `Ctrl+G` or submit `/connect` or `/models` to configure one agent or
+every agent in the current Session. ReyCode reports whether each CLI is
+installed, checking, configured, or missing rather than treating process
+presence as an online state.
 
-If OpenCode has no available models, authenticate in another terminal and press
+If a CLI has no available models, authenticate in another terminal and press
 `R` in the configuration screen:
 
 ```sh
 opencode auth login
+# OMP credentials use OMP's own login/configuration flow.
 ```
 
-OpenCode's own credential store remains authoritative. API keys are never copied
-into ReyCode's append-only event log. The OpenCode stdio adapter provides legacy
-provider-managed tool execution; a serve/permission adapter is deferred to a
-separate project.
+Set explicit executable paths when the CLI is not on `PATH`:
+
+```sh
+export REYCODE_OPENCODE_PATH=/path/to/opencode
+export REYCODE_OMP_PATH=/path/to/omp
+```
+
+Each CLI keeps its own credential store authoritative. API keys are never
+copied into ReyCode's append-only event log. The adapters stream one bounded
+provider round and retain legacy provider-managed tool execution; ReyCode
+continues to own orchestration, durability, and approvals.
 
 ## API providers
 
@@ -406,7 +416,7 @@ which keeps clean-code complexity from drifting: functions scoring above 30
 must shrink or gain tests, existing offenders may never worsen, and new
 offenders fail the build. Legacy offenders are pinned in a committed ratchet
 baseline (`quality/crap-baseline.json`):
-
+z
 ```sh
 MIX_ENV=test mix quality.crap --lcov cover/lcov.info --baseline quality/crap-baseline.json
 MIX_ENV=test mix quality.crap --write-baseline   # regenerate after improvements only

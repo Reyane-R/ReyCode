@@ -125,12 +125,41 @@ defmodule ReyCode.TUI.State do
   defp usage_tokens(nil), do: 0
 
   defp usage_tokens(usage) when is_map(usage) do
-    Map.get(usage, "total_tokens") ||
-      Map.get(usage, "tokens") ||
-      Map.get(usage, "prompt_tokens", 0) + Map.get(usage, "completion_tokens", 0)
+    tokens = usage_value(usage, :tokens)
+
+    cond do
+      is_number(usage_number(usage, :total_tokens)) -> usage_number(usage, :total_tokens)
+      is_number(tokens) -> tokens
+      is_map(tokens) -> nested_token_total(tokens)
+      true -> split_token_total(usage)
+    end
+    |> trunc()
   end
 
   defp usage_tokens(_other), do: 0
+
+  defp nested_token_total(tokens) do
+    usage_number(tokens, :total) ||
+      (usage_number(tokens, :input) || 0) + (usage_number(tokens, :output) || 0)
+  end
+
+  defp split_token_total(usage) do
+    prompt = usage_number(usage, :prompt_tokens) || usage_number(usage, :input_tokens) || 0
+
+    completion =
+      usage_number(usage, :completion_tokens) || usage_number(usage, :output_tokens) || 0
+
+    prompt + completion
+  end
+
+  defp usage_number(usage, key) do
+    case usage_value(usage, key) do
+      value when is_number(value) -> value
+      _other -> nil
+    end
+  end
+
+  defp usage_value(usage, key), do: Map.get(usage, key, Map.get(usage, Atom.to_string(key)))
 
   defp format_tokens(value) when value >= 1_000 do
     text = :erlang.float_to_binary(value / 1_000.0, [{:decimals, 1}])

@@ -34,6 +34,13 @@ defmodule ReyCode.DoctorMixTaskTest do
       executable: "/usr/bin/opencode",
       version: "2.0.0"
     },
+    omp: %{
+      status: :missing,
+      ready: false,
+      installed: false,
+      executable: nil,
+      version: nil
+    },
     api_providers: [
       %{
         id: :deepseek,

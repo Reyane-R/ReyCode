@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.OpenCode.Prompt do
   @moduledoc "Builds the OpenCode prompt from a normalized request."
 
+  alias ReyCode.Capabilities
   alias ReyCode.Provider.{Message, Request}
 
   @spec build(Request.t()) :: binary()
@@ -12,6 +13,7 @@ defmodule ReyCode.Provider.OpenCode.Prompt do
 
     [
       request.system_prompt,
+      Capabilities.prompt_hint(),
       "You are responding as #{request.participant.name} with the perspective: #{request.participant.perspective}.",
       "Conversation context:\n#{history}",
       "Respond to the latest user request."

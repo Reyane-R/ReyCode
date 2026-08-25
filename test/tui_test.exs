@@ -314,7 +314,7 @@ defmodule ReyCode.TUITest do
 
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
     assert Breeze.Test.render!(session) =~ "Provider discovery is disabled"
-
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
     assert Breeze.Test.render!(session) =~ "DEEPSEEK_API_KEY"
   end
@@ -388,6 +388,54 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Tool · read"
     assert screen =~ "hello.txt"
     assert screen =~ "ok"
+  end
+
+  test "renders nested provider usage totals" do
+    session = start_session({120, 32})
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+
+    projection =
+      long_response_projection(session_id)
+      |> put_in(
+        [:invocations, "inv-layout", :usage],
+        %{
+          "tokens" => %{
+            "cache" => %{"read" => 0, "write" => 0},
+            "input" => 16_539,
+            "output" => 8,
+            "reasoning" => 47,
+            "total" => 16_594
+          }
+        }
+      )
+
+    assert {:noreply, _focused} = Breeze.Test.info(session, {:projection_snapshot, projection})
+    type(session, "/resume")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert plain(Breeze.Test.render!(session)) =~ "16.6k/200k"
+
+    split_projection =
+      put_in(
+        projection,
+        [:invocations, "inv-layout", :usage],
+        %{"tokens" => %{"input" => 100, "output" => 5}}
+      )
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(session, {:projection_snapshot, split_projection})
+
+    assert plain(Breeze.Test.render!(session)) =~ "105/200k"
+
+    total_projection =
+      put_in(split_projection, [:invocations, "inv-layout", :usage], %{"total_tokens" => 42})
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(session, {:projection_snapshot, total_projection})
+
+    assert plain(Breeze.Test.render!(session)) =~ "42/200k"
   end
 
   test "@path attaches file content into the posted message body" do
@@ -485,6 +533,35 @@ defmodule ReyCode.TUITest do
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
     screen = Breeze.Test.render!(session)
     refute screen =~ "ReyCode commands"
+  end
+
+  test "opens the deterministic capability help modal" do
+    session = start_session({120, 32})
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    providers = %{
+      configured: %{name: "Configured", status: :configured, models: ["model"]},
+      available: %{name: "Available", status: :available, models: []},
+      checking: %{name: "Checking", status: :checking, models: []},
+      missing: %{name: "Missing", status: :missing, models: []},
+      unchecked: %{name: "Unchecked", status: :unchecked, models: []},
+      error: %{name: "Error", status: :error, models: []},
+      binary: %{name: "Binary", status: "ready", models: []},
+      unknown: %{name: "Unknown", status: :other, models: []}
+    }
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(session, {:provider_catalog_updated, providers})
+
+    type(session, "/help")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+
+    screen = Breeze.Test.render!(session) |> plain()
+    assert screen =~ "What ReyCode can do"
+    assert screen =~ "Durable conversations scoped to one workspace"
+    assert screen =~ "Providers now"
+    assert screen =~ "OMP"
+    assert screen =~ "Type / for commands"
   end
 
   defp start_isolated_stack(config_overrides) do

@@ -76,6 +76,39 @@ defmodule ReyCode.RuntimeConfig.OpenCode do
         }
 end
 
+defmodule ReyCode.RuntimeConfig.OMP do
+  @moduledoc "OMP process, resource, and streaming policy."
+
+  @enforce_keys [
+    :path,
+    :provider_timeout_ms,
+    :max_prompt_bytes,
+    :max_output_bytes,
+    :max_diagnostic_bytes,
+    :text_chunk_bytes,
+    :text_chunk_latency_ms,
+    :cpu_seconds,
+    :open_files,
+    :env_allowlist,
+    :discovery_output_bytes
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          path: String.t() | nil,
+          provider_timeout_ms: pos_integer(),
+          max_prompt_bytes: pos_integer(),
+          max_output_bytes: pos_integer(),
+          max_diagnostic_bytes: pos_integer(),
+          text_chunk_bytes: pos_integer(),
+          text_chunk_latency_ms: non_neg_integer(),
+          cpu_seconds: pos_integer(),
+          open_files: pos_integer(),
+          env_allowlist: [String.t()],
+          discovery_output_bytes: pos_integer()
+        }
+end
+
 defmodule ReyCode.RuntimeConfig.OpenAICompatible do
   @moduledoc "OpenAI-compatible profiles, transport, endpoints, and chunking policy."
 

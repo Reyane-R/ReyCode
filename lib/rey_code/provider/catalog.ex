@@ -12,8 +12,8 @@ defmodule ReyCode.Provider.Catalog do
 
   use GenServer
 
+  alias ReyCode.Provider.{OMP, Runtime}
   alias ReyCode.Provider.Registry, as: ProviderRegistry
-  alias ReyCode.Provider.Runtime
   alias ReyCode.RuntimeConfig
 
   @refresh_interval :timer.minutes(5)
@@ -59,6 +59,7 @@ defmodule ReyCode.Provider.Catalog do
     config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
     profiles = ProviderRegistry.api_profiles(config)
     opencode_module = ProviderRegistry.descriptor(:opencode, config).module
+    omp_module = ProviderRegistry.descriptor(:omp, config).module
 
     providers =
       ProviderRegistry.descriptors(config)
@@ -75,6 +76,14 @@ defmodule ReyCode.Provider.Catalog do
       discover:
         Keyword.get(opts, :discover, fn ->
           opencode_module.discover(open_code: config.open_code, providers: config.providers)
+        end),
+      omp_discover:
+        Keyword.get_lazy(opts, :omp_discover, fn ->
+          if Keyword.has_key?(opts, :discover) do
+            fn -> {:error, :missing_executable} end
+          else
+            fn -> omp_module.discover(omp: config.omp, providers: config.providers) end
+          end
         end),
       api_discover:
         Keyword.get(opts, :api_discover, fn -> discover_api_profiles(profiles, config.open_ai) end),
@@ -128,10 +137,12 @@ defmodule ReyCode.Provider.Catalog do
     Process.demonitor(ref, [:flush])
 
     opencode_entry = normalize_open_code(result[:opencode])
+    omp_entry = normalize_omp(result[:omp])
 
     providers =
       state.providers
       |> put_in([:opencode], opencode_entry)
+      |> put_in([:omp], omp_entry)
       |> merge_api_results(result[:api] || %{}, state.config)
 
     delay =
@@ -174,11 +185,12 @@ defmodule ReyCode.Provider.Catalog do
 
   defp start_probe(state) do
     discover = state.discover
+    omp_discover = state.omp_discover
     api_discover = state.api_discover
 
     task =
       Task.Supervisor.async_nolink(state.task_supervisor, fn ->
-        %{opencode: discover.(), api: api_discover.()}
+        %{opencode: discover.(), omp: omp_discover.(), api: api_discover.()}
       end)
 
     timer = Process.send_after(self(), {:probe_timeout, task.ref}, state.probe_timeout)
@@ -271,6 +283,46 @@ defmodule ReyCode.Provider.Catalog do
 
   defp normalize_open_code(other), do: normalize_open_code({:error, inspect(other)})
 
+  defp normalize_omp({:ok, discovery}) do
+    status = if(discovery.models == [], do: :available, else: :configured)
+    descriptor = ProviderRegistry.descriptor(:omp)
+
+    %{
+      id: descriptor.id,
+      name: descriptor.name,
+      description: descriptor.description,
+      module: descriptor.module,
+      status: status,
+      version: discovery.version,
+      executable: discovery.executable,
+      executable_identity: Map.get(discovery, :executable_identity),
+      credential_count: discovery.credential_count,
+      models: discovery.models,
+      error: nil,
+      checked_at: DateTime.utc_now()
+    }
+  end
+
+  defp normalize_omp({:error, :missing_executable}) do
+    %{
+      pending_omp()
+      | status: :missing,
+        error: "omp executable not found",
+        checked_at: DateTime.utc_now()
+    }
+  end
+
+  defp normalize_omp({:error, reason}) do
+    %{
+      pending_omp()
+      | status: :error,
+        error: format_reason(reason),
+        checked_at: DateTime.utc_now()
+    }
+  end
+
+  defp normalize_omp(other), do: normalize_omp({:error, inspect(other)})
+
   defp normalize_api_result(id, {:ok, discovery}, config) do
     case ProviderRegistry.descriptor(id, config) do
       %{id: :opencode} -> nil
@@ -322,6 +374,10 @@ defmodule ReyCode.Provider.Catalog do
 
   defp pending_open_code do
     ProviderRegistry.descriptor(:opencode) |> pending_provider()
+  end
+
+  defp pending_omp do
+    ProviderRegistry.descriptor(:omp) |> pending_provider()
   end
 
   defp update_status(state, status) do
@@ -424,9 +480,6 @@ defmodule ReyCode.Provider.Catalog do
         module: ReyCode.Provider.Simulator,
         status: :configured,
         version: "test only",
-        credential_count: 0,
-        models: [],
-        error: nil,
         checked_at: DateTime.utc_now()
       })
     else
@@ -436,6 +489,7 @@ defmodule ReyCode.Provider.Catalog do
 
   defp runtime_policy(ReyCode.Provider.OpenCode, config), do: config.open_code
   defp runtime_policy(ReyCode.Provider.OpenAICompatible, config), do: config.open_ai
+  defp runtime_policy(OMP, config), do: config.omp
 
   defp runtime_policy(ReyCode.Provider.Simulator, config),
     do: RuntimeConfig.simulator_policy(config)
