@@ -42,6 +42,46 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     assert replayed.turns[turn_id] == snapshot.turns[turn_id]
   end
 
+  test "malformed provider output fails durably without restarting the engine" do
+    %{engine: engine, store: store} =
+      start_isolated_engine(
+        simulator_opts: [
+          delay_ms: 0,
+          seed: 123,
+          failure_plan: %{{"stories", "analyst", 1} => :invalid_output}
+        ]
+      )
+
+    room_id = configure_squad(engine)
+    engine_pid = Process.whereis(engine)
+    monitor = Process.monitor(engine_pid)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Deliver with one bad envelope", :squad, engine)
+
+    turn = wait_until_terminal(turn_id, engine)
+
+    snapshot = Engine.snapshot(engine)
+
+    analyst_invocations =
+      Enum.filter(turn.invocation_order, fn id ->
+        match?(%{participant: %{id: "analyst"}}, snapshot.invocations[id])
+      end)
+
+    assert [_failed | _retried] = Enum.map(analyst_invocations, &snapshot.invocations[&1])
+
+    [failed_analyst | _rest] = Enum.map(analyst_invocations, &snapshot.invocations[&1])
+    assert failed_analyst.status == :failed
+
+    assert %ReyCode.Failure{category: :invalid_squad_output} = failed_analyst.error
+
+    # The Engine survived the malformed envelope.
+    refute_receive {:DOWN, ^monitor, :process, ^engine_pid, _reason}
+
+    replayed = EventStore.load(store) |> Projector.replay()
+    assert replayed.turns[turn_id] == snapshot.turns[turn_id]
+  end
+
   test "leader rework returns to senior integration and completes" do
     %{engine: engine, store: store} =
       start_isolated_engine(simulator_opts: [delay_ms: 0, seed: 456, leader_rework_rounds: 1])
