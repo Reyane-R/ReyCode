@@ -127,6 +127,8 @@ defmodule ReyCode.EventStore do
     case SQLite.append_many(state, entries, opts) do
       {:ok, events, next} -> {:reply, {:ok, events}, next}
       {:error, reason, next} -> {:reply, {:error, reason}, next}
+      # Entry validation rejects before any transaction opens.
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 

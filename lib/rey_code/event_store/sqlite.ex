@@ -109,12 +109,16 @@ defmodule ReyCode.EventStore.SQLite do
   end
 
   def append_many(state, entries, opts) do
-    transaction_id = Keyword.get_lazy(opts, :transaction_id, &Sql.transaction_id/0)
-    expected_sequence = Keyword.get(opts, :expected_sequence, state.sequence)
+    # Malformed payloads fail closed before the durable boundary: no
+    # transaction opens and no row is written when any entry is invalid.
+    with :ok <- Event.validate_entries(entries) do
+      transaction_id = Keyword.get_lazy(opts, :transaction_id, &Sql.transaction_id/0)
+      expected_sequence = Keyword.get(opts, :expected_sequence, state.sequence)
 
-    case transaction_events(state.connection, transaction_id) do
-      [] -> commit_entries(state, entries, transaction_id, expected_sequence)
-      events -> {:ok, events, state}
+      case transaction_events(state.connection, transaction_id) do
+        [] -> commit_entries(state, entries, transaction_id, expected_sequence)
+        events -> {:ok, events, state}
+      end
     end
   end
 

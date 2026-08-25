@@ -46,15 +46,15 @@ defmodule Quality.ProjectInvariantsTest do
              QualityScanner.format_matches(matches)
   end
 
-  test "every event type has required-data validation" do
+  test "every event type has a payload contract" do
     alias ReyCode.Event
 
     missing =
       Enum.reject(Event.types(), fn type ->
-        Event.required_data_keys(type) != nil
+        match?(%{required: %{}}, Event.contract(type))
       end)
 
     assert missing == [],
-           "Event types without required-data validation: #{inspect(missing)}"
+           "Event types without payload contracts: #{inspect(missing)}"
   end
 end
