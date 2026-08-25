@@ -23,7 +23,7 @@ defmodule ReyCode.Provider.CatalogTest do
     )
 
     providers = Catalog.snapshot(@catalog)
-    assert MapSet.new(Map.keys(providers)) == MapSet.new([:opencode, :deepseek])
+    assert MapSet.new(Map.keys(providers)) == MapSet.new([:opencode, :omp, :deepseek])
     refute Map.has_key?(providers, :demo)
     refute Map.has_key?(providers, :simulator)
   end
@@ -77,6 +77,61 @@ defmodule ReyCode.Provider.CatalogTest do
             }} = Catalog.resolve(:opencode, "openai/gpt-5.6-sol", @catalog)
 
     assert {:error, :model_unavailable} = Catalog.resolve(:opencode, "openai/missing", @catalog)
+  end
+
+  test "publishes discovered OMP models and resolves the adapter" do
+    start_supervised!({Registry, keys: :duplicate, name: @registry})
+    start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+    config = RuntimeConfig.fresh()
+
+    start_supervised!(
+      {Catalog,
+       name: @catalog,
+       registry: @registry,
+       task_supervisor: @task_supervisor,
+       config: config,
+       discover: fn -> {:error, :missing_executable} end,
+       omp_discover: fn ->
+         {:ok,
+          %{
+            executable: "/usr/local/bin/omp",
+            version: "18.0.3",
+            credential_count: 1,
+            models: ["openai/gpt-5"]
+          }}
+       end,
+       api_discover: fn -> %{} end,
+       discovery?: true,
+       refresh_interval: 10_000}
+    )
+
+    assert wait_until_omp_status(@catalog, :configured)
+
+    assert {:ok, %Runtime{module: ReyCode.Provider.OMP, config: omp_policy}} =
+             Catalog.resolve(:omp, "openai/gpt-5", @catalog)
+
+    assert omp_policy == config.omp
+  end
+
+  test "publishes OMP discovery failures without crashing the catalog" do
+    start_supervised!({Registry, keys: :duplicate, name: @registry})
+    start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+    start_supervised!(
+      {Catalog,
+       name: @catalog,
+       registry: @registry,
+       task_supervisor: @task_supervisor,
+       discover: fn -> {:error, :missing_executable} end,
+       omp_discover: fn -> {:error, :missing_executable} end,
+       api_discover: fn -> %{} end,
+       discovery?: true,
+       refresh_interval: 10_000}
+    )
+
+    assert wait_until_omp_status(@catalog, :missing)
+    assert Catalog.snapshot(@catalog).omp.error == "omp executable not found"
   end
 
   test "runs only one probe across repeated manual refreshes" do
@@ -267,6 +322,26 @@ defmodule ReyCode.Provider.CatalogTest do
     assert {:error, :available} = Catalog.resolve(:deepseek, "deepseek-chat", @catalog)
   end
 
+  test "normalizes unexpected OMP discovery results as errors" do
+    start_supervised!({Registry, keys: :duplicate, name: @registry})
+    start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+    start_supervised!(
+      {Catalog,
+       name: @catalog,
+       registry: @registry,
+       task_supervisor: @task_supervisor,
+       discover: fn -> {:error, :missing_executable} end,
+       omp_discover: fn -> :unexpected end,
+       api_discover: fn -> %{} end,
+       discovery?: true,
+       refresh_interval: 10_000}
+    )
+
+    assert wait_until_omp_status(@catalog, :error)
+    assert Catalog.snapshot(@catalog).omp.error == ":unexpected"
+  end
+
   defp wait_until_deepseek_configured(catalog),
     do: wait_until_deepseek_status(catalog, :configured)
 
@@ -276,6 +351,10 @@ defmodule ReyCode.Provider.CatalogTest do
       fn providers -> match?(%{status: ^status}, providers[:deepseek]) end,
       attempts * 10
     )
+  end
+
+  defp wait_until_omp_status(catalog, status, attempts \\ 100) do
+    Wait.catalog(catalog, &(&1.omp.status == status), attempts * 10)
   end
 
   defp wait_until_configured(catalog, attempts \\ 100) do

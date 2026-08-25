@@ -20,12 +20,14 @@ defmodule ReyCode.Provider.RegistryTest do
 
     assert Registry.live_provider_ids(config: cfg, allow_simulator?: false) == [
              :opencode,
+             :omp,
              :deepseek,
              :local_api
            ]
 
     assert Registry.live_provider_ids(config: cfg, allow_simulator?: true) == [
              :opencode,
+             :omp,
              :deepseek,
              :local_api,
              :simulator
@@ -33,6 +35,7 @@ defmodule ReyCode.Provider.RegistryTest do
 
     assert Enum.map(Registry.descriptors(cfg), &Map.take(&1, [:id, :name, :description])) == [
              %{id: :opencode, name: "OpenCode", description: "CLI runtime"},
+             %{id: :omp, name: "OMP", description: "CLI runtime"},
              %{
                id: :deepseek,
                name: "DeepSeek",

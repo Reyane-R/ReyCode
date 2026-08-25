@@ -2,7 +2,7 @@ defmodule ReyCode.Provider.Runtime do
   @moduledoc "A discovered provider runtime used for a specific invocation."
 
   alias ReyCode.Hashing
-  alias ReyCode.RuntimeConfig.{OpenAICompatible, OpenCode, Simulator, Workspace}
+  alias ReyCode.RuntimeConfig.{OMP, OpenAICompatible, OpenCode, Simulator, Workspace}
   alias ReyCode.Security.CanonicalPath
 
   @type status :: :available | :checking | :configured | :error | :missing | :unchecked
@@ -33,7 +33,7 @@ defmodule ReyCode.Provider.Runtime do
           executable: binary() | nil,
           executable_identity: executable_identity() | nil,
           version: binary() | nil,
-          config: OpenCode.t() | OpenAICompatible.t() | Simulator.t() | nil,
+          config: OMP.t() | OpenCode.t() | OpenAICompatible.t() | Simulator.t() | nil,
           workspace_policy: Workspace.t() | nil,
           models: [binary()],
           status: status()

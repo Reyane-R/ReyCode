@@ -31,6 +31,17 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:opencode_cpu_seconds, fn -> 900 end, {:integer, 1}},
       {:opencode_open_files, fn -> 1_024 end, {:integer, 1}},
       {:opencode_env_allowlist, fn -> [] end, {:list_of, :binary}},
+      # OMP execution policy
+      {:omp_path, fn -> nil end, :optional_string},
+      {:omp_max_prompt_bytes, fn -> 128_000 end, {:integer, 1}},
+      {:omp_max_output_bytes, fn -> 10_000_000 end, {:integer, 1}},
+      {:omp_max_diagnostic_bytes, fn -> 64_000 end, {:integer, 1}},
+      {:omp_text_chunk_bytes, fn -> 8_192 end, {:integer, 1}},
+      {:omp_text_chunk_latency_ms, fn -> 50 end, {:integer, 0}},
+      {:omp_cpu_seconds, fn -> 900 end, {:integer, 1}},
+      {:omp_open_files, fn -> 1_024 end, {:integer, 1}},
+      {:omp_env_allowlist, fn -> [] end, {:list_of, :binary}},
+      {:omp_discovery_output_bytes, fn -> 1_048_576 end, {:integer, 1}},
       # OpenAI-compatible streaming policy
       {:openai_compatible_chunk_bytes, fn -> 8_192 end, {:integer, 1}},
       {:openai_compatible_chunk_latency_ms, fn -> 50 end, {:integer, 0}},

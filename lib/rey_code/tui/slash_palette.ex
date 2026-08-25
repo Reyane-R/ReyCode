@@ -5,12 +5,14 @@ defmodule ReyCode.TUI.SlashPalette do
   """
 
   alias Breeze.{Component, View}
+  alias ReyCode.Capabilities
   alias ReyCode.TUI.State
 
   alias ReyCode.TUI.{
     AgentProfile,
     Cancellation,
     Delegation,
+    Help,
     ModelPicker,
     SessionPicker,
     Settings,
@@ -18,21 +20,7 @@ defmodule ReyCode.TUI.SlashPalette do
     Workspace
   }
 
-  @commands [
-    %{command: "/agent", description: "Create a task agent", action: :agent_profile},
-    %{command: "/agents", description: "Configure agent models", action: :settings},
-    %{command: "/cancel", description: "Cancel the current task", action: :cancel},
-    %{command: "/connect", description: "Connect a provider", action: :settings},
-    %{command: "/home", description: "Open the session home", action: :home},
-    %{command: "/model", description: "Switch the Assistant model", action: :model_picker},
-    %{command: "/new", description: "Start a clean session", action: :new_session},
-    %{command: "/quit", description: "Quit ReyCode", action: :quit},
-    %{command: "/resume", description: "Resume a previous session", action: :session_picker},
-    %{command: "/task", description: "Delegate to one task agent", action: :delegation},
-    %{command: "/theme", description: "Change theme", action: :theme},
-    %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
-    %{command: "/workspace", description: "Show the workspace path", action: :workspace}
-  ]
+  @commands Capabilities.commands()
 
   @doc "Completes the palette query when Tab is pressed while it is open."
   @spec focus(map()) :: map()
@@ -273,6 +261,8 @@ defmodule ReyCode.TUI.SlashPalette do
   defp run_action(term, :theme), do: ReyCode.TUI.cycle_theme(nil, close(term))
   defp run_action(term, :quit), do: ReyCode.TUI.quit(nil, clear(term))
   defp run_action(term, :tool_review), do: {:noreply, ToolReview.open(term)}
+
+  defp run_action(term, :help), do: {:noreply, term |> Help.open() |> clear()}
 
   defp fuzzy_rank(command, query) do
     cond do

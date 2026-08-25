@@ -1,11 +1,6 @@
 defmodule ReyCode.Provider.OpenAICompatible do
   @moduledoc """
-  A streaming provider for OpenAI-compatible chat completion APIs.
-
-  Each profile (DeepSeek by default) is described by a base URL and an
-  environment variable that holds the API key. The key is read from the
-  environment at invocation time and is never persisted in events or in the
-  catalog snapshot.
+  Streams OpenAI-compatible chat completion APIs.
 
   Each `stream/3` call performs exactly one model round: it emits streaming
   text frames and returns the round's normalized response, including any tool
@@ -13,6 +8,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   the accumulated tool results through the request conversation.
   """
 
+  alias ReyCode.Capabilities
   alias ReyCode.Failure
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, Stream}
@@ -156,6 +152,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
     system =
       [
         request.system_prompt,
+        Capabilities.prompt_hint(),
         "You are responding as #{request.participant.name} with the perspective: #{request.participant.perspective}.",
         "Respond to the latest user request."
       ]
