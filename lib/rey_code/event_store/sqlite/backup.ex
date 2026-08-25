@@ -44,33 +44,119 @@ defmodule ReyCode.EventStore.SQLite.Backup do
   @spec backup(term(), pos_integer(), Path.t()) :: {:ok, map()} | {:error, term()}
   def backup(connection, sequence, destination) do
     destination = Path.expand(destination)
+    manifest_path = destination <> ".manifest.json"
+
+    case classify_destination(destination, manifest_path) do
+      :free ->
+        run_backup(connection, sequence, destination, false)
+
+      :committed ->
+        {:error, :destination_exists}
+
+      # Only files shaped like our own interrupted artifact are recoverable
+      # residue; anything else belongs to its owner and stays untouched.
+      :uncommitted_residue ->
+        if sqlite_store?(destination) do
+          _ = File.rm(destination)
+          run_backup(connection, sequence, destination, true)
+        else
+          {:error, :destination_exists}
+        end
+    end
+  end
+
+  # The manifest is the commit boundary: a backup is committed only when the
+  # database bytes hash to the digest recorded in its sidecar manifest.
+  defp classify_destination(destination, manifest_path) do
+    cond do
+      not File.exists?(destination) ->
+        :free
+
+      committed?(destination, manifest_path) ->
+        :committed
+
+      true ->
+        :uncommitted_residue
+    end
+  end
+
+  defp committed?(destination, manifest_path) do
+    with {:ok, payload} <- File.read(manifest_path),
+         {:ok, manifest} <- Jason.decode(payload),
+         expected when is_binary(expected) <- manifest["sha256"],
+         {:ok, actual} <- Hashing.file_sha256_hex(destination) do
+      expected == actual
+    else
+      _other -> false
+    end
+  end
+
+  @sqlite_magic "SQLite format 3"
+
+  defp sqlite_store?(destination) do
+    case File.open(destination, [:read, :binary], fn device ->
+           IO.binread(device, byte_size(@sqlite_magic))
+         end) do
+      {:ok, @sqlite_magic <> _rest} -> true
+      _other -> false
+    end
+  end
+
+  defp run_backup(connection, sequence, destination, preexisting_destination?) do
     suffix = System.unique_integer([:positive])
     temporary_database = destination <> ".tmp-#{suffix}"
     manifest_path = destination <> ".manifest.json"
     temporary_manifest = manifest_path <> ".tmp-#{suffix}"
 
-    if File.exists?(destination) or File.exists?(manifest_path) do
-      {:error, :destination_exists}
-    else
-      result =
-        with :ok <- File.mkdir_p(Path.dirname(destination)),
-             :ok <- wal_checkpoint(connection),
-             :ok <- vacuum_into(connection, temporary_database),
-             :ok <- File.chmod(temporary_database, 0o600),
-             :ok <- verify_backup(temporary_database),
-             {:ok, manifest} <- manifest(temporary_database, destination, sequence),
-             :ok <- File.write(temporary_manifest, Jason.encode!(manifest, pretty: true)),
-             :ok <- File.chmod(temporary_manifest, 0o600),
-             :ok <-
-               publish_backup(temporary_database, destination, temporary_manifest, manifest_path) do
-          {:ok, Map.put(manifest, :manifest, manifest_path)}
-        end
-
-      if match?({:error, _reason}, result) do
-        Enum.each([temporary_database, temporary_manifest], &File.rm/1)
+    result =
+      with :ok <- File.mkdir_p(Path.dirname(destination)),
+           :ok <- wal_checkpoint(connection),
+           :ok <- vacuum_into(connection, temporary_database),
+           :ok <- File.chmod(temporary_database, 0o600),
+           :ok <- verify_backup(temporary_database),
+           {:ok, manifest} <- manifest(temporary_database, destination, sequence),
+           :ok <- File.write(temporary_manifest, Jason.encode!(manifest, pretty: true)),
+           :ok <- File.chmod(temporary_manifest, 0o600),
+           :ok <-
+             publish_backup(temporary_database, destination, temporary_manifest, manifest_path) do
+        {:ok, Map.put(manifest, :manifest, manifest_path)}
       end
 
-      result
+    case result do
+      {:ok, _manifest} ->
+        :ok
+
+      {:error, _reason} ->
+        cleanup_attempt(
+          destination,
+          manifest_path,
+          temporary_database,
+          temporary_manifest,
+          preexisting_destination?
+        )
+    end
+
+    result
+  end
+
+  # Every ordinary error removes the files this attempt created. The published
+  # database is removed only while uncommitted and only when no destination
+  # predated the call, so an owner's unrelated file is never destroyed.
+  defp cleanup_attempt(
+         destination,
+         manifest_path,
+         temporary_database,
+         temporary_manifest,
+         preexisting?
+       ) do
+    Enum.each([temporary_database, temporary_manifest], &File.rm/1)
+
+    if File.exists?(destination) and not preexisting? and
+         not committed?(destination, manifest_path) do
+      _ = File.rm(destination)
+      :ok
+    else
+      :ok
     end
   end
 
@@ -107,14 +193,10 @@ defmodule ReyCode.EventStore.SQLite.Backup do
     end
   end
 
-  defp publish_manifest(temporary_manifest, manifest_path, destination) do
+  defp publish_manifest(temporary_manifest, manifest_path, _destination) do
     case publish_file(temporary_manifest, manifest_path) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        File.rm(destination)
-        {:error, reason}
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
