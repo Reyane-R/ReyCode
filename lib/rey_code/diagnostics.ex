@@ -221,7 +221,7 @@ defmodule ReyCode.Diagnostics do
     wait_ms = Keyword.get(opts, :catalog_wait_ms, @default_catalog_wait_ms)
 
     if is_function(source, 0) do
-      read_catalog(source, System.monotonic_time(:millisecond) + wait_ms)
+      read_catalog(source, System.monotonic_time(:millisecond) + wait_ms).providers
     else
       source
     end
@@ -230,7 +230,8 @@ defmodule ReyCode.Diagnostics do
   defp read_catalog(source, deadline) do
     snapshot = safe_snapshot(source)
 
-    if discovery_checking?(snapshot) and System.monotonic_time(:millisecond) < deadline do
+    if discovery_checking?(snapshot.providers) and
+         System.monotonic_time(:millisecond) < deadline do
       Process.sleep(50)
       read_catalog(source, deadline)
     else

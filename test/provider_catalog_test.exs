@@ -2,6 +2,7 @@ defmodule ReyCode.Provider.CatalogTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Provider.{Catalog, Runtime}
+  alias ReyCode.Provider.Catalog.Snapshot
   alias ReyCode.RuntimeConfig
   alias ReyCode.Test.Wait
 
@@ -22,7 +23,7 @@ defmodule ReyCode.Provider.CatalogTest do
        allow_simulator?: false}
     )
 
-    providers = Catalog.snapshot(@catalog)
+    providers = Catalog.snapshot(@catalog).providers
     assert MapSet.new(Map.keys(providers)) == MapSet.new([:opencode, :omp, :deepseek])
     refute Map.has_key?(providers, :demo)
     refute Map.has_key?(providers, :simulator)
@@ -131,7 +132,7 @@ defmodule ReyCode.Provider.CatalogTest do
     )
 
     assert wait_until_omp_status(@catalog, :missing)
-    assert Catalog.snapshot(@catalog).omp.error == "omp executable not found"
+    assert Catalog.snapshot(@catalog).providers.omp.error == "omp executable not found"
   end
 
   test "runs only one probe across repeated manual refreshes" do
@@ -180,7 +181,7 @@ defmodule ReyCode.Provider.CatalogTest do
 
     assert_receive {:probe_started, first_probe}
     assert wait_until_status(@catalog, :error)
-    assert Catalog.snapshot(@catalog).opencode.error == "provider discovery timed out"
+    assert Catalog.snapshot(@catalog).providers.opencode.error == "provider discovery timed out"
     assert_receive {:probe_started, second_probe}, 250
     refute first_probe == second_probe
     GenServer.stop(@catalog)
@@ -339,7 +340,7 @@ defmodule ReyCode.Provider.CatalogTest do
     )
 
     assert wait_until_omp_status(@catalog, :error)
-    assert Catalog.snapshot(@catalog).omp.error == ":unexpected"
+    assert Catalog.snapshot(@catalog).providers.omp.error == ":unexpected"
   end
 
   defp wait_until_deepseek_configured(catalog),
@@ -403,10 +404,11 @@ defmodule ReyCode.Provider.CatalogTest do
 
   defp receive_configured do
     receive do
-      {:provider_catalog_updated, %{opencode: %{status: :configured}} = providers} ->
+      {:provider_catalog_updated,
+       %Snapshot{providers: %{opencode: %{status: :configured}} = providers}} ->
         {:ok, providers}
 
-      {:provider_catalog_updated, _providers} ->
+      {:provider_catalog_updated, _snapshot} ->
         receive_configured()
     after
       1_000 -> :timeout

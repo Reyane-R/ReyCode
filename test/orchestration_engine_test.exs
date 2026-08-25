@@ -300,6 +300,10 @@ defmodule ReyCode.Orchestration.EngineTest do
     assert wait_for_engine(engine, old_engine)
 
     assert wait_until_terminal_on(engine, turn_id).outcome == :completed
+
+    # Recovery helpers consume queued snapshots while waiting, so prove the
+    # restarted engine still broadcasts by committing one more command.
+    assert {:ok, _room_id} = Engine.create_room("After recovery", System.tmp_dir!(), engine)
     assert receive_snapshot_after(baseline)
   end
 
