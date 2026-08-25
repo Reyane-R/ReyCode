@@ -154,14 +154,21 @@ defmodule ReyCode.SubscriptionMonotonicTest do
       start_supervised!({Registry, keys: :duplicate, name: registry})
       start_supervised!({Task.Supervisor, name: task_supervisor})
 
+      parent = self()
+
       discover = fn ->
-        {:ok,
-         %{
-           executable: "/bin/none",
-           version: "0",
-           models: [],
-           credential_count: 0
-         }}
+        send(parent, {:probe_started, self()})
+
+        receive do
+          :release ->
+            {:ok,
+             %{
+               executable: "/bin/none",
+               version: "0",
+               models: [],
+               credential_count: 0
+             }}
+        end
       end
 
       catalog =
@@ -174,23 +181,32 @@ defmodule ReyCode.SubscriptionMonotonicTest do
            discovery?: true}
         )
 
-      assert %Snapshot{generation: first} = Catalog.subscribe(catalog)
+      assert_receive {:probe_started, first_probe}, 500
 
-      # The initial probe finished before this test subscribed; a manual
-      # refresh deterministically produces two more generations.
-      Catalog.refresh(catalog)
+      # Subscribing registers this process and pins a baseline version.
+      assert %Snapshot{generation: _baseline} = Catalog.subscribe(catalog)
 
-      assert %{opencode: %{status: status}} =
-               Wait.catalog(catalog, fn providers ->
-                 case providers do
-                   %{opencode: %{status: status}} when status != :checking -> providers
-                   _other -> nil
-                 end
-               end)
+      # The in-flight round publishes its checking state as a new generation.
+      checking = next_broadcast()
+      assert checking.providers.opencode.status == :checking
 
-      assert status != :checking
-      assert %Snapshot{generation: later} = Catalog.snapshot(catalog)
-      assert later > first
+      send(first_probe, :release)
+
+      settled = next_broadcast()
+      assert settled.providers.opencode.status == :available
+      assert settled.generation > checking.generation
+
+      # The subscribed stream continues monotonically from its baseline.
+      assert %Snapshot{generation: current} = Catalog.snapshot(catalog)
+      assert current >= settled.generation
+    end
+  end
+
+  defp next_broadcast do
+    receive do
+      {:provider_catalog_updated, snapshot} -> snapshot
+    after
+      2_000 -> flunk("expected a catalog broadcast")
     end
   end
 

@@ -2,12 +2,17 @@ defmodule ReyCode.Provider.Catalog do
   @moduledoc """
   Discovers provider capabilities and resolves frozen ProviderRuntimes.
 
-  Discovery is transient, bounded, and retryable; it never enters durable
-  Projection state. Snapshot and immediate resolution use the default bounded
-  GenServer timeout. `resolve_when_ready/3` waits for the owned discovery task
-  and therefore uses an intentional infinite call timeout; task/probe policy
-  bounds the physical work. Missing, checking, unavailable, and invalid-model
-  states return stable tagged reasons.
+  Every provider and API profile is probed independently behind its own
+  supervised task and its own timeout: one hung or failing probe never
+  blocks or poisons unrelated providers. Results publish as soon as they
+  settle, tagged with their probe-round generation so results from
+  superseded rounds are ignored. Discovery is transient, bounded, and
+  retryable; it never enters durable Projection state.
+  `resolve_when_ready/3` replies when the requested provider settles rather
+  than when a whole refresh round ends, and therefore uses an intentional
+  infinite call timeout; task/probe policy bounds the physical work.
+  Missing, checking, unavailable, and invalid-model states return stable
+  tagged reasons.
   """
 
   use GenServer
@@ -90,27 +95,13 @@ defmodule ReyCode.Provider.Catalog do
       registry: Keyword.get(opts, :registry, ReyCode.EventRegistry),
       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
       config: config,
-      generation: 0,
       discovery?: Keyword.get(opts, :discovery?, config.providers.discovery?),
-      discover:
-        Keyword.get(opts, :discover, fn ->
-          opencode_module.discover(open_code: config.open_code, providers: config.providers)
-        end),
-      omp_discover:
-        Keyword.get_lazy(opts, :omp_discover, fn ->
-          if Keyword.has_key?(opts, :discover) do
-            fn -> {:error, :missing_executable} end
-          else
-            fn -> omp_module.discover(omp: config.omp, providers: config.providers) end
-          end
-        end),
-      api_discover:
-        Keyword.get(opts, :api_discover, fn -> discover_api_profiles(profiles, config.open_ai) end),
+      probe_targets: probe_targets(opts, profiles, opencode_module, omp_module, config),
       refresh_interval: Keyword.get(opts, :refresh_interval, @refresh_interval),
       retry_interval: Keyword.get(opts, :retry_interval, @retry_interval),
       probe_timeout: Keyword.get(opts, :probe_timeout, @probe_timeout),
-      task: nil,
-      probe_timer: nil,
+      generation: 0,
+      probes: %{},
       refresh_timer: nil,
       awaiters: []
     }
@@ -120,6 +111,46 @@ defmodule ReyCode.Provider.Catalog do
     else
       {:ok, update_status(state, :unchecked)}
     end
+  end
+
+  # One target per independent failure domain: executables, credentials, and
+  # transports fail separately, so each probe gets its own task and timeout.
+  # An injected `api_discover/0` (test seam) remains one fan-out target whose
+  # result map merges into every profile entry at once.
+  defp probe_targets(opts, profiles, opencode_module, omp_module, config) do
+    injected_discover? = Keyword.has_key?(opts, :discover)
+
+    opencode_fun =
+      Keyword.get(opts, :discover) ||
+        fn ->
+          opencode_module.discover(open_code: config.open_code, providers: config.providers)
+        end
+
+    omp_fun =
+      Keyword.get(opts, :omp_discover) ||
+        if injected_discover?,
+          do: fn -> {:error, :missing_executable} end,
+          else: fn -> omp_module.discover(omp: config.omp, providers: config.providers) end
+
+    base_targets = [
+      {:opencode, opencode_fun},
+      {:omp, omp_fun}
+    ]
+
+    api_targets =
+      case Keyword.fetch(opts, :api_discover) do
+        {:ok, api_discover} ->
+          [{:api_profiles, api_discover}]
+
+        :error ->
+          Enum.map(profiles, fn profile ->
+            module = ProviderRegistry.descriptor(profile.id).module
+
+            {profile.id, fn -> module.discover(profile, policy: config.open_ai) end}
+          end)
+      end
+
+    base_targets ++ api_targets
   end
 
   @impl true
@@ -153,108 +184,190 @@ defmodule ReyCode.Provider.Catalog do
     {:noreply, start_probe(state)}
   end
 
+  # A settled probe publishes only its own provider's entry, so fast
+  # providers become resolvable without waiting for slower siblings.
   @impl true
-  def handle_info({ref, result}, %{task: %Task{ref: ref}} = state) do
-    Process.demonitor(ref, [:flush])
+  def handle_info({ref, result}, state) when is_reference(ref) do
+    case take_probe(state, ref) do
+      {probe, state} ->
+        Process.demonitor(ref, [:flush])
 
-    opencode_entry = normalize_open_code(result[:opencode])
-    omp_entry = normalize_omp(result[:omp])
+        {:noreply,
+         settle_probe(state, probe, fn providers ->
+           merge_result(providers, probe.key, result, state.config)
+         end)}
 
-    providers =
-      state.providers
-      |> put_in([:opencode], opencode_entry)
-      |> put_in([:omp], omp_entry)
-      |> merge_api_results(result[:api] || %{}, state.config)
-
-    delay =
-      if refresh_retry?(providers),
-        do: state.retry_interval,
-        else: state.refresh_interval
-
-    next =
-      state
-      |> cancel_probe_timer()
-      |> Map.put(:task, nil)
-      |> Map.put(:providers, providers)
-      |> schedule_refresh(delay)
-      |> reply_awaiters()
-      |> broadcast()
-
-    {:noreply, next}
+      nil ->
+        {:noreply, state}
+    end
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, reason}, %{task: %Task{ref: ref}} = state) do
-    next = finish_failure(state, "provider discovery failed: #{inspect(reason)}")
-    {:noreply, next}
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+    case take_probe(state, ref) do
+      {probe, state} ->
+        message = "provider discovery failed: #{inspect(reason)}"
+
+        {:noreply,
+         settle_probe(state, probe, fn providers ->
+           fail_providers(providers, probe.key, state, message)
+         end)}
+
+      nil ->
+        {:noreply, state}
+    end
   end
 
-  def handle_info({:probe_timeout, ref}, %{task: %Task{ref: ref} = task} = state) do
-    Task.shutdown(task, :brutal_kill)
-    next = finish_failure(%{state | task: nil, probe_timer: nil}, "provider discovery timed out")
-    {:noreply, next}
+  def handle_info({:probe_timeout, ref}, state) do
+    case take_probe(state, ref) do
+      {probe, state} ->
+        Task.shutdown(probe.task, :brutal_kill)
+        message = "provider discovery timed out"
+
+        {:noreply,
+         settle_probe(state, probe, fn providers ->
+           fail_providers(providers, probe.key, state, message)
+         end)}
+
+      nil ->
+        {:noreply, state}
+    end
   end
 
   def handle_info({:scheduled_refresh, token}, %{refresh_timer: {_timer, token}} = state) do
     {:noreply, start_probe(%{state | refresh_timer: nil})}
   end
 
-  # Results and timer messages from cancelled or completed probes are intentionally ignored.
+  # Results and timer messages from cancelled or superseded probes are
+  # intentionally ignored.
   def handle_info(_, state), do: {:noreply, state}
 
+  # A new round never overlaps an in-flight one; results racing a finished
+  # or superseded round are dropped because their probe entry is gone.
   defp start_probe(%{discovery?: false} = state), do: state
-  defp start_probe(%{task: %Task{}} = state), do: state
+  defp start_probe(%{probes: probes} = state) when map_size(probes) > 0, do: state
 
   defp start_probe(state) do
-    discover = state.discover
-    omp_discover = state.omp_discover
-    api_discover = state.api_discover
+    state = cancel_active_probes(state)
+    generation = state.generation + 1
 
-    task =
-      Task.Supervisor.async_nolink(state.task_supervisor, fn ->
-        %{opencode: discover.(), omp: omp_discover.(), api: api_discover.()}
-      end)
+    {probe_pairs, providers} =
+      Enum.map_reduce(state.probe_targets, state.providers, fn {key, discover}, acc ->
+        task = Task.Supervisor.async_nolink(state.task_supervisor, discover)
 
-    timer = Process.send_after(self(), {:probe_timeout, task.ref}, state.probe_timeout)
+        timer = Process.send_after(self(), {:probe_timeout, task.ref}, state.probe_timeout)
 
-    next =
-      state
-      |> update_status(:checking)
-      |> Map.put(:task, task)
-      |> Map.put(:probe_timer, timer)
-      |> broadcast()
+        probe = %{key: key, timer: timer, generation: generation, task: task}
 
-    next
-  end
-
-  defp finish_failure(state, message) do
-    now = DateTime.utc_now()
-
-    providers =
-      Map.new(state.providers, fn
-        {:simulator, entry} -> {:simulator, entry}
-        {key, entry} -> {key, %{entry | status: :error, error: message, checked_at: now}}
+        {{task.ref, probe}, Map.put(acc, key, checking_entry(acc[key], key))}
       end)
 
     next =
       state
-      |> cancel_probe_timer()
-      |> Map.put(:task, nil)
+      |> Map.put(:generation, generation)
+      |> Map.put(:probes, Map.new(probe_pairs))
       |> Map.put(:providers, providers)
-      |> schedule_refresh(state.retry_interval)
-      |> reply_awaiters()
       |> broadcast()
 
     next
   end
 
-  defp merge_api_results(providers, api_results, config) do
-    Enum.reduce(api_results, providers, fn {id, result}, acc ->
+  # Injected API fan-out entries and per-profile entries both carry the full
+  # provider shape; `checking` preserves the last known models/executable.
+  defp checking_entry(nil, _key), do: nil
+
+  defp checking_entry(entry, :api_profiles),
+    do: %{entry | status: :checking, error: nil}
+
+  defp checking_entry(entry, _key), do: %{entry | status: :checking, error: nil}
+
+  defp cancel_active_probes(%{probes: probes} = state) when map_size(probes) == 0, do: state
+
+  defp cancel_active_probes(%{probes: probes} = state) do
+    Enum.each(probes, fn {_ref, probe} -> Process.cancel_timer(probe.timer) end)
+    Enum.each(probes, fn {_ref, probe} -> Task.shutdown(probe.task, :brutal_kill) end)
+
+    Enum.each(probes, fn {ref, _probe} ->
+      receive do
+        {^ref, _result} -> :ok
+        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+      after
+        0 -> :ok
+      end
+    end)
+
+    %{state | probes: %{}}
+  end
+
+  defp take_probe(state, ref) do
+    case Map.pop(state.probes, ref) do
+      {nil, _probes} -> nil
+      {probe, probes} -> {probe, %{state | probes: probes}}
+    end
+  end
+
+  # The updater receives the current providers so each settlement publishes
+  # exactly one generation-consistent transition.
+  defp settle_probe(state, probe, update) do
+    providers = update.(state.providers)
+
+    settled_keys = expand_keys(probe.key, state)
+
+    state =
+      state
+      |> Map.put(:providers, providers)
+      |> reply_awaiters_for(settled_keys)
+      |> broadcast()
+
+    complete_round_if_finished(state)
+  end
+
+  defp expand_keys(:api_profiles, state), do: Enum.map(state.profiles, & &1.id)
+  defp expand_keys(key, _state), do: [key]
+
+  defp merge_result(providers, :api_profiles, api_results, config) do
+    Enum.reduce(api_results || %{}, providers, fn {id, result}, acc ->
       case normalize_api_result(id, result, config) do
         nil -> acc
         entry -> put_in(acc, [id], entry)
       end
     end)
   end
+
+  defp merge_result(providers, :opencode, result, _config),
+    do: Map.put(providers, :opencode, normalize_open_code(result))
+
+  defp merge_result(providers, :omp, result, _config),
+    do: Map.put(providers, :omp, normalize_omp(result))
+
+  defp merge_result(providers, id, result, config) do
+    case normalize_api_result(id, result, config) do
+      nil -> providers
+      entry -> Map.put(providers, id, entry)
+    end
+  end
+
+  # Timeouts and crashes mark only the failed target's providers; healthy
+  # entries keep their last published status.
+  defp fail_providers(providers, :api_profiles, state, message) do
+    Enum.reduce(state.profiles, providers, fn profile, acc ->
+      Map.put(acc, profile.id, %{acc[profile.id] | status: :error, error: message})
+    end)
+  end
+
+  defp fail_providers(providers, key, _state, message) do
+    Map.update!(providers, key, fn entry -> %{entry | status: :error, error: message} end)
+  end
+
+  defp complete_round_if_finished(%{probes: probes} = state) when map_size(probes) == 0 do
+    delay =
+      if refresh_retry?(state.providers),
+        do: state.retry_interval,
+        else: state.refresh_interval
+
+    schedule_refresh(state, delay)
+  end
+
+  defp complete_round_if_finished(state), do: state
 
   defp refresh_retry?(providers) do
     Enum.any?(providers, fn
@@ -386,13 +499,6 @@ defmodule ReyCode.Provider.Catalog do
     }
   end
 
-  defp discover_api_profiles(profiles, policy) do
-    Map.new(profiles, fn profile ->
-      module = ProviderRegistry.descriptor(profile.id).module
-      {profile.id, module.discover(profile, policy: policy)}
-    end)
-  end
-
   defp pending_open_code do
     ProviderRegistry.descriptor(:opencode) |> pending_provider()
   end
@@ -425,19 +531,17 @@ defmodule ReyCode.Provider.Catalog do
     %{state | refresh_timer: nil}
   end
 
-  defp cancel_probe_timer(%{probe_timer: nil} = state), do: state
+  # Replies only the awaiters of the provider keys that just settled, so a
+  # slow sibling probe cannot hold another provider's resolution hostage.
+  defp reply_awaiters_for(state, settled_keys) do
+    {replied, waiting} =
+      Enum.split_with(state.awaiters, fn {_from, key, _model} -> key in settled_keys end)
 
-  defp cancel_probe_timer(%{probe_timer: timer} = state) do
-    Process.cancel_timer(timer)
-    %{state | probe_timer: nil}
-  end
-
-  defp reply_awaiters(state) do
-    Enum.each(state.awaiters, fn {from, key, model} ->
+    Enum.each(replied, fn {from, key, model} ->
       GenServer.reply(from, resolve_entry(key, state.providers[key], model, state))
     end)
 
-    %{state | awaiters: []}
+    %{state | awaiters: waiting}
   end
 
   # Every broadcast publishes a strictly higher generation so consumers can
