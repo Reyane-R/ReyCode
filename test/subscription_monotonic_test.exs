@@ -154,14 +154,21 @@ defmodule ReyCode.SubscriptionMonotonicTest do
       start_supervised!({Registry, keys: :duplicate, name: registry})
       start_supervised!({Task.Supervisor, name: task_supervisor})
 
+      parent = self()
+
       discover = fn ->
-        {:ok,
-         %{
-           executable: "/bin/none",
-           version: "0",
-           models: [],
-           credential_count: 0
-         }}
+        send(parent, {:probe_started, self()})
+
+        receive do
+          :release ->
+            {:ok,
+             %{
+               executable: "/bin/none",
+               version: "0",
+               models: [],
+               credential_count: 0
+             }}
+        end
       end
 
       catalog =
@@ -174,23 +181,47 @@ defmodule ReyCode.SubscriptionMonotonicTest do
            discovery?: true}
         )
 
-      assert %Snapshot{generation: first} = Catalog.subscribe(catalog)
+      assert_receive {:probe_started, first_probe}, 500
 
-      # The initial probe finished before this test subscribed; a manual
-      # refresh deterministically produces two more generations.
-      Catalog.refresh(catalog)
+      # Subscribing registers this process and pins a baseline version.
+      %Snapshot{generation: baseline} = Catalog.subscribe(catalog)
 
-      assert %{opencode: %{status: status}} =
-               Wait.catalog(catalog, fn providers ->
-                 case providers do
-                   %{opencode: %{status: status}} when status != :checking -> providers
-                   _other -> nil
-                 end
-               end)
+      send(first_probe, :release)
 
-      assert status != :checking
-      assert %Snapshot{generation: later} = Catalog.snapshot(catalog)
-      assert later > first
+      # Sibling settlements interleave freely; every published generation must
+      # still strictly exceed the subscribed baseline, ending at OpenCode's
+      # own settled result.
+      settled = collect_until_opencode_settled(baseline)
+
+      assert settled.providers.opencode.status in [:available, :configured]
+      assert %Snapshot{generation: current} = Catalog.snapshot(catalog)
+      assert current >= settled.generation
+    end
+
+    defp collect_until_opencode_settled(baseline),
+      do: collect_until_opencode_settled(baseline, baseline)
+
+    defp collect_until_opencode_settled(baseline, previous) do
+      receive do
+        {:provider_catalog_updated,
+         %Snapshot{generation: generation, providers: %{opencode: %{status: status}}} = snapshot}
+        when generation > previous and status != :checking ->
+          snapshot
+
+        {:provider_catalog_updated, %Snapshot{generation: generation}}
+        when generation > previous ->
+          collect_until_opencode_settled(baseline, generation)
+      after
+        5_000 -> flunk("catalog never published a settled OpenCode result")
+      end
+    end
+  end
+
+  defp next_broadcast do
+    receive do
+      {:provider_catalog_updated, snapshot} -> snapshot
+    after
+      2_000 -> flunk("expected a catalog broadcast")
     end
   end
 

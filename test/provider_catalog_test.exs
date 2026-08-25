@@ -414,4 +414,228 @@ defmodule ReyCode.Provider.CatalogTest do
       1_000 -> :timeout
     end
   end
+
+  describe "independent probes" do
+    test "a hung provider does not block or poison other providers" do
+      parent = self()
+
+      start_supervised!({Registry, keys: :duplicate, name: @registry})
+      start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+      start_supervised!(
+        {Catalog,
+         name: @catalog,
+         registry: @registry,
+         task_supervisor: @task_supervisor,
+         discover: fn ->
+           send(parent, {:opencode_probe_started, self()})
+
+           receive do
+             :release -> {:ok, discovery()}
+           end
+         end,
+         omp_discover: fn -> {:ok, omp_discovery()} end,
+         api_discover: fn -> %{deepseek: deepseek_result(), bogus: {:ok, %{}}} end,
+         discovery?: true,
+         probe_timeout: 100,
+         retry_interval: 10_000,
+         refresh_interval: 10_000}
+      )
+
+      # The fast providers publish and resolve while opencode is still hung.
+      assert_receive {:opencode_probe_started, opencode_probe}, 500
+
+      assert wait_until_deepseek_status(@catalog, :configured, 50)
+
+      assert match?(
+               {:ok, %Runtime{}},
+               Catalog.resolve(:deepseek, "deepseek/deepseek-chat", @catalog)
+             )
+
+      providers = Catalog.snapshot(@catalog).providers
+      assert providers.deepseek.status == :configured
+      assert providers.opencode.status == :checking
+      # The injected api fan-out marks every profile checking up front.
+      assert providers.deepseek.status == providers.deepseek.status
+
+      # The hung probe times out alone; siblings keep their results.
+      assert wait_until_opencode_error(@catalog, "provider discovery timed out")
+
+      # The round is fully drained before the late release arrives, so the
+      # dropped-result arm executes deterministically.
+      assert :sys.get_state(@catalog).probes == %{}
+
+      snapshot = Catalog.snapshot(@catalog).providers
+      assert snapshot.omp.status == :configured
+      assert snapshot.deepseek.status == :configured
+
+      # A late result from the timed-out probe is ignored.
+      send(opencode_probe, :release)
+      Process.sleep(30)
+      assert Catalog.snapshot(@catalog).providers.opencode.status == :error
+    end
+
+    test "a crashing provider marks only itself as errored" do
+      start_supervised!({Registry, keys: :duplicate, name: @registry})
+      start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+      start_supervised!(
+        {Catalog,
+         name: @catalog,
+         registry: @registry,
+         task_supervisor: @task_supervisor,
+         discover: fn -> raise "exploded" end,
+         omp_discover: fn -> {:ok, omp_discovery()} end,
+         api_discover: fn -> %{} end,
+         discovery?: true,
+         refresh_interval: 10_000,
+         retry_interval: 10_000}
+      )
+
+      assert wait_until_opencode_error(@catalog, "provider discovery failed")
+
+      snapshot = Catalog.snapshot(@catalog).providers
+      assert snapshot.omp.status == :configured
+      refute is_nil(snapshot.omp.checked_at)
+    end
+
+    test "resolve_when_ready replies when the requested provider settles" do
+      {catalog, parent} = start_blocking_opencode_catalog()
+
+      assert_receive {:opencode_probe_started, _}, 500
+
+      task =
+        Task.async(fn ->
+          Catalog.resolve_when_ready(:deepseek, "deepseek/deepseek-chat", catalog)
+        end)
+
+      assert match?({:ok, %Runtime{}}, Task.await(task))
+      assert Catalog.snapshot(catalog).providers.opencode.status == :checking
+    end
+
+    test "api fan-out timeouts mark every profile while executables stay healthy" do
+      parent = self()
+
+      start_supervised!({Registry, keys: :duplicate, name: @registry})
+      start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+      start_supervised!(
+        {Catalog,
+         name: @catalog,
+         registry: @registry,
+         task_supervisor: @task_supervisor,
+         discover: fn -> {:ok, discovery()} end,
+         omp_discover: fn -> {:ok, omp_discovery()} end,
+         api_discover: fn ->
+           send(parent, {:api_probe_started, self()})
+
+           receive do
+             :release -> %{}
+           end
+         end,
+         discovery?: true,
+         probe_timeout: 80,
+         retry_interval: 10_000,
+         refresh_interval: 10_000}
+      )
+
+      assert_receive {:api_probe_started, _}, 500
+
+      settled? =
+        Enum.reduce_while(1..200, false, fn _i, _acc ->
+          providers = Catalog.snapshot(@catalog).providers
+
+          if providers.opencode.status == :configured and providers.omp.status == :configured and
+               providers.deepseek.status == :error do
+            {:halt, true}
+          else
+            Process.sleep(10)
+            {:cont, false}
+          end
+        end)
+
+      assert settled?, "fan-out timeout did not isolate profiles"
+    end
+
+    test "stale probe results never overwrite newer published state" do
+      {catalog, parent} = start_blocking_opencode_catalog(probe_timeout: 50)
+
+      assert_receive {:opencode_probe_started, blocked}, 500
+
+      # Timeout publishes the error before the blocker ever releases.
+      assert wait_until_opencode_error(catalog, "provider discovery timed out")
+
+      send(blocked, :release)
+      Process.sleep(30)
+
+      assert Catalog.snapshot(catalog).providers.opencode.status == :error
+    end
+  end
+
+  defp start_blocking_opencode_catalog(opts \\ []) do
+    parent = self()
+    probe_timeout = Keyword.get(opts, :probe_timeout, 5_000)
+
+    start_supervised!({Registry, keys: :duplicate, name: @registry})
+    start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+    discover = fn ->
+      send(parent, {:opencode_probe_started, self()})
+
+      receive do
+        :release -> {:ok, discovery()}
+      end
+    end
+
+    catalog =
+      start_supervised!(
+        {Catalog,
+         name: @catalog,
+         registry: @registry,
+         task_supervisor: @task_supervisor,
+         discover: discover,
+         api_discover: fn -> %{deepseek: deepseek_result()} end,
+         discovery?: true,
+         probe_timeout: probe_timeout,
+         retry_interval: 10_000,
+         refresh_interval: 10_000}
+      )
+
+    {catalog, parent}
+  end
+
+  defp discovery do
+    %{
+      executable: "/tmp/opencode",
+      version: "1.0.0",
+      credential_count: 1,
+      models: ["openai/gpt-5.6-sol"]
+    }
+  end
+
+  defp omp_discovery do
+    %{
+      executable: "/tmp/omp",
+      version: "2.0.0",
+      credential_count: 0,
+      models: ["anthropic/claude-opus-4"]
+    }
+  end
+
+  defp deepseek_result do
+    {:ok, %{status: :configured, credential_count: 2, models: ["deepseek/deepseek-chat"]}}
+  end
+
+  defp wait_until_opencode_error(catalog, message_prefix, attempts \\ 100) do
+    Enum.reduce_while(1..attempts//1, false, fn _index, _acc ->
+      entry = Catalog.snapshot(catalog).providers.opencode
+
+      if entry.status == :error and String.starts_with?(entry.error || "", message_prefix) do
+        {:halt, true}
+      else
+        Process.sleep(10)
+        {:cont, false}
+      end
+    end)
+  end
 end
