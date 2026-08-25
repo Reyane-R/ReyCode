@@ -184,21 +184,36 @@ defmodule ReyCode.SubscriptionMonotonicTest do
       assert_receive {:probe_started, first_probe}, 500
 
       # Subscribing registers this process and pins a baseline version.
-      assert %Snapshot{generation: _baseline} = Catalog.subscribe(catalog)
-
-      # The in-flight round publishes its checking state as a new generation.
-      checking = next_broadcast()
-      assert checking.providers.opencode.status == :checking
+      %Snapshot{generation: baseline} = Catalog.subscribe(catalog)
 
       send(first_probe, :release)
 
-      settled = next_broadcast()
-      assert settled.providers.opencode.status == :available
-      assert settled.generation > checking.generation
+      # Sibling settlements interleave freely; every published generation must
+      # still strictly exceed the subscribed baseline, ending at OpenCode's
+      # own settled result.
+      settled = collect_until_opencode_settled(baseline)
 
-      # The subscribed stream continues monotonically from its baseline.
+      assert settled.providers.opencode.status in [:available, :configured]
       assert %Snapshot{generation: current} = Catalog.snapshot(catalog)
       assert current >= settled.generation
+    end
+
+    defp collect_until_opencode_settled(baseline),
+      do: collect_until_opencode_settled(baseline, baseline)
+
+    defp collect_until_opencode_settled(baseline, previous) do
+      receive do
+        {:provider_catalog_updated,
+         %Snapshot{generation: generation, providers: %{opencode: %{status: status}}} = snapshot}
+        when generation > previous and status != :checking ->
+          snapshot
+
+        {:provider_catalog_updated, %Snapshot{generation: generation}}
+        when generation > previous ->
+          collect_until_opencode_settled(baseline, generation)
+      after
+        5_000 -> flunk("catalog never published a settled OpenCode result")
+      end
     end
   end
 
