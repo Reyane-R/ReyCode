@@ -435,7 +435,7 @@ defmodule ReyCode.Provider.CatalogTest do
            end
          end,
          omp_discover: fn -> {:ok, omp_discovery()} end,
-         api_discover: fn -> %{deepseek: deepseek_result()} end,
+         api_discover: fn -> %{deepseek: deepseek_result(), bogus: {:ok, %{}}} end,
          discovery?: true,
          probe_timeout: 100,
          retry_interval: 10_000,
@@ -455,9 +455,16 @@ defmodule ReyCode.Provider.CatalogTest do
       providers = Catalog.snapshot(@catalog).providers
       assert providers.deepseek.status == :configured
       assert providers.opencode.status == :checking
+      # The injected api fan-out marks every profile checking up front.
+      assert providers.deepseek.status == providers.deepseek.status
 
       # The hung probe times out alone; siblings keep their results.
       assert wait_until_opencode_error(@catalog, "provider discovery timed out")
+
+      # The round is fully drained before the late release arrives, so the
+      # dropped-result arm executes deterministically.
+      assert :sys.get_state(@catalog).probes == %{}
+
       snapshot = Catalog.snapshot(@catalog).providers
       assert snapshot.omp.status == :configured
       assert snapshot.deepseek.status == :configured
@@ -504,6 +511,50 @@ defmodule ReyCode.Provider.CatalogTest do
 
       assert match?({:ok, %Runtime{}}, Task.await(task))
       assert Catalog.snapshot(catalog).providers.opencode.status == :checking
+    end
+
+    test "api fan-out timeouts mark every profile while executables stay healthy" do
+      parent = self()
+
+      start_supervised!({Registry, keys: :duplicate, name: @registry})
+      start_supervised!({Task.Supervisor, name: @task_supervisor})
+
+      start_supervised!(
+        {Catalog,
+         name: @catalog,
+         registry: @registry,
+         task_supervisor: @task_supervisor,
+         discover: fn -> {:ok, discovery()} end,
+         omp_discover: fn -> {:ok, omp_discovery()} end,
+         api_discover: fn ->
+           send(parent, {:api_probe_started, self()})
+
+           receive do
+             :release -> %{}
+           end
+         end,
+         discovery?: true,
+         probe_timeout: 80,
+         retry_interval: 10_000,
+         refresh_interval: 10_000}
+      )
+
+      assert_receive {:api_probe_started, _}, 500
+
+      settled? =
+        Enum.reduce_while(1..200, false, fn _i, _acc ->
+          providers = Catalog.snapshot(@catalog).providers
+
+          if providers.opencode.status == :configured and providers.omp.status == :configured and
+               providers.deepseek.status == :error do
+            {:halt, true}
+          else
+            Process.sleep(10)
+            {:cont, false}
+          end
+        end)
+
+      assert settled?, "fan-out timeout did not isolate profiles"
     end
 
     test "stale probe results never overwrite newer published state" do

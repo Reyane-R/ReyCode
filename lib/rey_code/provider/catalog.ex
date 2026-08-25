@@ -247,7 +247,6 @@ defmodule ReyCode.Provider.Catalog do
   defp start_probe(%{probes: probes} = state) when map_size(probes) > 0, do: state
 
   defp start_probe(state) do
-    state = cancel_active_probes(state)
     generation = state.generation + 1
 
     {probe_pairs, providers} =
@@ -279,24 +278,6 @@ defmodule ReyCode.Provider.Catalog do
     do: %{entry | status: :checking, error: nil}
 
   defp checking_entry(entry, _key), do: %{entry | status: :checking, error: nil}
-
-  defp cancel_active_probes(%{probes: probes} = state) when map_size(probes) == 0, do: state
-
-  defp cancel_active_probes(%{probes: probes} = state) do
-    Enum.each(probes, fn {_ref, probe} -> Process.cancel_timer(probe.timer) end)
-    Enum.each(probes, fn {_ref, probe} -> Task.shutdown(probe.task, :brutal_kill) end)
-
-    Enum.each(probes, fn {ref, _probe} ->
-      receive do
-        {^ref, _result} -> :ok
-        {:DOWN, ^ref, :process, _pid, _reason} -> :ok
-      after
-        0 -> :ok
-      end
-    end)
-
-    %{state | probes: %{}}
-  end
 
   defp take_probe(state, ref) do
     case Map.pop(state.probes, ref) do
