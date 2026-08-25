@@ -9,13 +9,12 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
       json_line: 1,
       process_alive?: 1,
       request: 0,
-      restore_env: 2,
       runtime: 1,
       runtime: 2
     ]
 
   alias ReyCode.Failure
-  alias ReyCode.Provider.{Command, OpenCode, Runtime}
+  alias ReyCode.Provider.{Command, OpenCode, Request, Runtime}
   alias ReyCode.Provider.OpenCode.Process
   alias ReyCode.Security.Environment
 
@@ -66,27 +65,36 @@ defmodule ReyCode.Provider.OpenCode.ProcessTest do
            |> Enum.member?(["--dir", canonical_workspace])
   end
 
-  test "streams with the runtime's frozen policy even when ambient policy disagrees" do
+  test "streams with the runtime's frozen policy even when that policy is strict" do
     discovered = fake_opencode(json_line("frozen policy"))
     test_pid = self()
 
-    # Ambient application policy would reject this prompt outright; the
-    # runtime's injected config must win because providers never read the
-    # environment.
-    previous = Application.get_env(:rey_code, :opencode_max_prompt_bytes)
-    Application.put_env(:rey_code, :opencode_max_prompt_bytes, 10)
+    # The runtime carries its own frozen execution policy: a deliberately
+    # tiny prompt budget still streams because providers never read the
+    # environment, they consume the injected Runtime config alone.
+    on_exit(fn -> File.rm(discovered) end)
 
-    on_exit(fn ->
-      restore_env(:opencode_max_prompt_bytes, previous)
-      File.rm(discovered)
-    end)
+    tiny_request = %Request{request() | system_prompt: "Go"}
 
+    # A frozen budget smaller than the request rejects at the boundary...
+    assert {:error, %Failure{category: :prompt_too_large}} =
+             OpenCode.stream(
+               runtime(discovered, opencode_max_prompt_bytes: 10),
+               tiny_request,
+               fn _frame -> :ok end
+             )
+
+    # ...and the same runtime shape streams once its own policy allows it.
     assert {:ok, _metadata} =
              wire_result(
-               OpenCode.stream(runtime(discovered), request(), fn frame ->
-                 send(test_pid, {:frame, frame})
-                 :ok
-               end)
+               OpenCode.stream(
+                 runtime(discovered, opencode_max_prompt_bytes: 1_000),
+                 tiny_request,
+                 fn frame ->
+                   send(test_pid, {:frame, frame})
+                   :ok
+                 end
+               )
              )
 
     assert_receive {:frame, %{kind: :text_delta, data: %{text: "frozen policy"}}}

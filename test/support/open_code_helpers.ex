@@ -68,9 +68,6 @@ defmodule ReyCode.Test.OpenCodeHelpers do
     path
   end
 
-  def restore_env(key, nil), do: Application.delete_env(:rey_code, key)
-  def restore_env(key, value), do: Application.put_env(:rey_code, key, value)
-
   def collect_frames(frames \\ []) do
     receive do
       {:frame, frame} -> collect_frames([frame | frames])
