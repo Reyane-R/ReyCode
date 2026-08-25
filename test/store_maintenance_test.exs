@@ -158,6 +158,76 @@ defmodule ReyCode.StoreMaintenanceTest do
     assert {:ok, _report} = StoreMaintenance.verify(backup)
   end
 
+  test "a manifest publish failure leaves no database behind and the retry completes" do
+    source = tmp_path("source.sqlite3")
+    backup = tmp_path("backup.sqlite3")
+    {store, id} = start_store(source)
+
+    assert {:ok, _event} = EventStore.append(:room_created, room_data(), store, metadata())
+
+    # Obstruct exactly the commit boundary: the manifest path is a directory.
+    File.mkdir_p!(Path.dirname(backup))
+    File.mkdir_p!(backup <> ".manifest.json")
+
+    assert {:error, :destination_exists} = EventStore.backup(backup, store)
+    refute File.exists?(backup), "failed attempt left the published database behind"
+
+    File.rmdir!(backup <> ".manifest.json")
+
+    assert {:ok, _manifest} = EventStore.backup(backup, store)
+    assert {:ok, _report} = StoreMaintenance.verify(backup)
+
+    stop_supervised!(id)
+  end
+
+  test "uncommitted residue from an interrupted backup is recoverable on retry" do
+    source = tmp_path("source.sqlite3")
+    backup = tmp_path("backup.sqlite3")
+    {store, id} = start_store(source)
+
+    assert {:ok, _event} = EventStore.append(:room_created, room_data(), store, metadata())
+
+    # Simulate a process death between publishing the database and the
+    # manifest: destination exists without its commit marker.
+    File.mkdir_p!(Path.dirname(backup))
+    File.cp!(source, backup)
+
+    assert {:ok, _manifest} = EventStore.backup(backup, store)
+    assert {:ok, _report} = StoreMaintenance.verify(backup)
+
+    stop_supervised!(id)
+  end
+
+  test "a committed backup still blocks overwriting" do
+    source = tmp_path("source.sqlite3")
+    backup = tmp_path("backup.sqlite3")
+    {store, id} = start_store(source)
+
+    assert {:ok, _manifest} = EventStore.backup(backup, store)
+
+    assert {:error, :destination_exists} = EventStore.backup(backup, store)
+
+    stop_supervised!(id)
+  end
+
+  test "a failed attempt never deletes a destination that predated the call" do
+    source = tmp_path("source.sqlite3")
+    backup = tmp_path("backup.sqlite3")
+    {store, id} = start_store(source)
+
+    assert {:ok, _event} = EventStore.append(:room_created, room_data(), store, metadata())
+
+    File.mkdir_p!(Path.dirname(backup))
+    File.write!(backup, "predating user file")
+
+    File.mkdir_p!(backup <> ".manifest.json")
+
+    assert {:error, :destination_exists} = EventStore.backup(backup, store)
+    assert File.read!(backup) == "predating user file"
+
+    stop_supervised!(id)
+  end
+
   defp start_store(path) do
     File.mkdir_p!(Path.dirname(path))
     id = {EventStore, System.unique_integer([:positive])}
