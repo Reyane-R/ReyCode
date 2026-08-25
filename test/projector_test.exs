@@ -504,6 +504,116 @@ defmodule ReyCode.Orchestration.ProjectorTest do
       assert [%Directive{text: "focus", cycle: 0}] = run.directives
       assert [%Retry{role_id: "implementer", cycle: 0}] = run.retries
     end
+
+    test "every from_map seam normalizes string-keyed and legacy shapes" do
+      alias ReyCode.Orchestration.{Author, Message, ToolAsk}
+
+      # Author passthrough keeps structs untouched.
+      struct_author = %Author{kind: :agent, id: "a", name: "A"}
+      assert Author.from_map(struct_author) == struct_author
+
+      # Explicit wire kind wins over id inference.
+      assert %{kind: :agent} =
+               Author.from_map(%{"id" => "someone", "name" => "S", "kind" => "agent"})
+
+      # Legacy snapshots attributed agents by builder/critic ids alone.
+      assert %{kind: :agent} = Author.from_map(%{id: "builder", name: "B"})
+      assert %{kind: :agent} = Author.from_map(%{"id" => "critic", "name" => "C"})
+
+      # Unknown ids without a kind fall back to operator attribution.
+      assert %{kind: :user} = Author.from_map(%{})
+
+      # Message normalization wraps raw author maps.
+      message = Message.from_map(%{id: "m", body: "", author: %{"id" => "x", "name" => "X"}})
+      assert %{kind: :user, name: "X"} = message.author
+
+      # ToolAsk accepts fully string-keyed wire maps.
+      ask =
+        ToolAsk.from_map(%{
+          "request_id" => "req-9",
+          "tool" => "grep",
+          "arguments" => %{},
+          "workspace" => "/tmp",
+          "requested_at" => "t"
+        })
+
+      assert %{request_id: "req-9", tool: "grep"} = ask
+
+      struct_ask = %ToolAsk{
+        request_id: "r2",
+        tool: "read",
+        arguments: %{},
+        workspace: "/tmp",
+        requested_at: "t"
+      }
+
+      assert ToolAsk.from_map(struct_ask) == struct_ask
+
+      # Structured retry elements keep their atom keys untouched.
+      atom_retry = %{
+        role_id: "implementer",
+        attempt: 2,
+        kind: "provider_retry",
+        phase: "implementation",
+        cycle: 0,
+        reason: "timeout"
+      }
+
+      assert [%Retry{} = retry] = SquadRun.from_map(%{retries: [atom_retry]}).retries
+      assert retry.attempt == 2
+
+      struct_retry = %Retry{
+        role_id: "x",
+        attempt: 1,
+        kind: "rework",
+        phase: "p",
+        cycle: 0,
+        reason: "r"
+      }
+
+      assert Retry.from_map(struct_retry) == struct_retry
+    end
+
+    test "squad records normalize fully string-keyed legacy artifacts and retries" do
+      run =
+        SquadRun.from_map(%{
+          artifacts: [
+            %{
+              "seat_id" => "analyst",
+              "kind" => "stories",
+              "phase" => "stories",
+              "cycle" => 1,
+              "summary" => "done",
+              "blockers" => ["blocked"],
+              "digest" => "d"
+            }
+          ],
+          directives: [%{"text" => "slow down", "phase" => "build", "cycle" => 2}],
+          retries: [
+            %{
+              "role_id" => "implementer",
+              "attempt" => 3,
+              "kind" => "provider_retry",
+              "phase" => "implementation",
+              "cycle" => 1,
+              "reason" => "rate_limit"
+            }
+          ]
+        })
+
+      assert [
+               %Artifact{
+                 role_id: "analyst",
+                 blockers: ["blocked"],
+                 invocation_id: nil,
+                 message_id: nil
+               }
+             ] = run.artifacts
+
+      assert [%Directive{cycle: 2, recorded_at: nil}] = run.directives
+
+      assert [%Retry{attempt: 3, kind: "provider_retry", reason: "rate_limit"}] = run.retries
+    end
   end
 
   defp seed_events do
