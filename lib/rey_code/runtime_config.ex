@@ -79,7 +79,18 @@ defmodule ReyCode.RuntimeConfig do
   """
   @spec load!() :: t()
   def load! do
-    Schema.load(&Application.get_env(:rey_code, &1, &2), &System.get_env/1)
+    load(&Application.get_env(:rey_code, &1, &2), &System.get_env/1)
+  end
+
+  @doc """
+  Loads configuration from an explicit settings source — the injection seam
+  for tests and embedded startups. Secrets still resolve through `env`;
+  credential values never become part of the resulting struct.
+  """
+  @spec load((atom(), term() -> term()), (String.t() -> String.t() | nil)) :: t()
+  def load(source, env \\ &System.get_env/1) do
+    source
+    |> Schema.load(env)
     |> assemble()
   end
 
