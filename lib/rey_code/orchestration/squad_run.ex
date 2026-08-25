@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.SquadRun do
   @moduledoc "Typed leader-supervised workflow state attached to a squad Turn."
 
-  alias ReyCode.Orchestration.Squad.{GateResolution, GateReview}
+  alias ReyCode.Orchestration.Squad.{Artifact, Directive, GateResolution, GateReview, Retry}
 
   @fields [
     :room_id,
@@ -57,10 +57,10 @@ defmodule ReyCode.Orchestration.SquadRun do
           resolutions: [GateResolution.t()],
           latest_resolution: GateResolution.t() | nil,
           promotions: map(),
-          artifacts: [map()],
+          artifacts: [Artifact.t()],
           blockers: [String.t()],
-          retries: [map()],
-          directives: [map()],
+          retries: [Retry.t()],
+          directives: [Directive.t()],
           reviews: [GateReview.t()],
           pending_review: GateReview.t() | nil
         }
@@ -76,6 +76,9 @@ defmodule ReyCode.Orchestration.SquadRun do
       run
       | resolutions: Enum.map(run.resolutions || [], &GateResolution.from_map/1),
         latest_resolution: optional(run.latest_resolution, &GateResolution.from_map/1),
+        artifacts: Enum.map(run.artifacts || [], &Artifact.from_map/1),
+        retries: Enum.map(run.retries || [], &Retry.from_map/1),
+        directives: Enum.map(run.directives || [], &Directive.from_map/1),
         reviews: Enum.map(run.reviews || [], &GateReview.from_map/1),
         pending_review: optional(run.pending_review, &GateReview.from_map/1)
     }

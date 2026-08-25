@@ -1,7 +1,7 @@
 defmodule ReyCode.Event do
   @moduledoc "A versioned durable fact stored in global sequence order."
 
-  alias ReyCode.JSON
+  alias ReyCode.{Failure, JSON}
 
   @schema_version 2
 
@@ -60,45 +60,323 @@ defmodule ReyCode.Event do
   @type_lookup Map.new(@types, &{Atom.to_string(&1), &1})
   @known_types MapSet.new(@types)
 
-  @required_data %{
-    room_created: ~w(room_id slug title workspace participants),
-    participant_added: ~w(room_id participant_id name responsibility provider model kind),
-    participant_configured: ~w(room_id participant_id provider model),
-    message_posted: ~w(message_id room_id turn_id body),
-    turn_queued: ~w(turn_id room_id user_message_id mode context_through_sequence),
-    turn_started: ~w(turn_id room_id),
-    assistant_message_opened:
-      ~w(invocation_id message_id turn_id room_id participant stage label system_prompt),
-    invocation_started: ~w(invocation_id message_id turn_id room_id),
-    provider_frame_recorded: ~w(invocation_id message_id frame_sequence kind data),
-    invocation_completed: ~w(invocation_id message_id turn_id room_id),
-    invocation_failed: ~w(invocation_id message_id turn_id room_id error),
-    invocation_cancelled: ~w(invocation_id message_id turn_id room_id reason),
-    turn_completed: ~w(turn_id room_id outcome),
-    snapshot_recorded: ~w(binary),
-    squad_configured: ~w(turn_id room_id seats rework_budget),
-    squad_stage_entered: ~w(turn_id room_id stage),
-    squad_decision_recorded: ~w(turn_id room_id seat_id decision),
-    squad_artifact_recorded: ~w(turn_id room_id seat_id kind),
-    squad_retry_scheduled: ~w(turn_id room_id seat_id attempt),
-    squad_role_configured: ~w(room_id role_id provider model),
-    squad_directive_added: ~w(turn_id room_id text phase cycle),
-    gate_review_requested: ~w(turn_id room_id seat_id decision phase cycle),
-    gate_resolved: ~w(turn_id room_id seat_id decision phase cycle),
-    squad_budget_extended: ~w(turn_id room_id budget),
-    tool_ask_requested:
-      ~w(invocation_id message_id turn_id room_id request_id tool arguments workspace),
-    tool_ask_resolved: ~w(invocation_id message_id turn_id room_id request_id tool decision),
-    provider_round_recorded:
-      ~w(invocation_id message_id turn_id room_id round_index text tool_calls usage),
-    tool_run_requested:
-      ~w(invocation_id message_id turn_id room_id tool_run_id tool_call_id round_index tool arguments workspace authorization),
-    tool_run_approval_resolved:
-      ~w(invocation_id message_id turn_id room_id tool_run_id tool decision),
-    tool_run_started: ~w(invocation_id message_id turn_id room_id tool_run_id tool),
-    tool_run_completed: ~w(invocation_id message_id turn_id room_id tool_run_id tool result),
-    tool_run_failed: ~w(invocation_id message_id turn_id room_id tool_run_id tool error result),
-    tool_run_interrupted: ~w(invocation_id message_id turn_id room_id tool_run_id tool reason)
+  # Field rules validate JSON-normalized values (string keys, no atoms).
+  # `:id` marks identity strings the projector relies on being non-empty;
+  # `:text` accepts any string body. Optional fields are legacy-tolerant:
+  # schema-v2 events written before a field existed must keep decoding.
+  @type rule ::
+          :id
+          | :text
+          | :nullable_text
+          | :wire_map
+          | :nullable_wire_map
+          | :text_list
+          | :map_list
+          | :non_negative_integer
+          | :positive_integer
+          | {:one_of, [String.t()]}
+          | :participant_list
+          | :participant
+          | :failure
+          | :snapshot_binary
+
+  @modes ~w(direct delegate compare debate fan_out squad)
+  @outcomes ~w(completed partial failed reworked cancelled)
+  @gate_decisions ~w(approve rework abort)
+  @tool_decisions ~w(approve deny)
+  @authorizations ~w(allow ask denied)
+  @release_authorities ~w(human leader)
+  @participant_kinds ~w(primary task legacy)
+  @retry_kinds ~w(provider_retry rework)
+
+  @frame_kinds ~w(
+    text_delta usage session_started tool_started tool_completed tool_request tool_result
+  )
+
+  @invocation_identity %{"invocation_id" => :id, "message_id" => :id}
+  @turn_room_identity %{"turn_id" => :id, "room_id" => :id}
+
+  @gate_contract %{
+    required:
+      Map.merge(@turn_room_identity, %{
+        "seat_id" => :id,
+        "decision" => {:one_of, @gate_decisions},
+        "phase" => :text,
+        "cycle" => :non_negative_integer
+      }),
+    optional: %{"target_phase" => :nullable_text, "reasons" => :text_list}
+  }
+
+  @contract %{
+    room_created: %{
+      required: %{
+        "room_id" => :id,
+        "slug" => :id,
+        "title" => :text,
+        "workspace" => :text,
+        "participants" => :participant_list
+      },
+      optional: %{}
+    },
+    participant_added: %{
+      required: %{
+        "room_id" => :id,
+        "participant_id" => :id,
+        "name" => :text,
+        "responsibility" => :nullable_text,
+        "provider" => :id,
+        "model" => :nullable_text,
+        "kind" => {:one_of, @participant_kinds}
+      },
+      optional: %{}
+    },
+    participant_configured: %{
+      required: %{
+        "room_id" => :id,
+        "participant_id" => :id,
+        "provider" => :id,
+        "model" => :nullable_text
+      },
+      optional: %{}
+    },
+    message_posted: %{
+      required: %{
+        "message_id" => :id,
+        "room_id" => :id,
+        "turn_id" => :nullable_text,
+        "body" => :text
+      },
+      optional: %{"author_name" => :text}
+    },
+    turn_queued: %{
+      required: %{
+        "turn_id" => :id,
+        "room_id" => :id,
+        "user_message_id" => :id,
+        "mode" => {:one_of, @modes},
+        "context_through_sequence" => :non_negative_integer
+      },
+      # participant_id postdates early schema-v2 turns; legacy events omit it.
+      optional: %{"participant_id" => :nullable_text}
+    },
+    turn_started: %{required: @turn_room_identity, optional: %{}},
+    assistant_message_opened: %{
+      required: %{
+        "invocation_id" => :id,
+        "message_id" => :id,
+        "turn_id" => :id,
+        "room_id" => :id,
+        "participant" => :participant,
+        "stage" => :non_negative_integer,
+        "label" => :text,
+        "system_prompt" => :nullable_text
+      },
+      optional: %{
+        "phase" => :nullable_text,
+        "cycle" => :non_negative_integer,
+        "logical_work_id" => :nullable_text,
+        "dependencies" => :text_list,
+        "attempt" => :positive_integer
+      }
+    },
+    invocation_started: %{
+      required: Map.merge(@invocation_identity, @turn_room_identity),
+      optional: %{}
+    },
+    provider_frame_recorded: %{
+      required: %{
+        "invocation_id" => :id,
+        "message_id" => :nullable_text,
+        "frame_sequence" => :non_negative_integer,
+        "kind" => {:one_of, @frame_kinds},
+        "data" => :wire_map
+      },
+      optional: %{}
+    },
+    invocation_completed: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity) |> Map.put("metadata", :wire_map),
+      optional: %{}
+    },
+    invocation_failed: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity) |> Map.put("error", :failure),
+      optional: %{}
+    },
+    invocation_cancelled: %{
+      required: Map.merge(@invocation_identity, @turn_room_identity) |> Map.put("reason", :text),
+      optional: %{}
+    },
+    turn_completed: %{
+      required: Map.merge(@turn_room_identity, %{"outcome" => {:one_of, @outcomes}}),
+      optional: %{}
+    },
+    snapshot_recorded: %{required: %{"binary" => :snapshot_binary}, optional: %{}},
+    squad_configured: %{
+      required: %{
+        "turn_id" => :id,
+        "room_id" => :id,
+        "seats" => :text_list,
+        "rework_budget" => :positive_integer
+      },
+      optional: %{
+        "release_authority" => {:one_of, @release_authorities},
+        "workflow_version" => :text,
+        "phase" => :text
+      }
+    },
+    squad_stage_entered: %{
+      required: Map.merge(@turn_room_identity, %{"stage" => :non_negative_integer}),
+      optional: %{"phase" => :text, "cycle" => :non_negative_integer}
+    },
+    squad_decision_recorded: %{
+      required:
+        Map.merge(@turn_room_identity, %{
+          "seat_id" => :id,
+          "decision" => {:one_of, @gate_decisions}
+        }),
+      optional: %{
+        "phase" => :text,
+        "cycle" => :non_negative_integer,
+        "target_phase" => :nullable_text,
+        "reasons" => :text_list
+      }
+    },
+    squad_artifact_recorded: %{
+      required: Map.merge(@turn_room_identity, %{"seat_id" => :id, "kind" => :text}),
+      optional: %{
+        "phase" => :text,
+        "cycle" => :non_negative_integer,
+        "invocation_id" => :nullable_text,
+        "message_id" => :nullable_text,
+        "summary" => :text,
+        "blockers" => :text_list,
+        "digest" => :text
+      }
+    },
+    squad_retry_scheduled: %{
+      required:
+        Map.merge(@turn_room_identity, %{"seat_id" => :id, "attempt" => :positive_integer}),
+      optional: %{
+        "kind" => {:one_of, @retry_kinds},
+        "phase" => :text,
+        "cycle" => :non_negative_integer,
+        "target_stage" => :non_negative_integer,
+        "target_phase" => :text,
+        "reason" => :text
+      }
+    },
+    squad_role_configured: %{
+      required: %{
+        "room_id" => :id,
+        "role_id" => :id,
+        "name" => :text,
+        "perspective" => :nullable_text,
+        "provider" => :id,
+        "model" => :nullable_text
+      },
+      optional: %{}
+    },
+    squad_directive_added: %{
+      required:
+        Map.merge(@turn_room_identity, %{
+          "text" => :text,
+          "phase" => :text,
+          "cycle" => :non_negative_integer
+        }),
+      optional: %{}
+    },
+    gate_review_requested: @gate_contract,
+    gate_resolved: @gate_contract,
+    squad_budget_extended: %{
+      required: Map.merge(@turn_room_identity, %{"budget" => :positive_integer}),
+      optional: %{}
+    },
+    tool_ask_requested: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "request_id" => :id,
+          "tool" => :text,
+          "arguments" => :wire_map,
+          "workspace" => :text
+        }),
+      optional: %{}
+    },
+    tool_ask_resolved: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "request_id" => :id,
+          "tool" => :text,
+          "decision" => {:one_of, @tool_decisions}
+        }),
+      optional: %{}
+    },
+    provider_round_recorded: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "round_index" => :non_negative_integer,
+          "text" => :text,
+          "tool_calls" => :map_list,
+          "usage" => :nullable_wire_map
+        }),
+      optional: %{}
+    },
+    tool_run_requested: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "tool_run_id" => :id,
+          "tool_call_id" => :id,
+          "round_index" => :non_negative_integer,
+          "tool" => :text,
+          "arguments" => :wire_map,
+          "workspace" => :text,
+          "authorization" => {:one_of, @authorizations}
+        }),
+      optional: %{}
+    },
+    tool_run_approval_resolved: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "tool_run_id" => :id,
+          "tool" => :text,
+          "decision" => {:one_of, @tool_decisions}
+        }),
+      optional: %{}
+    },
+    tool_run_started: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{"tool_run_id" => :id, "tool" => :text}),
+      optional: %{}
+    },
+    tool_run_completed: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{"tool_run_id" => :id, "tool" => :text, "result" => :wire_map}),
+      optional: %{}
+    },
+    tool_run_failed: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "tool_run_id" => :id,
+          "tool" => :text,
+          "error" => :wire_map,
+          "result" => :wire_map
+        }),
+      optional: %{}
+    },
+    tool_run_interrupted: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{"tool_run_id" => :id, "tool" => :text, "reason" => :text}),
+      optional: %{}
+    }
   }
 
   @doc "Returns the event schema version accepted by this module."
@@ -108,9 +386,9 @@ defmodule ReyCode.Event do
   @spec types() :: [atom()]
   def types, do: Map.values(@type_lookup)
 
-  @doc "Returns the required data keys for a given event type, or nil if unknown."
-  @spec required_data_keys(atom()) :: [String.t()] | nil
-  def required_data_keys(type), do: Map.get(@required_data, type)
+  @doc "Returns the payload contract for an event type, or nil if unknown."
+  @spec contract(atom()) :: %{required: map(), optional: map()} | nil
+  def contract(type), do: Map.get(@contract, type)
 
   @doc "Builds and validates an event for an assigned global sequence."
   @spec new(pos_integer(), type(), map(), keyword()) :: t()
@@ -134,7 +412,30 @@ defmodule ReyCode.Event do
     validate!(event)
   end
 
-  @doc "Validates an event's type, aggregate identity, sequence, and required data."
+  @doc """
+  Validates entry tuples against their payload contracts without persisting.
+
+  Append paths call this before opening a durable transaction so malformed
+  batches are rejected with a tagged error instead of failing mid-write.
+  """
+  @spec validate_entries([{atom(), map(), keyword()}]) ::
+          :ok | {:error, {:invalid_event, atom(), String.t()}}
+  def validate_entries(entries) do
+    Enum.reduce_while(entries, :ok, fn {type, data, _metadata}, :ok ->
+      case validate_entry_data(type, data) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, {:invalid_event, type, reason}}}
+      end
+    end)
+  end
+
+  defp validate_entry_data(type, data) do
+    validate_data(type, JSON.normalize(data))
+  rescue
+    error -> {:error, Exception.message(error)}
+  end
+
+  @doc "Validates an event's type, aggregate identity, sequence, and complete payload shape."
   @spec validate!(t()) :: t()
   def validate!(%__MODULE__{} = event) do
     unless event.type in @known_types,
@@ -150,13 +451,180 @@ defmodule ReyCode.Event do
 
     unless is_map(event.data), do: raise(ArgumentError, "invalid event data")
 
-    missing = Enum.reject(Map.fetch!(@required_data, event.type), &Map.has_key?(event.data, &1))
-
-    unless missing == [],
-      do: raise(ArgumentError, "missing event data: #{Enum.join(missing, ", ")}")
-
-    event
+    case validate_data(event.type, event.data) do
+      :ok -> event
+      {:error, reason} -> raise ArgumentError, reason
+    end
   end
+
+  @doc "Validates the complete wire shape of an event payload."
+  @spec validate_data(type(), map()) :: :ok | {:error, String.t()}
+  def validate_data(type, data)
+
+  def validate_data(type, data) when is_map(data) do
+    case Map.fetch(@contract, type) do
+      {:ok, contract} -> validate_contract(contract, type, data)
+      :error -> {:error, "unknown event type #{inspect(type)}"}
+    end
+  end
+
+  def validate_data(type, _data), do: {:error, "invalid #{type} event: data must be an object"}
+
+  defp validate_contract(contract, type, data) do
+    with :ok <- require_fields(contract.required, type, data),
+         :ok <- check_declared_fields(Map.merge(contract.required, contract.optional), type, data) do
+      cross_field_rules(type, data)
+    end
+  end
+
+  defp require_fields(required, type, data) do
+    missing =
+      required
+      |> Map.keys()
+      |> Enum.reject(&Map.has_key?(data, &1))
+      |> Enum.sort()
+
+    if missing == [] do
+      :ok
+    else
+      {:error,
+       "invalid #{type} event: missing field(s) #{Enum.map_join(missing, ", ", &inspect(&1))}"}
+    end
+  end
+
+  # Keys outside the contract are tolerated: schema-v2 events written by older
+  # releases may carry fields this schema version does not declare.
+  defp check_declared_fields(fields, type, data) do
+    data
+    |> Enum.reduce_while(:ok, fn {key, value}, :ok ->
+      case declared_field_error(fields, type, key, value) do
+        nil -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  # Keys outside the contract are tolerated: schema-v2 events written by older
+  # releases may carry fields this schema version does not declare.
+  defp declared_field_error(fields, type, key, value) do
+    case Map.fetch(fields, key) do
+      {:ok, rule} ->
+        case check_rule(rule, value) do
+          :ok -> nil
+          {:error, detail} -> {:error, "invalid #{type} event: field #{inspect(key)} #{detail}"}
+        end
+
+      :error ->
+        nil
+    end
+  end
+
+  # Sibling-dependent rules that single-field rules cannot express.
+  defp cross_field_rules(:provider_frame_recorded, %{"kind" => "text_delta", "data" => data}) do
+    if is_map(data) and is_binary(Map.get(data, "text")) do
+      :ok
+    else
+      {:error,
+       "invalid provider_frame_recorded event: text_delta frames require field \"text\" with a string"}
+    end
+  end
+
+  defp cross_field_rules(:provider_frame_recorded, _data), do: :ok
+
+  defp cross_field_rules(:squad_retry_scheduled, %{"kind" => "rework"} = data) do
+    rework_fields_valid? =
+      is_integer(data["target_stage"]) and data["target_stage"] >= 0 and
+        is_binary(data["target_phase"]) and
+        is_integer(data["cycle"]) and data["cycle"] >= 0
+
+    if rework_fields_valid? do
+      :ok
+    else
+      {:error,
+       "invalid squad_retry_scheduled event: rework retries require integer \"target_stage\", string \"target_phase\", and integer \"cycle\""}
+    end
+  end
+
+  defp cross_field_rules(:squad_retry_scheduled, _data), do: :ok
+  defp cross_field_rules(_type, _data), do: :ok
+
+  # -- Field rules -----------------------------------------------------------
+
+  defp check_rule(:id, value) when is_binary(value) and value != "", do: :ok
+  defp check_rule(:id, _value), do: {:error, "must be a non-empty string"}
+
+  defp check_rule(:text, value) when is_binary(value), do: :ok
+  defp check_rule(:text, _value), do: {:error, "must be a string"}
+
+  defp check_rule(:nullable_text, nil), do: :ok
+  defp check_rule(:nullable_text, value), do: check_rule(:text, value)
+
+  defp check_rule(:wire_map, value) when is_map(value), do: :ok
+  defp check_rule(:wire_map, _value), do: {:error, "must be an object"}
+
+  defp check_rule(:nullable_wire_map, nil), do: :ok
+  defp check_rule(:nullable_wire_map, value), do: check_rule(:wire_map, value)
+
+  defp check_rule(:text_list, value) do
+    if is_list(value) and Enum.all?(value, &is_binary/1),
+      do: :ok,
+      else: {:error, "must be a list of strings"}
+  end
+
+  defp check_rule(:map_list, value) do
+    if is_list(value) and Enum.all?(value, &is_map/1),
+      do: :ok,
+      else: {:error, "must be a list of objects"}
+  end
+
+  defp check_rule(:non_negative_integer, value)
+       when is_integer(value) and value >= 0,
+       do: :ok
+
+  defp check_rule(:non_negative_integer, _value),
+    do: {:error, "must be a non-negative integer"}
+
+  defp check_rule(:positive_integer, value) when is_integer(value) and value > 0, do: :ok
+  defp check_rule(:positive_integer, _value), do: {:error, "must be a positive integer"}
+
+  defp check_rule({:one_of, values}, value) do
+    if value in values,
+      do: :ok,
+      else: {:error, "must be one of #{inspect(values)}"}
+  end
+
+  defp check_rule(:participant_list, value) do
+    if is_list(value) and Enum.all?(value, &participant?/1),
+      do: :ok,
+      else: {:error, "must be a list of participant objects"}
+  end
+
+  defp check_rule(:participant, value) do
+    if participant?(value), do: :ok, else: {:error, "must be a participant object"}
+  end
+
+  defp check_rule(:failure, value) do
+    case Failure.from_wire(value) do
+      {:ok, _failure} -> :ok
+      {:error, :invalid_failure} -> {:error, "must be a failure object"}
+    end
+  end
+
+  defp check_rule(:snapshot_binary, value) do
+    if is_binary(value) and match?({_binary, _rest}, Base.decode64(value)),
+      do: :ok,
+      else: {:error, "must be a base64-encoded snapshot"}
+  end
+
+  defp participant?(%{"id" => id, "name" => name, "provider" => provider} = participant)
+       when is_binary(id) and id != "" and is_binary(name) and is_binary(provider) do
+    case Map.fetch(participant, "kind") do
+      {:ok, kind} -> kind in @participant_kinds
+      :error -> true
+    end
+  end
+
+  defp participant?(_participant), do: false
 
   @doc "Encodes an event as JSON, raising when encoding fails."
   @spec encode!(t()) :: String.t()

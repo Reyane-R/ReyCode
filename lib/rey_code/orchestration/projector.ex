@@ -6,6 +6,7 @@ defmodule ReyCode.Orchestration.Projector do
   alias ReyCode.{Event, Failure}
 
   alias ReyCode.Orchestration.{
+    Author,
     Invocation,
     Message,
     Participant,
@@ -13,14 +14,18 @@ defmodule ReyCode.Orchestration.Projector do
     ProviderRound,
     Room,
     SquadRun,
+    ToolAsk,
     ToolRun,
     Turn
   }
 
   alias ReyCode.Orchestration.Squad.{
+    Artifact,
+    Directive,
     GateRecommendation,
     GateResolution,
     GateReview,
+    Retry,
     Seat
   }
 
@@ -109,7 +114,7 @@ defmodule ReyCode.Orchestration.Projector do
       room_id: data["room_id"],
       turn_id: data["turn_id"],
       invocation_id: nil,
-      author: %{kind: :user, id: "user", name: data["author_name"] || "You"},
+      author: Author.user(data["author_name"]),
       role: :user,
       status: :completed,
       body: data["body"],
@@ -168,7 +173,7 @@ defmodule ReyCode.Orchestration.Projector do
       room_id: data["room_id"],
       turn_id: data["turn_id"],
       invocation_id: data["invocation_id"],
-      author: %{kind: :agent, id: participant.id, name: participant.name},
+      author: Author.from_participant(participant),
       role: :assistant,
       status: :queued,
       body: "",
@@ -220,7 +225,7 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :tool_ask_requested, data: data} = event, state) do
-    review = %{
+    review = %ToolAsk{
       request_id: data["request_id"],
       tool: data["tool"],
       arguments: data["arguments"],
@@ -472,7 +477,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :squad_artifact_recorded, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      artifact = %{
+      artifact = %Artifact{
         role_id: data["seat_id"],
         kind: data["kind"],
         phase: data["phase"] || turn.squad.phase,
@@ -498,7 +503,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :squad_retry_scheduled, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      retry = %{
+      retry = %Retry{
         role_id: data["seat_id"],
         attempt: data["attempt"],
         kind: data["kind"] || "provider_retry",
@@ -529,7 +534,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   def apply(%Event{type: :squad_directive_added, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
-      directive = %{
+      directive = %Directive{
         text: data["text"],
         phase: data["phase"],
         cycle: data["cycle"],
@@ -653,17 +658,15 @@ defmodule ReyCode.Orchestration.Projector do
     if invocation.pending_tool_review do
       invocation
     else
-      %{
-        invocation
-        | status: :waiting_tool_approval,
-          pending_tool_review: %{
-            request_id: run.id,
-            tool: run.tool,
-            arguments: run.arguments,
-            workspace: run.workspace,
-            requested_at: run.requested_at
-          }
+      ask = %ToolAsk{
+        request_id: run.id,
+        tool: run.tool,
+        arguments: run.arguments,
+        workspace: run.workspace,
+        requested_at: run.requested_at
       }
+
+      %{invocation | status: :waiting_tool_approval, pending_tool_review: ask}
     end
   end
 

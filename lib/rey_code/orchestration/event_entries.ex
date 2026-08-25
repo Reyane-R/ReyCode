@@ -446,6 +446,51 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  @doc """
+  Builds the gate event recording one squad role's structured gate output.
+
+  The type is release policy decided by the squad finalizer: a human-owned
+  release gate records `:gate_review_requested`, everything else records an
+  automated `:squad_decision_recorded`.
+  """
+  @spec squad_gate(Invocation.t(), map(), :gate_review_requested | :squad_decision_recorded) ::
+          event_entry()
+  def squad_gate(invocation, output, type) do
+    data = %{
+      "turn_id" => invocation.turn_id,
+      "room_id" => invocation.room_id,
+      "seat_id" => invocation.participant.id,
+      "decision" => output["decision"],
+      "phase" => invocation.phase,
+      "cycle" => invocation.cycle,
+      "target_phase" => output["target_phase"],
+      "reasons" => output["reasons"]
+    }
+
+    event(type, data, :turn, invocation.turn_id, invocation.room_id, invocation.turn_id)
+  end
+
+  @doc "Builds the event recording one squad role's structured artifact output."
+  @spec squad_artifact(Invocation.t(), map(), String.t()) :: event_entry()
+  def squad_artifact(invocation, output, digest) do
+    data = %{
+      "turn_id" => invocation.turn_id,
+      "room_id" => invocation.room_id,
+      "seat_id" => invocation.participant.id,
+      "kind" => output["artifact_type"],
+      "phase" => invocation.phase,
+      "cycle" => invocation.cycle,
+      "invocation_id" => invocation.id,
+      "message_id" => invocation.message_id,
+      "summary" => output["summary"],
+      "blockers" => output["blockers"],
+      "digest" => digest
+    }
+
+    {:squad_artifact_recorded, data,
+     aggregate_metadata(:turn, invocation.turn_id, invocation.room_id, invocation.turn_id)}
+  end
+
   @doc "Builds the configuration and initial-stage events for a squad turn."
   @spec squad_start(Turn.t(), keyword()) :: [event_entry()]
   def squad_start(turn, config) do

@@ -53,49 +53,19 @@ defmodule ReyCode.Orchestration.Workflow.Squad.Finalizer do
   end
 
   defp output_entries(invocation, %{"kind" => "gate"} = output, _message, opts) do
-    data = %{
-      "turn_id" => invocation.turn_id,
-      "room_id" => invocation.room_id,
-      "seat_id" => invocation.participant.id,
-      "decision" => output["decision"],
-      "phase" => invocation.phase,
-      "cycle" => invocation.cycle,
-      "target_phase" => output["target_phase"],
-      "reasons" => output["reasons"]
-    }
-
     type =
       if invocation.phase == "release_gate" and Keyword.fetch!(opts, :human_release_review?),
         do: :gate_review_requested,
         else: :squad_decision_recorded
 
-    [{type, data, turn_metadata(invocation)}]
+    [EventEntries.squad_gate(invocation, output, type)]
   end
 
   defp artifact_entry(invocation, output, message) do
-    data = %{
-      "turn_id" => invocation.turn_id,
-      "room_id" => invocation.room_id,
-      "seat_id" => invocation.participant.id,
-      "kind" => output["artifact_type"],
-      "phase" => invocation.phase,
-      "cycle" => invocation.cycle,
-      "invocation_id" => invocation.id,
-      "message_id" => invocation.message_id,
-      "summary" => output["summary"],
-      "blockers" => output["blockers"],
-      "digest" => Hashing.sha256_hex(message.body)
-    }
-
-    {:squad_artifact_recorded, data, turn_metadata(invocation)}
-  end
-
-  defp turn_metadata(invocation) do
-    EventEntries.aggregate_metadata(
-      :turn,
-      invocation.turn_id,
-      invocation.room_id,
-      invocation.turn_id
+    EventEntries.squad_artifact(
+      invocation,
+      output,
+      Hashing.sha256_hex(message.body)
     )
   end
 

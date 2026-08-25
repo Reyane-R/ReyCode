@@ -65,12 +65,20 @@ defmodule ReyCode.Orchestration.Engine.Persistence do
   # Every append pins the projection's own sequence as the store's expected
   # sequence, so a second writer inserting events this projection never
   # applied fails the transaction instead of being silently checkpointed over.
-  @doc "Atomically appends entries, then projects, checkpoints, and broadcasts each event."
+  #
+  # The committed batch is projected event-by-event internally, but published
+  # once at the transaction boundary: subscribers observe command-transaction
+  # snapshots only, never intermediate state from a partially applied batch.
+  @doc "Atomically appends entries, then projects, checkpoints, and broadcasts the batch."
   @spec append_and_apply!(map(), [EventStore.entry()]) :: map()
   def append_and_apply!(state, entries) do
-    entries
-    |> append!(state.event_store, state.projection.sequence)
-    |> Enum.reduce(state, &apply_and_broadcast(&2, &1))
+    events = append!(entries, state.event_store, state.projection.sequence)
+    projection = Enum.reduce(events, state.projection, &Projector.apply/2)
+
+    maybe_checkpoint(projection, state)
+    broadcast_snapshot(projection, state.event_registry)
+
+    %{state | projection: projection}
   end
 
   defp append!(entries, event_store, expected_sequence) do
@@ -87,17 +95,16 @@ defmodule ReyCode.Orchestration.Engine.Persistence do
     %{state | projection: Projector.apply(event, state.projection)}
   end
 
-  defp apply_and_broadcast(state, event) do
-    projection = Projector.apply(event, state.projection)
-    maybe_checkpoint(projection, state)
-    broadcast_snapshot(projection, state.event_registry)
-    %{state | projection: projection}
-  end
-
+  # A batch that crosses one or more checkpoint intervals checkpoints once,
+  # at the final batch sequence, so the durable snapshot is always a valid
+  # projection and no intermediate snapshot reaches subscribers.
   defp maybe_checkpoint(projection, state) do
     interval = state.config.persistence.checkpoint_interval
 
-    if projection.sequence > 0 and rem(projection.sequence, interval) == 0 do
+    crossed_interval? =
+      div(projection.sequence, interval) > div(state.projection.sequence, interval)
+
+    if crossed_interval? do
       projection
       |> EventStore.checkpoint(state.event_store)
       |> handle_checkpoint_result()

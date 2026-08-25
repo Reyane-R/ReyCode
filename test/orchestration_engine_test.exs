@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.EngineTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.{Engine, Projector}
+  alias ReyCode.Orchestration.{Engine, Projector, Squad}
   alias ReyCode.Orchestration.Engine.Lifecycle
   alias ReyCode.Orchestration.Supervisor, as: OrchestrationSupervisor
   alias ReyCode.Provider.Frame
@@ -651,6 +651,218 @@ defmodule ReyCode.Orchestration.EngineTest do
       simulator_opts: stack.simulator_opts,
       config: stack.config
     ]
+  end
+
+  describe "projection transaction batches" do
+    test "room creation publishes exactly one snapshot containing the room" do
+      %{engine: engine} = start_isolated_engine(agent_delay_ms: 5_000)
+      baseline = Engine.subscribe(engine)
+
+      assert {:ok, room_id} = Engine.create_room("Batched room", System.tmp_dir!(), engine)
+
+      assert [snapshot] = new_snapshots()
+      assert snapshot.sequence > baseline.sequence
+      assert Map.has_key?(snapshot.rooms, room_id)
+    end
+
+    test "a turn queued behind an active turn publishes its message and turn in one snapshot" do
+      %{engine: engine} = start_isolated_engine(agent_delay_ms: 5_000)
+      room_id = default_room_id(engine)
+      Engine.subscribe(engine)
+
+      assert {:ok, _occupied_turn} =
+               Engine.post_message(room_id, "Occupy the room", :direct, engine)
+
+      poll_projection(engine, fn snapshot ->
+        if snapshot.rooms[room_id].active_turn_id, do: :ok
+      end)
+
+      flush_projection_snapshots()
+
+      assert {:ok, queued_turn_id} =
+               Engine.post_message(room_id, "Second while busy", :compare, engine)
+
+      # Snapshots are cumulative, so the regression signal is referential:
+      # the snapshot carrying the queued message must carry its turn too,
+      # never the message alone.
+      assert [snapshot | _rest] = new_snapshots()
+
+      refute is_nil(snapshot.turns[queued_turn_id])
+
+      refute is_nil(
+               Enum.find(snapshot.messages, fn {_id, message} ->
+                 message.turn_id == queued_turn_id
+               end)
+             )
+
+      assert referentially_consistent?(snapshot)
+    end
+
+    test "cancellation publishes the cancelled invocation and terminal turn in one snapshot" do
+      %{engine: engine} = start_isolated_engine(agent_delay_ms: 5_000)
+      room_id = default_room_id(engine)
+      Engine.subscribe(engine)
+
+      assert {:ok, turn_id} = Engine.post_message(room_id, "Cancel me", :direct, engine)
+
+      poll_projection(engine, &find_running_invocation(&1, turn_id))
+      flush_projection_snapshots()
+
+      assert :ok = Engine.cancel_turn(turn_id, "owner stop", engine)
+
+      assert [snapshot] = new_snapshots()
+      turn = snapshot.turns[turn_id]
+
+      assert turn.status == :terminal
+      assert turn.outcome == :cancelled
+
+      statuses =
+        Enum.map(turn.invocation_order, &snapshot.invocations[&1].status)
+
+      assert Enum.all?(statuses, &(&1 == :cancelled))
+    end
+
+    test "every published snapshot during a full compare turn stays transaction-consistent" do
+      %{engine: engine} = start_isolated_engine(agent_delay_ms: 0)
+      Engine.subscribe(engine)
+      room_id = default_room_id(engine)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(room_id, "Compare these drafts", :compare, engine)
+
+      snapshots = collect_snapshots_until(&turn_terminal?(&1, turn_id))
+      assert Enum.all?(snapshots, &referentially_consistent?/1)
+
+      user_message_id =
+        case Engine.snapshot(engine).turns[turn_id] do
+          %{user_message_id: message_id} -> message_id
+        end
+
+      assert Enum.any?(snapshots, fn snapshot ->
+               Map.has_key?(snapshot.messages, user_message_id) and
+                 Map.has_key?(snapshot.turns, turn_id)
+             end)
+
+      final_snapshot = Enum.reverse(snapshots) |> hd()
+      assert final_snapshot == Engine.snapshot(engine)
+    end
+
+    test "squad stage and gate transitions publish transaction-consistent snapshots" do
+      %{engine: engine} =
+        start_isolated_engine(agent_delay_ms: 0, simulator_opts: [delay_ms: 0, seed: 123])
+
+      room_id = default_room_id(engine)
+      role_ids = Enum.map(Squad.roles(), & &1.id)
+
+      assert :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
+      Engine.subscribe(engine)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(room_id, "Run the squad workflow", :squad, engine)
+
+      # The human-owned release gate parks the turn on a pending review.
+      pre_gate = collect_snapshots_until(&pending_gate_review?(&1, turn_id))
+      assert Enum.all?(pre_gate, &referentially_consistent?/1)
+
+      %{id: review_id} = Engine.snapshot(engine).turns[turn_id].squad.pending_review
+      assert :ok = Engine.resolve_gate(turn_id, review_id, :approve, nil, [], engine)
+
+      post_gate = collect_snapshots_until(&turn_terminal?(&1, turn_id))
+
+      assert Enum.all?(pre_gate ++ post_gate, &referentially_consistent?/1)
+
+      assert Enum.any?(post_gate, fn snapshot ->
+               case snapshot.turns[turn_id] do
+                 %{status: :terminal, outcome: :completed} -> true
+                 _other -> false
+               end
+             end)
+    end
+  end
+
+  defp new_snapshots(collected \\ []) do
+    receive do
+      {:projection_snapshot, snapshot} -> new_snapshots([snapshot | collected])
+    after
+      100 -> Enum.reverse(collected)
+    end
+  end
+
+  # Blocking collection keeps every broadcast and stops at the first snapshot
+  # matching the predicate, so assertions see the full published history.
+  defp collect_snapshots_until(matcher, timeout \\ 15_000) do
+    collect_snapshots_until(matcher, deadline(timeout), [])
+  end
+
+  defp collect_snapshots_until(matcher, deadline, collected) do
+    receive do
+      {:projection_snapshot, snapshot} ->
+        collected = [snapshot | collected]
+
+        if matcher.(snapshot) do
+          Enum.reverse(collected)
+        else
+          collect_snapshots_until(matcher, deadline, collected)
+        end
+    after
+      remaining = max(deadline - System.monotonic_time(:millisecond), 0) ->
+        flunk("timed out collecting projection snapshots: #{remaining}")
+    end
+  end
+
+  defp deadline(timeout), do: System.monotonic_time(:millisecond) + timeout
+
+  defp turn_terminal?(projection, turn_id),
+    do: match?(%{status: :terminal}, projection.turns[turn_id])
+
+  defp pending_gate_review?(projection, turn_id) do
+    case projection.turns[turn_id] do
+      %{squad: %{pending_review: review}} when not is_nil(review) -> true
+      _other -> false
+    end
+  end
+
+  # Polling reads the projection directly so the test's mailbox keeps every
+  # published broadcast intact for subsequent consistency assertions.
+  defp poll_projection(engine, matcher, attempts \\ 300)
+
+  defp poll_projection(_engine, _matcher, 0), do: flunk("projection condition was not met")
+
+  defp poll_projection(engine, matcher, attempts) do
+    case matcher.(Engine.snapshot(engine)) do
+      nil ->
+        Process.sleep(10)
+        poll_projection(engine, matcher, attempts - 1)
+
+      result ->
+        result
+    end
+  end
+
+  defp referentially_consistent?(projection) do
+    turn_ids = MapSet.new(Map.keys(projection.turns))
+
+    messages_attached? =
+      Enum.all?(projection.messages, fn {_id, message} ->
+        message.turn_id == nil or MapSet.member?(turn_ids, message.turn_id)
+      end)
+
+    invocations_attached? =
+      Enum.all?(projection.invocations, fn {_id, invocation} ->
+        MapSet.member?(turn_ids, invocation.turn_id) and
+          Map.has_key?(projection.messages, invocation.message_id)
+      end)
+
+    rooms_attached? =
+      Enum.all?(projection.rooms, fn {_id, room} ->
+        active_attached? =
+          room.active_turn_id == nil or MapSet.member?(turn_ids, room.active_turn_id)
+
+        queued_attached? = Enum.all?(room.queued_turn_ids, &MapSet.member?(turn_ids, &1))
+        active_attached? and queued_attached?
+      end)
+
+    messages_attached? and invocations_attached? and rooms_attached?
   end
 
   defp flush_projection_snapshots do

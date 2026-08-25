@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.Invocation do
   @moduledoc "A durable provider execution in the orchestration projection."
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.{Participant, ProviderRound, ToolRun}
+  alias ReyCode.Orchestration.{Participant, ProviderRound, ToolAsk, ToolRun}
   alias ReyCode.Orchestration.Squad.Seat
 
   @fields [
@@ -75,7 +75,7 @@ defmodule ReyCode.Orchestration.Invocation do
           rounds: [ProviderRound.t()],
           tool_runs: %{optional(String.t()) => ToolRun.t()},
           tool_run_order: [String.t()],
-          pending_tool_review: map() | nil,
+          pending_tool_review: ToolAsk.t() | nil,
           completion_metadata: map() | nil,
           last_frame_sequence: non_neg_integer(),
           error: Failure.t() | nil
@@ -97,6 +97,7 @@ defmodule ReyCode.Orchestration.Invocation do
           Map.new(invocation.tool_runs || %{}, fn {id, run} ->
             {id, ToolRun.from_map(run)}
           end),
+        pending_tool_review: optional_tool_ask(invocation.pending_tool_review),
         error: optional_failure(invocation.error)
     }
   end
@@ -109,4 +110,7 @@ defmodule ReyCode.Orchestration.Invocation do
 
   defp optional_failure(nil), do: nil
   defp optional_failure(value), do: Failure.from_map(value)
+
+  defp optional_tool_ask(nil), do: nil
+  defp optional_tool_ask(review), do: ToolAsk.from_map(review)
 end

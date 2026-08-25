@@ -44,6 +44,10 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ToolRun** — Durable authorization and execution lifecycle for one ToolCall.
 
+**ToolAsk** — Pending owner decision recorded when a ToolRun execution needs approval, addressed by request id.
+
+**Author** — Typed attribution of a Message to the Operator or the executing Participant or Seat.
+
 **Failure** — Internal typed description of a failure category, message, retryability, and optional cause.
 
 ## Provider discovery
@@ -71,6 +75,10 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **Cycle** — Number of times work has entered or repeated a Phase.
 
 **Artifact** — Durable output claimed for a Phase and Role.
+
+**Retry** — Recorded provider retry or leader rework scheduled on a squad Turn.
+
+**Directive** — Operator guidance recorded on a running squad Turn.
 
 **GateRecommendation** — Automated Squad Leader recommendation at a gate.
 
