@@ -2,6 +2,7 @@ defmodule ReyCode.RuntimeConfig.Orchestration do
   @moduledoc "Concurrency, queueing, and pacing policy for orchestration."
 
   @enforce_keys [
+    :context_budget_tokens,
     :global_concurrency,
     :workspace_concurrency,
     :global_queue_limit,
@@ -12,7 +13,9 @@ defmodule ReyCode.RuntimeConfig.Orchestration do
 
   @type limit :: pos_integer() | :infinity
   @type queue_limit :: non_neg_integer() | :infinity
+
   @type t :: %__MODULE__{
+          context_budget_tokens: pos_integer(),
           global_concurrency: limit(),
           workspace_concurrency: limit(),
           global_queue_limit: queue_limit(),

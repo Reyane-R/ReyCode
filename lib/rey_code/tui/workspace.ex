@@ -7,7 +7,7 @@ defmodule ReyCode.TUI.Workspace do
 
   alias Breeze.{Component, View}
 
-  @doc "Opens the selected room's workspace path."
+  @doc "Opens the current session's workspace path."
   @spec open(map()) :: map()
   def open(term), do: Component.assign(term, modal: :workspace, slash: nil, notice: nil)
 
@@ -34,15 +34,15 @@ defmodule ReyCode.TUI.Workspace do
 
   attr :term, :map, required: true
 
-  @doc "Renders the room's absolute workspace path."
+  @doc "Renders the session's absolute workspace path."
   def modal(assigns) do
     ~H"""
     <box class="w-screen h-screen bg px-4 pt-3">
       <box class="w-full border-b border-muted pb-1">
-        <box class="font-bold text-primary">Room workspace</box>
-        <box class="text-muted">OpenCode runs with this exact working directory.</box>
+        <box class="font-bold text-primary">Workspace</box>
+        <box class="text-muted">The Assistant and task agents run in this directory.</box>
       </box>
-      <box class="pt-3 text-muted">ABSOLUTE PATH</box>
+      <box class="pt-3 text-muted">WORKSPACE PATH</box>
       <box class="pt-1 w-full">
         {wrap_workspace(@term.room.workspace, @term.breeze.terminal.width - 8)}
       </box>

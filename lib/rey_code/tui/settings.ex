@@ -1,8 +1,8 @@
 defmodule ReyCode.TUI.Settings do
-  @moduledoc "State and input handling for the room-agent settings wizard."
+  @moduledoc "State and input handling for the agent model settings wizard."
 
   alias Breeze.{Component, View}
-  alias ReyCode.Orchestration.{Engine, Squad}
+  alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.{Catalog, Presentation, Registry}
 
   @doc "Keeps global focus unchanged while the wizard is open."
@@ -43,7 +43,7 @@ defmodule ReyCode.TUI.Settings do
   @spec handle_event(term(), map(), map()) :: {:noreply, map()} | :unhandled
   def handle_event(_event, _payload, _term), do: :unhandled
 
-  @doc "Returns the initial settings-wizard state for an optional room."
+  @doc "Returns the initial settings-wizard state for an optional session."
   @spec initial(String.t() | nil) :: map()
   def initial(room_id \\ nil) do
     %{
@@ -56,7 +56,7 @@ defmodule ReyCode.TUI.Settings do
     }
   end
 
-  @doc "Opens the settings wizard for the currently selected room."
+  @doc "Opens the settings wizard for the current session."
   @spec open(map()) :: map()
   def open(term) do
     Component.assign(term,
@@ -64,6 +64,18 @@ defmodule ReyCode.TUI.Settings do
       settings: initial(term.assigns.selected_room_id),
       notice: nil
     )
+  end
+
+  @doc "Opens runtime selection for one newly created task participant."
+  @spec open_for(map(), String.t()) :: map()
+  def open_for(term, participant_id) do
+    settings = %{
+      initial(term.assigns.selected_room_id)
+      | step: :providers,
+        participant_ids: [participant_id]
+    }
+
+    Component.assign(term, modal: :settings, settings: settings, notice: nil)
   end
 
   @doc "Moves the selected option by an offset, wrapping at either end."
@@ -196,16 +208,13 @@ defmodule ReyCode.TUI.Settings do
     end)
   end
 
-  @doc "Returns participant-selection options for the current orchestration mode."
+  @doc "Returns configurable agent options for the current session."
   @spec participant_options(map(), atom()) :: [map()]
-  def participant_options(_room, :squad) do
-    [%{label: "All squad roles", ids: Enum.map(Squad.roles(), & &1.id)}] ++
-      Enum.map(Squad.roles(), &%{label: &1.name, ids: [&1.id]})
-  end
-
   def participant_options(room, _mode) do
-    [%{label: "All agents", ids: Enum.map(room.participants, & &1.id)}] ++
-      Enum.map(room.participants, &%{label: &1.name, ids: [&1.id]})
+    participants = Enum.reject(room.participants, &(Map.get(&1, :kind) == :legacy))
+
+    [%{label: "All agents", ids: Enum.map(participants, & &1.id)}] ++
+      Enum.map(participants, &%{label: &1.name, ids: [&1.id]})
   end
 
   @doc "Returns configured provider entries in registry display order."
@@ -261,12 +270,7 @@ defmodule ReyCode.TUI.Settings do
   end
 
   defp save(term, provider, model) do
-    configure =
-      if term.assigns.mode == :squad,
-        do: &Engine.configure_squad_roles/5,
-        else: &Engine.configure_participants/5
-
-    case configure.(
+    case Engine.configure_participants(
            term.assigns.settings.room_id,
            term.assigns.settings.participant_ids,
            provider,

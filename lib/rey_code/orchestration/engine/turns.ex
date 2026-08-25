@@ -5,27 +5,37 @@ defmodule ReyCode.Orchestration.Engine.Turns do
   alias ReyCode.Orchestration.{EventEntries, Squad, Validation}
   alias ReyCode.Provider.Catalog
 
-  @modes [:compare, :debate, :fan_out, :squad]
+  @modes [:direct, :compare, :debate, :fan_out, :squad]
 
   @type response :: {:reply, term(), map()}
 
   @doc "Validates and queues one user message for orchestration."
   @spec post_message(map(), term(), term(), term()) :: response()
   def post_message(state, room_id, raw_body, mode) do
+    queue(state, room_id, raw_body, mode, nil)
+  end
+
+  @doc "Validates and queues one task addressed to a task participant."
+  @spec delegate_task(map(), term(), term(), term()) :: response()
+  def delegate_task(state, room_id, participant_id, raw_body) do
+    queue(state, room_id, raw_body, :delegate, participant_id)
+  end
+
+  defp queue(state, room_id, raw_body, mode, participant_id) do
     cond do
       not Map.has_key?(state.projection.rooms, room_id) ->
         {:reply, {:error, :room_not_found}, state}
 
-      mode not in @modes ->
+      mode not in [:delegate | @modes] ->
         {:reply, {:error, :invalid_mode}, state}
 
       true ->
         room = state.projection.rooms[room_id]
 
         with {:ok, body} <- Validation.message(raw_body),
-             :ok <- runtime_preflight(room, mode, state),
+             :ok <- runtime_preflight(room, mode, participant_id, state),
              :ok <- Admission.admit_turn(room, state) do
-          Lifecycle.queue_message(state, room_id, body, mode)
+          Lifecycle.queue_message(state, room_id, body, mode, participant_id)
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -73,7 +83,7 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     end
   end
 
-  defp runtime_preflight(room, :squad, state) do
+  defp runtime_preflight(room, :squad, _participant_id, state) do
     configured = room.squad_seats
 
     missing =
@@ -89,13 +99,33 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     if missing == [], do: :ok, else: {:error, {:squad_seats_unconfigured, missing}}
   end
 
-  defp runtime_preflight(room, _mode, state) do
+  defp runtime_preflight(room, :direct, nil, state) do
+    room.participants
+    |> Enum.find(&(&1.kind == :primary))
+    |> participant_preflight(state)
+  end
+
+  defp runtime_preflight(room, :delegate, participant_id, state) do
+    room.participants
+    |> Enum.find(&(&1.id == participant_id and &1.kind == :task))
+    |> participant_preflight(state)
+  end
+
+  defp runtime_preflight(room, _mode, _participant_id, state) do
     missing =
       room.participants
       |> Enum.reject(&runtime_ready?(&1, state))
       |> Enum.map(& &1.id)
 
     if missing == [], do: :ok, else: {:error, {:participants_unconfigured, missing}}
+  end
+
+  defp participant_preflight(nil, _state), do: {:error, :participant_not_found}
+
+  defp participant_preflight(participant, state) do
+    if runtime_ready?(participant, state),
+      do: :ok,
+      else: {:error, {:participants_unconfigured, [participant.id]}}
   end
 
   defp runtime_ready?(participant, state) do

@@ -33,7 +33,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                [aggregate_type: :room, aggregate_id: "room-1", room_id: "room-1"]
              }
 
-    assert EventEntries.queue_turn("room-1", "Ship it", :debate, "turn-1", "msg-1", 7) == [
+    assert EventEntries.queue_turn("room-1", "Ship it", :debate, "turn-1", "msg-1", 7, nil) == [
              {
                :message_posted,
                %{
@@ -57,7 +57,8 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "room_id" => "room-1",
                  "user_message_id" => "msg-1",
                  "mode" => "debate",
-                 "context_through_sequence" => 7
+                 "context_through_sequence" => 7,
+                 "participant_id" => nil
                },
                @turn_metadata
              }
@@ -324,7 +325,8 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
       name: "Builder",
       perspective: "implementation",
       provider: :simulator,
-      model: nil
+      model: nil,
+      kind: :task
     }
 
     room = %{id: "room-1", participants: [participant]}
@@ -350,7 +352,8 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                    "name" => "Builder",
                    "perspective" => "implementation",
                    "provider" => "simulator",
-                   "model" => nil
+                   "model" => nil,
+                   "kind" => "task"
                  },
                  "stage" => 0,
                  "phase" => "independent response",

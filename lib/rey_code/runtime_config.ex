@@ -99,6 +99,7 @@ defmodule ReyCode.RuntimeConfig do
   defp assemble(values) do
     %__MODULE__{
       orchestration: %Orchestration{
+        context_budget_tokens: values.context_budget_tokens,
         global_concurrency: values.global_concurrency,
         workspace_concurrency: values.workspace_concurrency,
         global_queue_limit: values.global_queue_limit,

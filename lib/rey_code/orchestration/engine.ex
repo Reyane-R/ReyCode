@@ -12,6 +12,7 @@ defmodule ReyCode.Orchestration.Engine do
     Lifecycle,
     Loop,
     Options,
+    OwnerCommand,
     Persistence,
     Rooms,
     Turns,
@@ -57,11 +58,37 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:create_room, title, workspace})
   end
 
+  @doc "Creates a fresh durable session titled from its first input."
+  @spec create_session(term(), term(), GenServer.server()) :: {:ok, String.t()} | {:error, atom()}
+  def create_session(source_room_id, title, server \\ __MODULE__) do
+    GenServer.call(server, {:create_session, source_room_id, title})
+  end
+
+  @doc "Runs one owner-typed shell command and records its transcript message."
+  @spec run_owner_command(term(), term(), GenServer.server()) :: :ok | {:error, atom()}
+  def run_owner_command(room_id, command, server \\ __MODULE__) do
+    GenServer.call(server, {:run_owner_command, room_id, command})
+  end
+
+  @doc "Adds one durable task participant to a room."
+  @spec add_task_participant(term(), term(), term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, atom()}
+  def add_task_participant(room_id, name, responsibility, server \\ __MODULE__) do
+    GenServer.call(server, {:add_task_participant, room_id, name, responsibility})
+  end
+
   @doc "Queues a user message for orchestration in the requested mode."
   @spec post_message(term(), term(), term(), GenServer.server()) ::
           {:ok, String.t()} | {:error, term()}
   def post_message(room_id, body, mode, server \\ __MODULE__) do
     GenServer.call(server, {:post_message, room_id, body, mode})
+  end
+
+  @doc "Queues one explicit task for one task participant."
+  @spec delegate_task(term(), term(), term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, term()}
+  def delegate_task(room_id, participant_id, task, server \\ __MODULE__) do
+    GenServer.call(server, {:delegate_task, room_id, participant_id, task})
   end
 
   @doc "Cancels an unfinished turn and its outstanding provider invocations."
@@ -132,8 +159,9 @@ defmodule ReyCode.Orchestration.Engine do
       event_store: event_store,
       agent_supervisor: Keyword.get(opts, :agent_supervisor, ReyCode.AgentSupervisor),
       agent_registry: Keyword.get(opts, :agent_registry, ReyCode.AgentRegistry),
-      event_registry: Keyword.get(opts, :event_registry, ReyCode.EventRegistry),
       provider_catalog: Keyword.get(opts, :provider_catalog, Catalog),
+      task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
+      event_registry: Keyword.get(opts, :event_registry, ReyCode.EventRegistry),
       agent_monitors: %{},
       execution_queue: [],
       queued_execution_ids: MapSet.new(),
@@ -145,7 +173,7 @@ defmodule ReyCode.Orchestration.Engine do
       name: Keyword.get(opts, :name, __MODULE__)
     }
 
-    state = Lifecycle.ensure_default_room(state)
+    state = state |> Lifecycle.ensure_default_room() |> Lifecycle.ensure_primary_participants()
     {:ok, state, {:continue, :recover}}
   end
 
@@ -182,8 +210,20 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:create_room, raw_title, workspace}, _from, state),
     do: Rooms.create(state, raw_title, workspace)
 
+  def handle_call({:create_session, source_room_id, title}, _from, state),
+    do: Rooms.create_session(state, source_room_id, title)
+
+  def handle_call({:run_owner_command, room_id, command}, _from, state),
+    do: OwnerCommand.run(state, room_id, command)
+
+  def handle_call({:add_task_participant, room_id, name, responsibility}, _from, state),
+    do: Rooms.add_task_participant(state, room_id, name, responsibility)
+
   def handle_call({:post_message, room_id, raw_body, mode}, _from, state),
     do: Turns.post_message(state, room_id, raw_body, mode)
+
+  def handle_call({:delegate_task, room_id, participant_id, task}, _from, state),
+    do: Turns.delegate_task(state, room_id, participant_id, task)
 
   def handle_call(
         {:configure_participants, room_id, participant_ids, provider, model},
@@ -251,6 +291,9 @@ defmodule ReyCode.Orchestration.Engine do
           raw_target_phase,
           raw_reasons
         )
+
+  def handle_info({:owner_command_result, room_id, message_id, command, result}, state),
+    do: OwnerCommand.finish(state, room_id, message_id, command, result)
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do

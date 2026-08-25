@@ -207,12 +207,12 @@ defmodule ReyCode.AgentLoopApprovalTest do
     started = events_of_type(store, :tool_run_started)
     completed = events_of_type(store, :tool_run_completed)
 
-    assert length(started) == 3
-    assert length(completed) == 3
+    assert length(started) == 1
+    assert length(completed) == 1
     assert Enum.all?(completed, &(&1.data["result"]["ok"] == true))
 
     rounds = events_of_type(store, :provider_round_recorded)
-    assert length(rounds) == 6
+    assert length(rounds) == 2
 
     snapshot = Engine.snapshot(@engine)
 
@@ -296,22 +296,22 @@ defmodule ReyCode.AgentLoopApprovalTest do
 
     projection =
       Wait.projection(@engine, fn value ->
-        if length(waiting_invocations(value, turn_id)) == 3, do: value
+        if length(waiting_invocations(value, turn_id)) == 1, do: value
       end)
 
-    assert length(waiting_invocations(projection, turn_id)) == 3
+    assert length(waiting_invocations(projection, turn_id)) == 1
     assert events_of_type(store, :tool_run_started) == []
 
     :ok = GenServer.stop(@engine)
     assert {:ok, _restarted} = Engine.start_link(engine_opts(store))
 
-    # Dormant after restart: still exactly three waiting approvals, nothing executed.
+    # Dormant after restart: the approval remains waiting and nothing executes.
     restarted =
       Wait.projection(@engine, fn value ->
-        if length(waiting_invocations(value, turn_id)) == 3, do: value
+        if length(waiting_invocations(value, turn_id)) == 1, do: value
       end)
 
-    assert length(waiting_invocations(restarted, turn_id)) == 3
+    assert length(waiting_invocations(restarted, turn_id)) == 1
     assert events_of_type(store, :tool_run_started) == []
     refute File.exists?(out_path)
 
@@ -320,8 +320,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
     assert turn.outcome == :completed
     assert File.read!(out_path) == "approved-content"
 
-    assert length(events_of_type(store, :tool_run_started)) == 3
-    assert length(events_of_type(store, :tool_run_completed)) == 3
+    assert length(events_of_type(store, :tool_run_started)) == 1
+    assert length(events_of_type(store, :tool_run_completed)) == 1
   end
 
   test "cancelling a turn cancels waiting approvals durably", %{workspace_a: workspace} do
@@ -394,18 +394,17 @@ defmodule ReyCode.AgentLoopApprovalTest do
       end
     end)
 
-    # Room A's three participants all wait for approval and hold no slot, so
-    # Room B's invocation still starts (and reaches its own approval) under a
-    # global concurrency of one.
+    # Room A's participant waits for approval and holds no slot, so Room B's
+    # invocation still starts under a global concurrency of one.
     assert {:ok, _turn_b} = Engine.post_message(room_b, "Write it too", :compare, @engine)
 
     Wait.projection(@engine, fn value ->
-      if waiting_count(value) == 6, do: value
+      if waiting_count(value) == 2, do: value
     end)
 
     snapshot = Engine.snapshot(@engine)
 
-    assert waiting_count(snapshot) == 6
+    assert waiting_count(snapshot) == 2
 
     # The queue drains nothing while every execution is a paused approval.
     assert events_of_type(store, :tool_run_started) == []

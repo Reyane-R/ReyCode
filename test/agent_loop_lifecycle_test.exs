@@ -125,7 +125,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
 
     rounds = per_invocation(events_of_type(store, :provider_round_recorded))
 
-    assert map_size(rounds) == 3
+    assert map_size(rounds) == 1
 
     Enum.each(rounds, fn {_invocation_id, invocation_rounds} ->
       assert length(invocation_rounds) == 2
@@ -145,12 +145,12 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     started = events_of_type(store, :tool_run_started)
     completed = events_of_type(store, :tool_run_completed)
 
-    assert length(requested) == 3
+    assert length(requested) == 1
     assert Enum.all?(requested, &(&1.data["authorization"] == "allow"))
     assert Enum.all?(requested, &(&1.data["tool"] == "read"))
 
-    assert length(started) == 3
-    assert length(completed) == 3
+    assert length(started) == 1
+    assert length(completed) == 1
     assert Enum.all?(completed, &(&1.data["result"]["ok"] == true))
     assert Enum.all?(completed, &(&1.data["result"]["output"] =~ "tool-loop-content"))
 
@@ -178,8 +178,8 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     started = events_of_type(store, :tool_run_started)
     failed = events_of_type(store, :tool_run_failed)
 
-    assert length(started) == 3
-    assert length(failed) == 3
+    assert length(started) == 1
+    assert length(failed) == 1
     assert events_of_type(store, :tool_run_completed) == []
 
     assert Enum.all?(failed, fn event ->
@@ -302,7 +302,7 @@ defmodule ReyCode.AgentLoopLifecycleTest do
 
     rounds = per_invocation(events_of_type(store, :provider_round_recorded))
 
-    assert map_size(rounds) == 3
+    assert map_size(rounds) == 1
 
     Enum.each(rounds, fn {_invocation_id, invocation_rounds} ->
       tool_rounds =
@@ -319,8 +319,8 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     started = events_of_type(store, :tool_run_started)
     completed = events_of_type(store, :tool_run_completed)
 
-    assert length(started) == 6
-    assert length(completed) == 6
+    assert length(started) == 2
+    assert length(completed) == 2
     assert Enum.all?(completed, &(&1.data["result"]["ok"] == true))
 
     snapshot = Engine.snapshot(@engine)

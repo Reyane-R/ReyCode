@@ -7,6 +7,8 @@ defmodule ReyCode.Orchestration.Validation do
   @max_room_title 120
   @max_message_bytes 100_000
   @max_directive 2_000
+  @max_participant_name 80
+  @max_participant_responsibility 2_000
   @max_model_id 512
   @max_cancellation_reason_bytes 1_000
   @max_gate_reason_bytes 1_000
@@ -26,6 +28,36 @@ defmodule ReyCode.Orchestration.Validation do
   @spec message(term()) :: {:ok, String.t()} | {:error, atom()}
   def message(body) do
     text(body, :empty_message, :invalid_message, @max_message_bytes, :bytes)
+  end
+
+  @doc "Validates the display title derived for a new session."
+  @spec session_title(term()) :: {:ok, String.t()} | {:error, atom()}
+  def session_title(title), do: text(title, :empty_title, :invalid_title, @max_room_title)
+
+  @doc "Validates an owner-typed shell command."
+  @spec owner_command(term()) :: {:ok, String.t()} | {:error, atom()}
+  def owner_command(command),
+    do: text(command, :empty_command, :invalid_command, 2_000, :bytes)
+
+  @doc "Validates a user-created task participant profile."
+  @spec task_participant(term(), term()) :: {:ok, String.t(), String.t()} | {:error, atom()}
+  def task_participant(name, responsibility) do
+    with {:ok, name} <-
+           text(
+             name,
+             :participant_name_required,
+             :invalid_participant_name,
+             @max_participant_name
+           ),
+         {:ok, responsibility} <-
+           text(
+             responsibility,
+             :participant_responsibility_required,
+             :invalid_participant_responsibility,
+             @max_participant_responsibility
+           ) do
+      {:ok, name, responsibility}
+    end
   end
 
   @spec model(term()) :: {:ok, String.t()} | {:error, atom()}

@@ -1,5 +1,5 @@
 defmodule ReyCode.TUI.Components.SettingsModal do
-  @moduledoc "Renders the room-agent settings wizard."
+  @moduledoc "Renders the agent model settings wizard."
 
   use Breeze.Component
 
@@ -8,17 +8,17 @@ defmodule ReyCode.TUI.Components.SettingsModal do
 
   attr :term, :map, required: true
 
-  @doc "Renders the settings wizard for the active room."
+  @doc "Renders the settings wizard for the current session."
   def modal(assigns) do
     ~H"""
     <box class="w-screen h-screen bg px-4 pt-2">
       <box class="inline w-full border-b border-muted pb-1">
-        <box class="font-bold text-primary">Configure room agents</box>
+        <box class="font-bold text-primary">Configure agents</box>
         <box class="w-full text-right text-muted">{header_controls(@term.settings.step)}</box>
       </box>
-      <box class="pt-1 text-muted">#{@term.room.slug}  /  {step_label(@term.settings.step)}</box>
+      <box class="pt-1 text-muted">{step_label(@term.settings.step)}</box>
       <box :if={@term.settings.step == :participants} class="pt-2 w-full">
-        <box class="font-bold">Who should use this runtime?</box>
+        <box class="font-bold">Choose an agent</box>
         <box
           :for={{option, index} <- Enum.with_index(Settings.participant_options(@term.room, @term.mode))}
           class={row_class(index, @term.settings.index)}

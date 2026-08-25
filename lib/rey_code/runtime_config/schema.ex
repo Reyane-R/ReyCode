@@ -8,6 +8,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
   defp settings do
     [
       # Orchestration limits
+      {:context_budget_tokens, fn -> 200_000 end, {:integer, 1}},
       {:global_concurrency, fn -> 2 end, :limit},
       {:workspace_concurrency, fn -> 1 end, :limit},
       {:global_queue_limit, fn -> 100 end, :queue_limit},

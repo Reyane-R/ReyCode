@@ -1,8 +1,5 @@
 defmodule ReyCode.TUI.Cancellation do
-  @moduledoc """
-  State, input handling, and rendering for cancelling the selected room's
-  active turn.
-  """
+  @moduledoc "State, input handling, and rendering for cancelling active session work."
 
   use Breeze.Component
 
@@ -31,11 +28,11 @@ defmodule ReyCode.TUI.Cancellation do
       :ok ->
         {:noreply,
          term
-         |> Component.assign(modal: nil, cancel_turn_id: nil, notice: "Turn cancelled")
+         |> Component.assign(modal: nil, cancel_turn_id: nil, notice: "Task cancelled")
          |> View.focus("prompt")}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not cancel turn: #{reason}")}
+        {:noreply, Component.assign(term, notice: "Could not cancel task: #{reason}")}
     end
   end
 
@@ -68,10 +65,10 @@ defmodule ReyCode.TUI.Cancellation do
     ~H"""
     <box class="w-screen h-screen bg px-4 pt-3">
       <box class="w-full border-b border-muted pb-1">
-        <box class="font-bold text-error">Cancel running turn</box>
-        <box class="text-muted">This stops active agent work and marks the turn cancelled.</box>
+        <box class="font-bold text-error">Cancel current task</box>
+        <box class="text-muted">This stops the active agent invocation.</box>
       </box>
-      <box class="pt-3 text-muted">TURN</box>
+      <box class="pt-3 text-muted">TASK ID</box>
       <box class="pt-1 w-full">{@term.cancel_turn_id}</box>
       <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
       <box class="pt-3 text-muted">Enter cancel   Esc keep running</box>

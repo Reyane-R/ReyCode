@@ -12,9 +12,8 @@ defmodule ReyCode.TUI.Render do
     ~H"""
     <.main_screen
       modal={@modal}
-      show_sidebar={@show_sidebar?}
-      rooms={@rooms}
-      selected_room_id={@selected_room_id}
+      home={@home}
+      recent_session_rows={@recent_session_rows}
       mode={@mode}
       room={@room}
       projection={@projection}
@@ -22,11 +21,16 @@ defmodule ReyCode.TUI.Render do
       messages={@messages}
       timeline_id={@timeline_id}
       message_width={@message_width}
+      slash_rows={@slash_rows}
+      slash_style={@slash_style}
+      git_branch={@git_branch}
+      token_label={@token_label}
+      elapsed_seconds={@elapsed_seconds}
+      terminal_width={@breeze.terminal.width}
+      terminal_height={@breeze.terminal.height}
       draft={@draft}
       notice={@notice}
       slash={@slash}
-      terminal_width={@breeze.terminal.width}
-      terminal_height={@breeze.terminal.height}
     />
     <.active term={assigns}/>
     """

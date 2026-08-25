@@ -4,26 +4,13 @@ defmodule ReyCode.Orchestration.Engine.Options do
   alias ReyCode.RuntimeConfig
   alias ReyCode.RuntimeConfig.{Orchestration, Providers}
 
-  @participant_templates [
-    %{
-      "id" => "builder",
-      "name" => "Builder",
-      "perspective" => "pragmatic implementation",
-      "model" => nil
-    },
-    %{
-      "id" => "critic",
-      "name" => "Critic",
-      "perspective" => "risks and failure modes",
-      "model" => nil
-    },
-    %{
-      "id" => "explorer",
-      "name" => "Explorer",
-      "perspective" => "alternatives and leverage",
-      "model" => nil
-    }
-  ]
+  @primary_participant %{
+    "id" => "assistant",
+    "name" => "Assistant",
+    "perspective" => "general coding assistance",
+    "model" => nil,
+    "kind" => "primary"
+  }
 
   @doc "Returns validated global and workspace execution limits."
   @spec execution_limits(keyword(), Orchestration.t()) :: map()
@@ -36,11 +23,10 @@ defmodule ReyCode.Orchestration.Engine.Options do
     }
   end
 
-  @doc "Builds the fixed participant templates with the configured default provider."
+  @doc "Builds the room's single primary participant with the configured default provider."
   @spec default_participants(Providers.t()) :: [map()]
   def default_participants(policy \\ RuntimeConfig.fresh().providers) do
-    provider = Atom.to_string(policy.default_provider)
-    Enum.map(@participant_templates, &Map.put(&1, "provider", provider))
+    [Map.put(@primary_participant, "provider", Atom.to_string(policy.default_provider))]
   end
 
   defp execution_limit(opts, policy, option, allow_zero?) do

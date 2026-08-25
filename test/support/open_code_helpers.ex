@@ -1,7 +1,7 @@
 defmodule ReyCode.Test.OpenCodeHelpers do
   @moduledoc false
 
-  alias ReyCode.Provider.{OpenCode, Request, Runtime}
+  alias ReyCode.Provider.{Message, OpenCode, Request, Runtime}
   alias ReyCode.RuntimeConfig
 
   def request do
@@ -18,7 +18,7 @@ defmodule ReyCode.Test.OpenCodeHelpers do
         model: "openai/gpt-5.6-sol"
       },
       system_prompt: "Respond concisely",
-      messages: [%{role: :user, content: "Hello", author: %{name: "You"}}],
+      messages: [Message.new(role: :user, content: "Hello", author: %{name: "You"})],
       workspace: System.tmp_dir!(),
       resume_from: 0,
       round_index: 0

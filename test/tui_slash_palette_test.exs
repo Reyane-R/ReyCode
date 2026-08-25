@@ -4,8 +4,17 @@ defmodule ReyCode.TUI.SlashPaletteTest do
   alias ReyCode.TUI.SlashPalette
 
   test "matches/1 filters commands by prefix" do
-    assert Enum.map(SlashPalette.matches("/mo"), & &1.command) == ["/mode", "/models"]
+    assert Enum.map(SlashPalette.matches("/ag"), & &1.command) == ["/agent", "/agents"]
     assert SlashPalette.matches("/missing") == []
+  end
+
+  test "matches/1 ranks exact, prefix, substring, then subsequence" do
+    assert Enum.map(SlashPalette.matches("/mo"), & &1.command) == ["/model"]
+    assert Enum.map(SlashPalette.matches("/tl"), & &1.command) == ["/tools"]
+    assert Enum.map(SlashPalette.matches("/res"), & &1.command) == ["/resume"]
+
+    assert Enum.map(SlashPalette.matches("/"), & &1.command) ==
+             Enum.map(SlashPalette.commands(), & &1.command)
   end
 
   test "the registry is the single consistent source of commands and actions" do
@@ -45,17 +54,17 @@ defmodule ReyCode.TUI.SlashPaletteTest do
   end
 
   test "move/2 wraps around matching commands" do
-    term = term(query: "/mo")
+    term = term(query: "/ag")
 
     assert SlashPalette.move(term, -1).assigns.slash.index == 1
     assert SlashPalette.move(term, 1).assigns.slash.index == 1
   end
 
   test "complete/1 uses the first matching command" do
-    result = term(query: "/mo") |> SlashPalette.complete()
+    result = term(query: "/ag") |> SlashPalette.complete()
 
-    assert result.assigns.slash.query == "/mode"
-    assert result.assigns.drafts["room-1"] == "/mode"
+    assert result.assigns.slash.query == "/agent"
+    assert result.assigns.drafts["room-1"] == "/agent"
   end
 
   test "cancel/1 restores the original draft" do

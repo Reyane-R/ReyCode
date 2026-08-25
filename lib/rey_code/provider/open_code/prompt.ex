@@ -1,14 +1,13 @@
 defmodule ReyCode.Provider.OpenCode.Prompt do
   @moduledoc "Builds the OpenCode prompt from a normalized request."
 
-  alias ReyCode.Provider.Request
+  alias ReyCode.Provider.{Message, Request}
 
   @spec build(Request.t()) :: binary()
   def build(%Request{} = request) do
     history =
-      Enum.map_join(request.messages, "\n\n", fn message ->
-        name = get_in(message, [:author, :name]) || Atom.to_string(message.role)
-        "#{name}: #{message.content}"
+      Enum.map_join(request.messages, "\n\n", fn %Message{} = message ->
+        "#{author_name(message)}: #{message.content}"
       end)
 
     [
@@ -19,4 +18,7 @@ defmodule ReyCode.Provider.OpenCode.Prompt do
     ]
     |> Enum.join("\n\n")
   end
+
+  defp author_name(%Message{author: %{name: name}}) when is_binary(name) and name != "", do: name
+  defp author_name(%Message{role: role}), do: Atom.to_string(role)
 end

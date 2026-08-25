@@ -13,13 +13,48 @@ live in [History](#history).
 
 ## North Star
 
-ReyCode is a **standalone harness** (D20/D22): terminal-native, personal-first,
-with OpenCode's UX feel and omp-grade depth — durable rooms, orchestrated
-agents (compare/debate/fan-out/squad), and ReyCode-owned tool execution.
-OpenCode remains one provider among several during the transition, not the
-runtime. Personal-first scope (D1) still governs sequencing.
+ReyCode is a **standalone harness** (D20/D22): terminal-native,
+personal-first, with OpenCode's UX feel and omp-grade depth. The user sees
+sessions, one primary assistant, and explicit independently configured task
+agents. Internal Room aggregates and advanced orchestration workflows never
+appear in the default interface. OpenCode remains one provider among several,
+not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
+
+### D25 — Single assistant, explicit task agents (Policy — 2026-08-24)
+
+Startup presents a home screen and ordinary messages invoke exactly one Primary
+Participant. Task Participants are durable user-created profiles with a
+standing responsibility and independent provider/model selection. They run
+only when the Operator explicitly delegates a task. Fixed Builder/Critic/
+Explorer participation is retired from the default path; historical events
+remain replayable and the advanced multi-participant workflows remain explicit.
+
+This trades automatic breadth for predictable cost, legible conversation, and
+authority: adding an agent does not silently spend tokens or grant it work.
+Delegated tool use keeps the existing approval and workspace policy.
+
+Acceptance: a fresh Session has one Primary Participant; startup hides transcript
+history behind a home screen; ordinary messages create one Invocation; custom
+Task Participants persist with independent models; one explicit Delegation
+creates one Invocation for its addressed Task Participant.
+
+### D26 — Sessions hide Room aggregates (Policy — 2026-08-24)
+
+Room remains the event-sourced aggregate for compatibility, but it is not a
+user concept. Startup and `/new` create a clean durable Session on first input
+by copying the Workspace's Primary Participant and Task Participant profiles.
+`/resume` explicitly opens the latest prior Session. The TUI never renders room
+names, room navigation, channel-like `#` labels, or automatic workflow modes.
+
+This keeps persistence compatibility without forcing orchestration vocabulary
+onto ordinary coding work. A fresh Session excludes every prior transcript
+event while retaining agent profiles and their independent model selections.
+
+Acceptance: startup contains no room terminology or prior transcript; first
+input creates a distinct durable Session; `/new` creates another clean Session;
+`/resume` restores prior history; no room sidebar or mode controls are present.
 
 ### D1 — Personal-first scope (Policy)
 

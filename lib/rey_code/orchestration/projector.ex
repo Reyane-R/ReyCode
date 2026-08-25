@@ -60,6 +60,23 @@ defmodule ReyCode.Orchestration.Projector do
     }
   end
 
+  def apply(%Event{type: :participant_added, data: data} = event, state) do
+    participant =
+      participant(%{
+        "id" => data["participant_id"],
+        "name" => data["name"],
+        "perspective" => data["responsibility"],
+        "provider" => data["provider"],
+        "model" => data["model"],
+        "kind" => data["kind"]
+      })
+
+    update_room(state, data["room_id"], fn room ->
+      %{room | participants: room.participants ++ [participant]}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
   def apply(%Event{type: :participant_configured, data: data} = event, state) do
     update_room(state, data["room_id"], fn room ->
       participants =
@@ -112,6 +129,7 @@ defmodule ReyCode.Orchestration.Projector do
       room_id: data["room_id"],
       user_message_id: data["user_message_id"],
       mode: mode(data["mode"]),
+      participant_id: data["participant_id"],
       status: :queued,
       context_through_sequence: data["context_through_sequence"],
       invocation_order: [],
@@ -744,7 +762,8 @@ defmodule ReyCode.Orchestration.Projector do
       name: data["name"],
       perspective: data["perspective"],
       provider: provider(data["provider"]),
-      model: data["model"]
+      model: data["model"],
+      kind: participant_kind(data["kind"])
     }
   end
 
@@ -769,6 +788,14 @@ defmodule ReyCode.Orchestration.Projector do
 
   defp configure_participant(participant, _data), do: participant
 
+  defp participant_kind("primary"), do: :primary
+  defp participant_kind(:primary), do: :primary
+  defp participant_kind("task"), do: :task
+  defp participant_kind(:task), do: :task
+  defp participant_kind(_kind), do: :legacy
+
+  defp mode("direct"), do: :direct
+  defp mode("delegate"), do: :delegate
   defp mode("compare"), do: :compare
   defp mode("debate"), do: :debate
   defp mode("fan_out"), do: :fan_out

@@ -3,6 +3,13 @@ defmodule ReyCode.Orchestration.Engine.OptionsTest do
 
   alias ReyCode.Orchestration.Engine.Options
 
+  test "creates one primary assistant and no automatic task participants" do
+    assert [assistant] = Options.default_participants()
+    assert assistant["id"] == "assistant"
+    assert assistant["name"] == "Assistant"
+    assert assistant["kind"] == "primary"
+  end
+
   test "normalizes finite, zero queue, and infinite execution limits" do
     assert Options.execution_limits(
              global_concurrency: 3,

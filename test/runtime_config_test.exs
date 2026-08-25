@@ -166,6 +166,7 @@ defmodule ReyCode.RuntimeConfigTest do
 
   defp flatten(config) do
     %{
+      context_budget_tokens: config.orchestration.context_budget_tokens,
       global_concurrency: config.orchestration.global_concurrency,
       workspace_concurrency: config.orchestration.workspace_concurrency,
       global_queue_limit: config.orchestration.global_queue_limit,
