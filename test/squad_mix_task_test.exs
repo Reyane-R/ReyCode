@@ -5,16 +5,16 @@ defmodule ReyCode.SquadMixTaskTest do
 
   alias Mix.Tasks.ReyCode.Squad, as: SquadTask
 
-  test "live runs require OpenCode provider and model" do
+  test "live runs require provider and model" do
     Mix.Task.reenable("rey_code.squad")
 
-    assert_raise Mix.Error, ~r/--provider opencode/, fn ->
+    assert_raise Mix.Error, ~r/--provider PROVIDER/, fn ->
       Mix.Task.run("rey_code.squad", ["A theme"])
     end
 
     Mix.Task.reenable("rey_code.squad")
 
-    assert_raise Mix.Error, ~r/--model provider\/model/, fn ->
+    assert_raise Mix.Error, ~r/--model MODEL/, fn ->
       Mix.Task.run("rey_code.squad", ["--provider", "opencode", "A theme"])
     end
   end
@@ -28,7 +28,7 @@ defmodule ReyCode.SquadMixTaskTest do
 
     Mix.Task.reenable("rey_code.squad")
 
-    assert_raise Mix.Error, ~r/--provider opencode/, fn ->
+    assert_raise Mix.Error, ~r/--provider PROVIDER/, fn ->
       Mix.Task.run("rey_code.squad", ["--release", "wait", "A theme"])
     end
   end
@@ -69,7 +69,7 @@ defmodule ReyCode.SquadMixTaskTest do
     Application.put_env(:rey_code, :squad_rework_budget, 99)
     Mix.Task.reenable("rey_code.squad")
 
-    assert_raise Mix.Error, ~r/OpenCode model is unavailable/, fn ->
+    assert_raise Mix.Error, ~r/Provider opencode model is unavailable/, fn ->
       Mix.Task.run(
         "rey_code.squad",
         ["--provider", "opencode", "--model", "provider/model", "A theme"]
@@ -79,6 +79,15 @@ defmodule ReyCode.SquadMixTaskTest do
     assert Application.get_env(:rey_code, :start_tui) == true
     assert Application.get_env(:rey_code, :squad_release_gate_human) == true
     assert Application.get_env(:rey_code, :squad_rework_budget) == 99
+  end
+
+  test "provider resolution accepts CLI, keyed API, and keyless local profiles" do
+    config = ReyCode.RuntimeConfig.fresh()
+
+    assert SquadTask.provider_id("opencode", config) == {:ok, :opencode}
+    assert SquadTask.provider_id("deepseek", config) == {:ok, :deepseek}
+    assert SquadTask.provider_id("ollama", config) == {:ok, :ollama}
+    assert SquadTask.provider_id("unknown", config) == {:error, :unknown_provider}
   end
 
   test "live JSON summaries identify the room workspace" do

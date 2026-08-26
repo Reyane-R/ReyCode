@@ -46,8 +46,12 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
 
   @spec all(OpenAIPolicy.t()) :: [t()]
   def all(policy \\ RuntimeConfig.fresh().open_ai) do
-    (built_in() ++ policy.profiles)
-    |> Enum.uniq_by(& &1.id)
+    built_ins = built_in()
+    configured = Map.new(policy.profiles, &{Map.fetch!(&1, :id), &1})
+    built_in_ids = MapSet.new(built_ins, & &1.id)
+
+    (Enum.map(built_ins, &Map.get(configured, &1.id, &1)) ++
+       Enum.reject(policy.profiles, &MapSet.member?(built_in_ids, Map.fetch!(&1, :id))))
     |> Enum.map(&normalize(&1, policy))
   end
 
