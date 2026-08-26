@@ -402,7 +402,16 @@ defmodule ReyCode.RuntimeConfig.Schema do
 
     values
     |> Map.update!(:openai_compatible_base_url_overrides, &Map.merge(&1, base_url_overrides))
-    |> Map.update!(:openai_compatible_capability_overrides, &Map.merge(&1, capability_overrides))
+    |> Map.update!(
+      :openai_compatible_capability_overrides,
+      &merge_capability_overrides(&1, capability_overrides)
+    )
+  end
+
+  defp merge_capability_overrides(configured, environment) do
+    Map.merge(configured, environment, fn _id, configured_flags, environment_flags ->
+      Map.merge(configured_flags, environment_flags)
+    end)
   end
 
   defp capability_environment_flags(id, environment_fetch) do

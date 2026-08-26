@@ -7,8 +7,11 @@ defmodule ReyCode.RuntimeConfigTest do
 
   # Configuration tests inject an explicit settings source; they never mutate
   # the global application environment, so no serialization is required.
-  defp load_with(settings) do
-    RuntimeConfig.load(fn key, default -> Map.get(settings, key, default) end)
+  defp load_with(settings, environment \\ %{}) do
+    RuntimeConfig.load(
+      fn key, default -> Map.get(settings, key, default) end,
+      &Map.get(environment, &1)
+    )
   end
 
   test "loads every declared setting with its default when unconfigured" do
@@ -119,6 +122,19 @@ defmodule ReyCode.RuntimeConfigTest do
     assert_raise ArgumentError, ~r/failure_plan/, fn ->
       RuntimeConfig.fresh(squad_simulator: [failure_plan: :bogus])
     end
+  end
+
+  test "environment capability flags override one field without erasing configured siblings" do
+    config =
+      load_with(
+        %{openai_compatible_capability_overrides: %{deepseek: %{supports_tools: false}}},
+        %{"REYCODE_DEEPSEEK_SUPPORTS_STREAM_OPTIONS" => "false"}
+      )
+
+    assert config.open_ai.capability_overrides.deepseek == %{
+             supports_tools: false,
+             supports_stream_options: false
+           }
   end
 
   test "validates simulator options and rejects unknown explicit overrides" do

@@ -92,15 +92,27 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
-  defp downgrade(%Stream.Context{} = context, %{stream_options?: true}, _error),
-    do: run_stream(context, %{default_shape(context.profile) | stream_options?: false})
+  defp downgrade(%Stream.Context{} = context, shape, error) do
+    cond do
+      shape.stream_options? and
+          rejection_mentions?(error, ["stream_options", "stream options", "include_usage"]) ->
+        run_stream(context, %{default_shape(context.profile) | stream_options?: false})
 
-  defp downgrade(%Stream.Context{profile: profile}, %{tools?: true}, error),
-    do: {:error, tool_calls_unsupported(profile, error)}
+      shape.tools? and
+          rejection_mentions?(error, ["tools", "tool calling", "function calling", "functions"]) ->
+        {:error, tool_calls_unsupported(context.profile, error)}
 
-  # Neither optional feature was on the wire, so the rejection is not about
-  # capabilities; surface it unchanged.
-  defp downgrade(_context, _shape, error), do: {:error, error}
+      true ->
+        # A normal 400 (bad model, context limit, malformed conversation) is
+        # not capability evidence. Preserve it unchanged and do not retry.
+        {:error, error}
+    end
+  end
+
+  defp rejection_mentions?(%Failure{message: message}, needles) do
+    normalized = String.downcase(message)
+    Enum.any?(needles, &String.contains?(normalized, &1))
+  end
 
   # A remembered shape only ever suppresses features the server rejected, so
   # it intersects with today's profile: an explicit pin always wins over the
