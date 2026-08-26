@@ -74,7 +74,7 @@ defmodule ReyCode.Application do
       nil ->
         %{
           database: Path.join(data_home(), "rey_code.sqlite3"),
-          legacy: Path.join([xdg_data_home(), "rey_code", "events-v2.ndjson"])
+          legacy: Path.join([legacy_xdg_data_home(), "rey_code", "events-v2.ndjson"])
         }
 
       path ->
@@ -93,12 +93,12 @@ defmodule ReyCode.Application do
   end
 
   defp data_home do
-    Application.get_env(:rey_code, :data_dir) ||
-      if(:os.type() == {:unix, :darwin},
-        do: Path.expand("~/Library/Application Support/ReyCode"),
-        else: Path.join(xdg_data_home(), "rey_code")
-      )
+    Application.get_env(:rey_code, :data_dir) || ReyCode.Paths.data_home()
   end
 
-  defp xdg_data_home, do: System.get_env("XDG_DATA_HOME") || Path.expand("~/.local/share")
+  # The retired NDJSON store only ever lived at the XDG data location; its
+  # import path is historical fact rather than a platform convention.
+  defp legacy_xdg_data_home do
+    System.get_env("XDG_DATA_HOME") || Path.expand("~/.local/share")
+  end
 end
