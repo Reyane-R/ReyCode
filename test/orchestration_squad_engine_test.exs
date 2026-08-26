@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.SquadEngineTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.{Engine, Projector, Squad}
