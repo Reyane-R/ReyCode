@@ -80,7 +80,8 @@ defmodule ReyCode.Event do
           | :failure
           | :snapshot_binary
 
-  @modes ~w(direct delegate compare debate fan_out squad)
+  # Wire values come from the closed orchestration mode contract.
+  @modes Enum.map(ReyCode.Orchestration.Mode.all(), & &1.wire)
   @outcomes ~w(completed partial failed reworked cancelled)
   @gate_decisions ~w(approve rework abort)
   @tool_decisions ~w(approve deny)
