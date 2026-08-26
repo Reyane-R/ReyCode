@@ -9,6 +9,7 @@ defmodule ReyCode.ModelEval do
   """
 
   alias ReyCode.Orchestration.Engine
+  alias ReyCode.Provider.Catalog
 
   @poll_interval_ms 50
   @summary_max_graphemes 200
@@ -18,7 +19,8 @@ defmodule ReyCode.ModelEval do
           required(:task) => String.t(),
           required(:workspace) => String.t(),
           required(:timeout_ms) => pos_integer(),
-          optional(:json?) => boolean()
+          optional(:json?) => boolean(),
+          optional(:provider_catalog) => GenServer.server()
         }
 
   @type row :: %{
@@ -40,12 +42,13 @@ defmodule ReyCode.ModelEval do
   @spec run(options(), GenServer.server()) :: report()
   def run(options, engine \\ Engine) do
     profiles = resolve_profiles(Engine.snapshot(engine), options.agents)
+    catalog = Map.get(options, :provider_catalog, Catalog)
     title = "Model audition #{System.system_time(:millisecond)}"
     {:ok, room_id} = Engine.create_room(title, options.workspace, engine)
 
     {participant_count, setup_errors} =
       Enum.reduce(options.agents, {0, %{}}, fn name, acc ->
-        add_candidate(engine, room_id, name, Map.get(profiles, name), acc)
+        add_candidate(engine, catalog, room_id, name, Map.get(profiles, name), acc)
       end)
 
     if participant_count == 0 do
@@ -89,49 +92,90 @@ defmodule ReyCode.ModelEval do
       |> Enum.reverse()
       |> Enum.flat_map(fn room_id ->
         room = Map.fetch!(snapshot.rooms, room_id)
-        Enum.filter(room.participants, &(&1.kind == :task))
+
+        Enum.filter(room.participants, fn participant ->
+          participant.kind == :task and
+            participant.provider not in [:unconfigured, "unconfigured"]
+        end)
       end)
 
     Map.new(names, fn name -> {name, Enum.find(candidates, &(&1.name == name))} end)
   end
 
-  defp add_candidate(engine, room_id, name, profile, {count, errors}) do
+  defp add_candidate(engine, catalog, room_id, name, profile, {count, errors}) do
     responsibility = if profile, do: profile.perspective, else: "model audition candidate"
 
     case Engine.add_task_participant(room_id, name, responsibility, engine) do
       {:ok, participant_id} ->
-        configure_candidate(engine, room_id, participant_id, name, profile, {count + 1, errors})
+        configure_candidate(
+          engine,
+          catalog,
+          room_id,
+          participant_id,
+          name,
+          profile,
+          {count + 1, errors}
+        )
 
       {:error, reason} ->
         {count, Map.put(errors, name, Atom.to_string(reason))}
     end
   end
 
-  defp configure_candidate(_engine, _room_id, _participant_id, name, nil, {count, errors}) do
+  defp configure_candidate(
+         _engine,
+         _catalog,
+         _room_id,
+         _participant_id,
+         name,
+         nil,
+         {count, errors}
+       ) do
     {count, Map.put(errors, name, "agent_not_found")}
   end
 
-  defp configure_candidate(engine, room_id, participant_id, name, profile, {count, errors}) do
-    case Engine.configure_participants(
-           room_id,
-           [participant_id],
-           profile.provider,
-           profile.model,
-           engine
-         ) do
-      :ok -> {count, errors}
+  defp configure_candidate(
+         engine,
+         catalog,
+         room_id,
+         participant_id,
+         name,
+         profile,
+         {count, errors}
+       ) do
+    with {:ok, _runtime} <- Catalog.resolve_when_ready(profile.provider, profile.model, catalog),
+         :ok <-
+           Engine.configure_participants(
+             room_id,
+             [participant_id],
+             profile.provider,
+             profile.model,
+             engine
+           ) do
+      {count, errors}
+    else
       {:error, reason} -> {count, Map.put(errors, name, inspect(reason))}
     end
   end
 
   defp run_turn(engine, room_id, options, setup_errors) do
-    started_ms = System.monotonic_time(:millisecond)
-    {:ok, turn_id} = Engine.post_message(room_id, options.task, :eval, engine)
+    case Engine.post_message(room_id, options.task, :eval, engine) do
+      {:ok, turn_id} ->
+        execute_turn(engine, turn_id, options, setup_errors)
 
-    {snapshot, terminal_ms, timed_out?} =
+      {:error, reason} ->
+        admission_report(options.agents, setup_errors, reason)
+    end
+  end
+
+  defp execute_turn(engine, turn_id, options, setup_errors) do
+    started_ms = System.monotonic_time(:millisecond)
+
+    {before_cancel, terminal_ms, timed_out?} =
       await_turn(engine, turn_id, started_ms, options.timeout_ms)
 
-    snapshot = cancel_if_timed_out(engine, turn_id, snapshot, timed_out?)
+    timed_out_names = timed_out_names(before_cancel, turn_id, timed_out?)
+    snapshot = cancel_if_timed_out(engine, turn_id, before_cancel, timed_out?)
 
     rows =
       build_rows(
@@ -140,7 +184,7 @@ defmodule ReyCode.ModelEval do
         options.agents,
         setup_errors,
         terminal_ms,
-        timed_out?,
+        timed_out_names,
         options.timeout_ms
       )
 
@@ -191,7 +235,30 @@ defmodule ReyCode.ModelEval do
     Engine.snapshot(engine)
   end
 
-  defp build_rows(snapshot, turn_id, names, setup_errors, terminal_ms, timed_out?, timeout_ms) do
+  defp timed_out_names(_snapshot, _turn_id, false), do: MapSet.new()
+
+  defp timed_out_names(snapshot, turn_id, true) do
+    snapshot.turns
+    |> Map.fetch!(turn_id)
+    |> Map.fetch!(:invocation_order)
+    |> Enum.reduce(MapSet.new(), fn invocation_id, names ->
+      invocation = Map.fetch!(snapshot.invocations, invocation_id)
+
+      if terminal_status?(invocation.status),
+        do: names,
+        else: MapSet.put(names, invocation.participant.name)
+    end)
+  end
+
+  defp build_rows(
+         snapshot,
+         turn_id,
+         names,
+         setup_errors,
+         terminal_ms,
+         timed_out_names,
+         timeout_ms
+       ) do
     turn = Map.fetch!(snapshot.turns, turn_id)
 
     invocations =
@@ -206,8 +273,12 @@ defmodule ReyCode.ModelEval do
         name,
         Map.get(invocations, name),
         Map.get(setup_errors, name),
-        Map.get(terminal_ms, name, if(timed_out?, do: timeout_ms, else: 0)),
-        timed_out?
+        Map.get(
+          terminal_ms,
+          name,
+          if(MapSet.member?(timed_out_names, name), do: timeout_ms, else: 0)
+        ),
+        MapSet.member?(timed_out_names, name)
       )
     end)
   end
@@ -217,12 +288,12 @@ defmodule ReyCode.ModelEval do
   end
 
   defp build_row(name, {invocation, body}, setup_error, wall_time_ms, timed_out?) do
-    tokens = usage_tokens(invocation.usage)
+    tokens = invocation_usage_tokens(invocation)
 
     {outcome, summary} =
       cond do
         setup_error -> {"unconfigured", setup_error}
-        timed_out? and not terminal_status?(invocation.status) -> {"timed_out", "Timed out"}
+        timed_out? -> {"timed_out", "Timed out"}
         invocation.status == :completed -> {"completed", body}
         invocation.error -> {Atom.to_string(invocation.status), invocation.error.message}
         true -> {Atom.to_string(invocation.status), "No response"}
@@ -242,6 +313,30 @@ defmodule ReyCode.ModelEval do
       completion_tokens: completion_tokens,
       wall_time_ms: wall_time_ms
     }
+  end
+
+  defp invocation_usage_tokens(invocation) do
+    usages =
+      invocation.rounds
+      |> Enum.map(& &1.usage)
+      |> Enum.reject(&is_nil/1)
+
+    case usages do
+      [] ->
+        usage_tokens(invocation.usage)
+
+      _present ->
+        prompt = usages |> Enum.map(&(usage_tokens(&1) |> elem(0))) |> sum_or_nil()
+        completion = usages |> Enum.map(&(usage_tokens(&1) |> elem(1))) |> sum_or_nil()
+        {prompt, completion}
+    end
+  end
+
+  defp sum_or_nil(values) do
+    case Enum.reject(values, &is_nil/1) do
+      [] -> nil
+      present -> Enum.sum(present)
+    end
   end
 
   defp usage_tokens(nil), do: {nil, nil}
@@ -282,6 +377,17 @@ defmodule ReyCode.ModelEval do
     after
       delay_ms -> :ok
     end
+  end
+
+  defp admission_report(names, setup_errors, reason) do
+    message = "turn_admission_failed: #{inspect(reason)}"
+
+    rows =
+      Enum.map(names, fn name ->
+        row(name, "failed", Map.get(setup_errors, name, message), nil, 0)
+      end)
+
+    %{turn_id: nil, outcome: "failed", agents: rows}
   end
 
   defp synthetic_report(names, errors) do

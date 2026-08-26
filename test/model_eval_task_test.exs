@@ -4,7 +4,7 @@ defmodule ReyCode.ModelEvalTaskTest do
   alias Mix.Tasks.ReyCode.Eval
   alias ReyCode.{EventStore, ModelEval, RuntimeConfig}
   alias ReyCode.Orchestration.Engine
-  alias ReyCode.Provider.{Frame, Response, Runtime}
+  alias ReyCode.Provider.{Response, Runtime}
 
   @agent_registry __MODULE__.AgentRegistry
   @event_registry __MODULE__.EventRegistry
@@ -31,6 +31,7 @@ defmodule ReyCode.ModelEvalTaskTest do
 
     def handle_call({action, _provider, _model}, _from, test_pid)
         when action in [:resolve, :resolve_when_ready] do
+      if action == :resolve_when_ready, do: send(test_pid, :resolve_when_ready)
       runtime = %Runtime{module: ScriptedProvider, status: :available, executable: test_pid}
       {:reply, {:ok, runtime}, test_pid}
     end
@@ -39,7 +40,7 @@ defmodule ReyCode.ModelEvalTaskTest do
   defmodule ScriptedProvider do
     @behaviour ReyCode.Provider
 
-    alias ReyCode.Provider.{Frame, Response}
+    alias ReyCode.Provider.{Frame, Response, ToolCall}
 
     @impl true
     def stream(%Runtime{executable: test_pid}, request, emit) do
@@ -51,51 +52,62 @@ defmodule ReyCode.ModelEvalTaskTest do
 
       name = request.participant.name
       send(test_pid, {:task_seen, name, task})
-      body = "#{name} completed: #{task}"
-      :ok = emit.(Frame.text_delta(request.resume_from + 1, body))
 
-      {:ok,
-       Response.new(
-         text: body,
-         usage: usage(name)
-       )}
+      cond do
+        task == "block" ->
+          receive do
+            :release ->
+              {:error, %{category: "internal", message: "unexpected release", retryable: false}}
+          after
+            5_000 -> {:error, %{category: "internal", message: "test timeout", retryable: false}}
+          end
+
+        name == "Review" and request.round_index == 0 ->
+          {:ok,
+           Response.new(
+             tool_calls: [ToolCall.new("read-mix", "read", %{"path" => "mix.exs"})],
+             usage: %{"tokens" => %{"input" => 6, "output" => 7}}
+           )}
+
+        true ->
+          body = "#{name} completed: #{task}"
+          :ok = emit.(Frame.text_delta(request.resume_from + 1, body))
+          {:ok, Response.new(text: body, usage: usage(name))}
+      end
     end
 
-    defp usage("Review"), do: %{"tokens" => %{"input" => 6, "output" => 7}}
+    defp usage("Review"), do: %{"tokens" => %{"input" => 8, "output" => 9}}
 
     defp usage(name) do
       %{"prompt_tokens" => String.length(name), "completion_tokens" => 7}
     end
   end
 
-  test "runs the same task for exactly the named profiles and reports projection usage" do
+  test "runs exactly named profiles, ignores stale copies, waits readiness, and totals rounds" do
     stack = start_stack()
-    _source_room = configured_source_room(stack.workspace, ["Luna", "Review"])
-    task = "Run the exact focused test"
+    configured_source_room(stack.workspace, ["Luna", "Review"])
 
-    report =
-      ModelEval.run(
-        %{
-          agents: ["Luna", "Review"],
-          task: task,
-          workspace: stack.workspace,
-          timeout_ms: 5_000,
-          json?: false
-        },
-        @engine
-      )
+    assert {:ok, stale_room} =
+             Engine.create_room("Newer unconfigured copy", stack.workspace, @engine)
+
+    assert {:ok, _stale_id} =
+             Engine.add_task_participant(stale_room, "Luna", "stale profile", @engine)
+
+    task = "Run the exact focused test"
+    report = ModelEval.run(options(stack, ["Luna", "Review"], task), @engine)
 
     assert report.outcome == "completed"
     assert [luna_row, review_row] = report.agents
     assert [luna_row.name, review_row.name] == ["Luna", "Review"]
-    assert Enum.all?(report.agents, &(&1.outcome == "completed"))
-    assert [luna_row.prompt_tokens, review_row.prompt_tokens] == [4, 6]
-    assert [luna_row.completion_tokens, review_row.completion_tokens] == [7, 7]
+    assert [luna_row.prompt_tokens, review_row.prompt_tokens] == [4, 14]
+    assert [luna_row.completion_tokens, review_row.completion_tokens] == [7, 16]
     assert Enum.all?(report.agents, &(&1.wall_time_ms >= 0))
     assert luna_row.summary =~ "Luna completed"
     assert review_row.summary =~ "Review completed"
     assert ModelEval.success?(report)
 
+    assert_receive :resolve_when_ready
+    assert_receive :resolve_when_ready
     assert_receive {:task_seen, "Luna", ^task}
     assert_receive {:task_seen, "Review", ^task}
 
@@ -103,32 +115,26 @@ defmodule ReyCode.ModelEvalTaskTest do
     turn = Map.fetch!(snapshot.turns, report.turn_id)
     assert length(turn.invocation_order) == 2
 
-    candidates =
-      Enum.map(turn.invocation_order, fn id -> Map.fetch!(snapshot.invocations, id) end)
+    assert [luna_invocation, review_invocation] =
+             Enum.map(turn.invocation_order, &Map.fetch!(snapshot.invocations, &1))
 
-    assert [luna_invocation, review_invocation] = candidates
-    assert Enum.all?(candidates, &(&1.participant.kind == :task))
-    refute Enum.any?(candidates, &(&1.participant.kind == :primary))
-    assert Map.get(luna_invocation.usage, "prompt_tokens") == luna_row.prompt_tokens
-    review_tokens = Map.fetch!(review_invocation.usage, "tokens")
-    assert Map.get(review_tokens, "input") == review_row.prompt_tokens
+    assert Enum.all?([luna_invocation, review_invocation], &(&1.participant.kind == :task))
+    assert Map.get(luna_invocation.usage, "prompt_tokens") == 4
+
+    review_inputs =
+      Enum.map(review_invocation.rounds, fn round ->
+        round.usage |> Map.fetch!("tokens") |> Map.fetch!("input")
+      end)
+
+    assert review_inputs == [6, 8]
+    assert Enum.sum(review_inputs) == review_row.prompt_tokens
   end
 
   test "an unconfigured name produces an error row while healthy candidates still run" do
     stack = start_stack()
     configured_source_room(stack.workspace, ["Luna"])
 
-    report =
-      ModelEval.run(
-        %{
-          agents: ["Luna", "Missing"],
-          task: "Inspect the change",
-          workspace: stack.workspace,
-          timeout_ms: 5_000,
-          json?: true
-        },
-        @engine
-      )
+    report = ModelEval.run(options(stack, ["Luna", "Missing"], "Inspect the change"), @engine)
 
     assert report.outcome == "failed"
     assert [luna_row, missing_row] = report.agents
@@ -139,6 +145,47 @@ defmodule ReyCode.ModelEvalTaskTest do
     assert_raise Mix.Error, fn -> Eval.ensure_success!(report) end
     assert_receive {:task_seen, "Luna", "Inspect the change"}
     refute_receive {:task_seen, "Missing", _task}
+  end
+
+  test "unfinished candidates retain timed_out outcome after cancellation" do
+    stack = start_stack()
+    configured_source_room(stack.workspace, ["Luna"])
+
+    report = ModelEval.run(options(stack, ["Luna"], "block", 30), @engine)
+
+    assert [%{outcome: "timed_out", wall_time_ms: 30}] = report.agents
+    assert report.outcome == "failed"
+  end
+
+  test "turn admission errors produce a complete failure report" do
+    stack = start_stack(global_concurrency: 1, global_queue_limit: 0)
+    source_room = configured_source_room(stack.workspace, ["Luna"])
+    snapshot = Engine.snapshot(@engine)
+
+    primary =
+      Enum.find(Map.fetch!(snapshot.rooms, source_room).participants, &(&1.kind == :primary))
+
+    assert :ok =
+             Engine.configure_participants(source_room, [primary.id], :simulator, nil, @engine)
+
+    assert {:ok, _blocking_turn} = Engine.post_message(source_room, "block", :direct, @engine)
+    assert_receive {:task_seen, "Assistant", "block"}
+
+    report = ModelEval.run(options(stack, ["Luna"], "queue pressure"), @engine)
+
+    assert report.turn_id == nil
+    assert report.outcome == "failed"
+    assert [%{name: "Luna", outcome: "failed", summary: summary}] = report.agents
+    assert summary =~ "turn_admission_failed"
+    assert summary =~ "global_queue_full"
+  end
+
+  test "eval admission rejects a room with no task participants" do
+    stack = start_stack()
+    assert {:ok, room_id} = Engine.create_room("No candidates", stack.workspace, @engine)
+
+    assert {:error, :eval_participants_required} =
+             Engine.post_message(room_id, "Never strand this room", :eval, @engine)
   end
 
   test "renders identical human and JSON fields and enforces both exit branches" do
@@ -200,6 +247,17 @@ defmodule ReyCode.ModelEvalTaskTest do
     end
   end
 
+  defp options(stack, agents, task, timeout_ms \\ 5_000) do
+    %{
+      agents: agents,
+      task: task,
+      workspace: stack.workspace,
+      timeout_ms: timeout_ms,
+      json?: false,
+      provider_catalog: stack.catalog
+    }
+  end
+
   defp configured_source_room(workspace, names) do
     assert {:ok, room_id} = Engine.create_room("Source profiles", workspace, @engine)
 
@@ -214,7 +272,7 @@ defmodule ReyCode.ModelEvalTaskTest do
     room_id
   end
 
-  defp start_stack do
+  defp start_stack(overrides \\ []) do
     workspace = Path.join(System.tmp_dir!(), "model_eval_#{System.unique_integer([:positive])}")
     File.mkdir_p!(workspace)
     on_exit(fn -> File.rm_rf!(workspace) end)
@@ -232,12 +290,14 @@ defmodule ReyCode.ModelEvalTaskTest do
     catalog = start_supervised!({ScriptedCatalog, test_pid: self()})
 
     config =
-      RuntimeConfig.fresh(
+      [
         allow_simulator_provider: true,
         global_concurrency: 4,
         workspace_concurrency: 4,
         workspace_roots: [workspace]
-      )
+      ]
+      |> Keyword.merge(overrides)
+      |> RuntimeConfig.fresh()
 
     start_supervised!(
       {Engine,
@@ -251,6 +311,6 @@ defmodule ReyCode.ModelEvalTaskTest do
        config: config}
     )
 
-    %{workspace: workspace}
+    %{workspace: workspace, catalog: catalog}
   end
 end
