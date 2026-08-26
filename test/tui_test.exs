@@ -401,6 +401,32 @@ defmodule ReyCode.TUITest do
     assert screen =~ "ok"
   end
 
+  test "renders agent activity notes dimmed under the message with collapse" do
+    %{engine: tui_engine_12} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_12)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection =
+      long_response_projection(session)
+      |> put_in(
+        [:invocations, "inv-layout", :notes],
+        Enum.map(1..5, &"reasoning step #{&1}")
+      )
+
+    assert %{sequence: _applied} = push_projection(session, projection)
+
+    type(session, "/resume")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "+2 more activity"
+    assert screen =~ "· reasoning step 3"
+    assert screen =~ "· reasoning step 5"
+    refute screen =~ "reasoning step 1"
+    refute screen =~ "reasoning step 2"
+  end
+
   test "renders nested provider usage totals" do
     %{engine: tui_engine_11} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_11)

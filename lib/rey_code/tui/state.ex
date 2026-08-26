@@ -320,7 +320,11 @@ defmodule ReyCode.TUI.State do
 
       message
       |> Map.put(:invocation, projection.invocations[message.invocation_id])
-      |> Map.put(:tool_run_rows, tool_run_rows(projection.invocations[message.invocation_id]))
+      |> Map.put(
+        :tool_run_rows,
+        tool_run_rows(projection.invocations[message.invocation_id])
+      )
+      |> Map.put(:note_rows, note_rows(projection.invocations[message.invocation_id]))
       |> Map.put(:turn, projection.turns[message.turn_id])
     end)
   end
@@ -337,6 +341,13 @@ defmodule ReyCode.TUI.State do
   end
 
   defp tool_run_rows(_invocation), do: []
+
+  # Activity trail shown beside the reply: newest lines win, older ones
+  # collapse into a "+k more" marker rendered by the timeline.
+  defp note_rows(invocation) when is_map(invocation),
+    do: invocation |> Map.get(:notes, []) |> List.wrap()
+
+  defp note_rows(_invocation), do: []
 
   defp tool_run_row(run) do
     %{

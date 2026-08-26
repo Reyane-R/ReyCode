@@ -19,10 +19,13 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTP do
   @spec error(atom(), String.t(), boolean()) :: Failure.t()
   def error(category, message, retryable), do: Failure.new(category, message, retryable)
 
+  # The status rides in `cause` so callers can distinguish downgrade-worthy
+  # HTTP 400 rejections from other request failures without parsing messages;
+  # wire serialization drops it.
   @spec status_error(non_neg_integer(), binary()) :: Failure.t()
   def status_error(status, body) do
     {category, message, retryable} = classify_status(status, body)
-    error(category, message, retryable)
+    Failure.new(category, message, retryable, status)
   end
 
   defp classify_status(status, body) do

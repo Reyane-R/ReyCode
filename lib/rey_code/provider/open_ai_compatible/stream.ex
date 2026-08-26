@@ -336,6 +336,14 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
   defp apply_event({:text, text}, state, emit), do: buffer_text(state, text, emit)
 
+  # Notes bypass the text buffer: they are activity lines rendered beside the
+  # reply, never part of the assistant message body.
+  defp apply_event({:note, note}, state, emit) do
+    sequence = state.sequence + 1
+    :ok = emit.(Frame.agent_note(sequence, note))
+    %{state | sequence: sequence, valid_output?: true}
+  end
+
   defp apply_event({:tool_started, tool, tool_state}, state, _emit),
     do: put_in(state.tool_calls[tool_call_id(tool_state)], unfinished_call(tool, tool_state))
 

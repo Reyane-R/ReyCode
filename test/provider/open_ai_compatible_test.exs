@@ -457,6 +457,44 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     after
       System.delete_env("TINY_API_KEY")
     end
+
+    test "streams reasoning deltas as agent_note frames without touching the body" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning_content":"thinking hard"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"reasoning":"more thought"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:ok, %Response{text: "Answer"}} = result
+
+      assert emitted == [
+               %Frame{sequence: 1, kind: :agent_note, data: %{note: "thinking hard"}},
+               %Frame{sequence: 2, kind: :text_delta, data: %{text: "Answer"}},
+               %Frame{sequence: 3, kind: :agent_note, data: %{note: "more thought"}}
+             ]
+    end
+
+    test "non-binary reasoning values are ignored without failing the stream" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning":42}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"ok"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:ok, %Response{text: "ok"}} = result
+      assert [%Frame{kind: :text_delta}] = emitted
+    end
   end
 
   describe "keyless profiles" do

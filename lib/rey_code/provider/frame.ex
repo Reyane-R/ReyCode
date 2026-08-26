@@ -6,13 +6,16 @@ defmodule ReyCode.Provider.Frame do
 
   @type kind ::
           :text_delta
+          | :agent_note
           | :usage
           | :tool_started
           | :tool_completed
           | :tool_request
           | :tool_result
+
   @type data ::
           %{text: String.t()}
+          | %{note: String.t()}
           | %{usage: map()}
           | %{tool: String.t(), state: term()}
           | %{tool: String.t(), request_id: String.t(), arguments: map()}
@@ -23,6 +26,11 @@ defmodule ReyCode.Provider.Frame do
   @spec text_delta(pos_integer(), String.t()) :: t()
   def text_delta(sequence, text),
     do: %__MODULE__{sequence: sequence, kind: :text_delta, data: %{text: text}}
+
+  @doc "A native-agent activity line: intermediate reasoning surfaced beside the reply."
+  @spec agent_note(pos_integer(), String.t()) :: t()
+  def agent_note(sequence, note),
+    do: %__MODULE__{sequence: sequence, kind: :agent_note, data: %{note: note}}
 
   @doc "Encodes the frame as canonical, string-keyed event payload data."
   @spec to_event_data(t()) :: map()
@@ -75,6 +83,8 @@ defmodule ReyCode.Provider.Frame do
 
   defp to_wire_data(:text_delta, %{text: text}), do: %{"text" => text}
 
+  defp to_wire_data(:agent_note, %{note: note}), do: %{"note" => note}
+
   defp to_wire_data(:usage, %{usage: usage}), do: %{"usage" => usage}
 
   defp to_wire_data(kind, %{tool: tool, state: tool_state})
@@ -89,6 +99,10 @@ defmodule ReyCode.Provider.Frame do
 
   defp valid_payload?(%__MODULE__{sequence: sequence, kind: :text_delta, data: %{text: text}})
        when is_integer(sequence) and sequence > 0 and is_binary(text),
+       do: true
+
+  defp valid_payload?(%__MODULE__{sequence: sequence, kind: :agent_note, data: %{note: note}})
+       when is_integer(sequence) and sequence > 0 and is_binary(note),
        do: true
 
   defp valid_payload?(%__MODULE__{sequence: sequence, kind: :usage, data: %{usage: usage}})

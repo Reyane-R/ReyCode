@@ -2,6 +2,9 @@ defmodule ReyCode.Orchestration.ProjectorTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
+  @max_invocation_notes 100
+  @max_replay_notes 110
+
   alias ReyCode.Event
 
   alias ReyCode.Orchestration.{
@@ -108,6 +111,64 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert state.turns["turn-1"].status == :terminal
     assert state.turns["turn-1"].outcome == :completed
     assert state.invocations["inv-1"].last_frame_sequence == 2
+  end
+
+  test "agent notes project into the invocation activity trail, never the body" do
+    state =
+      Projector.replay(
+        opened_invocation_events() ++
+          [
+            event(5, :invocation_started, :invocation, "inv-1", %{
+              "invocation_id" => "inv-1",
+              "message_id" => "msg-assistant"
+            }),
+            note_event(6, "checking the workspace"),
+            note_event(7, "reading config"),
+            event(8, :provider_frame_recorded, :invocation, "inv-1", %{
+              "invocation_id" => "inv-1",
+              "message_id" => "msg-assistant",
+              "frame_sequence" => 3,
+              "kind" => "text_delta",
+              "data" => %{"text" => "Answer"}
+            })
+          ]
+      )
+
+    invocation = state.invocations["inv-1"]
+
+    assert invocation.notes == ["checking the workspace", "reading config"]
+    assert invocation.last_frame_sequence == 3
+    assert state.messages["msg-assistant"].body == "Answer"
+  end
+
+  test "the activity trail stays bounded and keeps the newest notes" do
+    notes =
+      Enum.map(1..(@max_replay_notes + 10), fn index ->
+        note_event(index + 4, "note-#{index}")
+      end)
+
+    state = Projector.replay(opened_invocation_events() ++ notes)
+
+    assert length(state.invocations["inv-1"].notes) == @max_invocation_notes
+
+    assert [oldest | _] = state.invocations["inv-1"].notes
+    assert oldest == "note-#{@max_replay_notes + 10 - @max_invocation_notes + 1}"
+
+    assert List.last(state.invocations["inv-1"].notes) == "note-#{@max_replay_notes + 10}"
+  end
+
+  test "blank or malformed note payloads are dropped" do
+    state =
+      Projector.replay(
+        opened_invocation_events() ++
+          [
+            note_event(5, ""),
+            note_event(6, nil),
+            note_event(7, "kept")
+          ]
+      )
+
+    assert state.invocations["inv-1"].notes == ["kept"]
   end
 
   test "participant provider and model configuration survives replay" do
@@ -649,6 +710,16 @@ defmodule ReyCode.Orchestration.ProjectorTest do
       "model" => nil,
       "kind" => "primary"
     }
+  end
+
+  defp note_event(sequence, note) do
+    event(sequence, :provider_frame_recorded, :invocation, "inv-1", %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-assistant",
+      "frame_sequence" => sequence - 3,
+      "kind" => "agent_note",
+      "data" => %{"note" => note}
+    })
   end
 
   defp user_message_data do
