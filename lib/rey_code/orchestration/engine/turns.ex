@@ -109,6 +109,15 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     |> participant_preflight(state)
   end
 
+  # Eval bypasses batch readiness preflight so unavailable runtimes become
+  # per-participant rows, but an empty task subset would open no invocations
+  # and strand the room's active Turn forever.
+  defp runtime_preflight(room, :eval, _participant_id, _state) do
+    if Enum.any?(room.participants, &(&1.kind == :task)),
+      do: :ok,
+      else: {:error, :eval_participants_required}
+  end
+
   defp runtime_preflight(room, _mode, _participant_id, state) do
     missing =
       room.participants

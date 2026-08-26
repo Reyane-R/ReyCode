@@ -244,6 +244,41 @@ Each command batch is written as one SQLite transaction. Versioned, checksummed
  ignores an incomplete final record without modifying the preserved source.
  Complete malformed records fail loudly.
 
+## Model auditions (`mix rey_code.eval`)
+
+Create and configure task agents with `/agent` and `/agents`, then run the same
+task against an explicit subset without opening the TUI:
+
+```sh
+mix rey_code.eval \
+  --agent Luna \
+  --agent Local \
+  --task "Run the focused tests and summarize any failures" \
+  --workspace "$PWD"
+```
+
+Each `--agent` resolves the most recent exact-named task Participant profile
+(for example, Luna on OpenCode or DeepSeek and Local on the keyless Ollama
+profile). ReyCode copies only those profiles into a fresh durable Session and
+runs independent, blind invocations; the automatically-created Primary
+Participant is not auditioned. Missing or unavailable profiles produce their
+own error rows while configured candidates continue.
+
+The human report has one row per requested name:
+
+```text
+Agent   Outcome    Prompt  Completion  Wall ms  Response
+Luna    completed  1842    96          3241     Focused tests passed
+Local   failed     -       -           211      Provider is unavailable
+```
+
+Use `--json` for the same fields in machine-readable form. The command exits
+zero only when every candidate completes; otherwise it prints the complete
+report and exits nonzero. `--timeout-ms` bounds the audition (default 600000).
+Workspace roots and tool approval are identical to ordinary runs: `bash` and
+`write` still need owner approval, so unattended auditions should use
+read-only tasks.
+
 ## OpenCode and OMP
 
 OpenCode and OMP are CLI providers behind the `ReyCode.Provider` behaviour.
