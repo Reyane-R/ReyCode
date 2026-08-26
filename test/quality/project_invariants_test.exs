@@ -46,6 +46,22 @@ defmodule Quality.ProjectInvariantsTest do
              QualityScanner.format_matches(matches)
   end
 
+  test "orchestration mode contract is closed and consistently dispatched" do
+    alias ReyCode.Orchestration.Mode
+    alias ReyCode.Orchestration.Workflow.Dispatcher
+
+    for %{id: id, wire: wire} <- Mode.all() do
+      # Admission accepts every registered mode; dispatch resolves it to the
+      # contract's workflow; the durable wire value round-trips.
+      assert Mode.known?(id)
+      assert Dispatcher.for_mode(id) == Mode.workflow(id)
+      assert {:ok, ^id} = Mode.decode(wire)
+    end
+
+    refute Mode.known?(:teleport)
+    assert {:error, :invalid_mode} = Mode.decode("teleport")
+  end
+
   test "every event type has a payload contract" do
     alias ReyCode.Event
 
