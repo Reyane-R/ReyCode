@@ -406,8 +406,6 @@ defmodule ReyCode.TUITest do
     session = start_session({120, 32}, engine: tui_engine_11)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
-    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
-
     projection =
       long_response_projection(session)
       |> put_in(
