@@ -91,7 +91,7 @@ defmodule ReyCode.Event do
   @retry_kinds ~w(provider_retry rework)
 
   @frame_kinds ~w(
-    text_delta usage session_started tool_started tool_completed tool_request tool_result
+    text_delta agent_note usage session_started tool_started tool_completed tool_request tool_result
   )
 
   @invocation_identity %{"invocation_id" => :id, "message_id" => :id}
@@ -527,6 +527,15 @@ defmodule ReyCode.Event do
     else
       {:error,
        "invalid provider_frame_recorded event: text_delta frames require field \"text\" with a string"}
+    end
+  end
+
+  defp cross_field_rules(:provider_frame_recorded, %{"kind" => "agent_note", "data" => data}) do
+    if is_map(data) and is_binary(Map.get(data, "note")) and Map.get(data, "note") != "" do
+      :ok
+    else
+      {:error,
+       "invalid provider_frame_recorded event: agent_note frames require field \"note\" with a non-empty string"}
     end
   end
 

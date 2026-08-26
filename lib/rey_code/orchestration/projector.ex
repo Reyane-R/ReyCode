@@ -1,4 +1,6 @@
 defmodule ReyCode.Orchestration.Projector do
+  @moduledoc "Pure projection of room orchestration events."
+
   # Activity-trail bound: newest agent notes win when the invocation exceeds it.
   @max_invocation_notes 100
 

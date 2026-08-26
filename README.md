@@ -123,8 +123,9 @@ different models without automatically multiplying token cost.
 
 Each message shows the tool runs it produced as compact one-line blocks
 (`Tool · read · path · ok`), with the tool, its target, and the run's
-outcome.
-
+outcome. Native agents that surface intermediate reasoning render dimmed
+activity lines under the message (`· note`), collapsed behind
+`+k more activity` when the trail grows past three lines.
 The header is the ambient status line: `ReyCode · model · ⑂ branch ·
 workspace · tok 12.4k/200k`, with `thinking · 8s` while a turn runs. Token
 usage is summed from durable provider usage records against the configured
@@ -203,10 +204,11 @@ as three separately validated artifacts.
 The squad dashboard and directive controls are headless operational surfaces;
 they are intentionally absent from the ordinary session TUI.
 
-Run one live squad from the command line. Use `--workspace` to choose the project
-directory; otherwise the current workspace is used. The `--release` flag
-selects the release authority (`auto` for leader-authoritative, `wait` for owner
-review):
+Run one live squad from the command line. Any provider works — a CLI runtime,
+a keyed API profile, or a keyless local one. Use `--workspace` to choose the
+project directory; otherwise the current workspace is used. The `--release`
+flag selects the release authority (`auto` for leader-authoritative, `wait`
+for owner review):
 
 ```sh
 mix rey_code.squad \
@@ -215,6 +217,12 @@ mix rey_code.squad \
   --workspace "$PWD" \
   --release auto \
   "Implement the requested change"
+
+# Keyed API profile:
+mix rey_code.squad --provider deepseek --model deepseek-chat "$PWD" "Fix the flaky test"
+
+# Keyless local profile (Ollama running on this machine):
+mix rey_code.squad --provider ollama --model llama3 "$PWD" "Summarize the README"
 ```
 
 Run deterministic Monte Carlo testing without processes or sleeping:
@@ -263,26 +271,36 @@ continues to own orchestration, durability, and approvals.
 ## API providers
 
 ReyCode drives OpenAI-compatible chat completion APIs directly — these are
-first-class providers, not a fallback. Providers stream text and usage and
-return normalized tool calls each round; ReyCode executes those requests
-through its trusted tool registry and feeds results back into the provider
-conversation.
+first-class providers, not a fallback. This is where the native agent runtime
+lives: each round streams text and usage, returns normalized tool calls, and
+ReyCode's own `AgentLoop` executes those requests through its trusted tool
+registry, feeds results back into the provider conversation, and keeps every
+round durable. Nothing is chat-only; there is no provider-side recursive tool
+loop.
 
-DeepSeek ships as a built-in profile. Set its API key in your environment and it
-appears alongside OpenCode in `Ctrl+G`:
+DeepSeek ships as a built-in keyed profile. Set its API key in your
+environment and it appears alongside OpenCode in `Ctrl+G`:
 
 ```sh
 export DEEPSEEK_API_KEY=sk-...
 ```
 
-ReyCode reads the key from the environment at invocation time only. It is never
-written to the event log, the catalog snapshot, or the diagnostics report. On
-first use, the `/models` endpoint is queried once to populate the model picker;
-the result is refreshed on the same schedule as OpenCode discovery and whenever
-you press `R`.
+Ollama and LM Studio ship as built-in **keyless** profiles targeting
+`http://localhost:11434/v1` and `http://localhost:1234/v1`. They need no
+credential: requests through them never carry an `Authorization` header, not
+even an empty bearer token. Start your local server and both appear in
+`Ctrl+G`; discovery queries `/models` on the same schedule as every other
+provider.
+
+ReyCode reads keys from the environment at invocation time only. They are
+never written to the event log, the catalog snapshot, or the diagnostics
+report. On first use, the `/models` endpoint is queried once to populate the
+model picker; the result is refreshed on the same schedule as OpenCode
+discovery and whenever you press `R`.
 
 Add more OpenAI-compatible providers by configuring profiles, each with a base
-URL and the environment variable that holds its key:
+URL and the environment variable that holds its key (`require_key: false`
+makes a profile keyless like the built-in local ones):
 
 ```elixir
 config :rey_code,
@@ -292,6 +310,12 @@ config :rey_code,
       name: "OpenAI",
       base_url: "https://api.openai.com/v1",
       key_env: "OPENAI_API_KEY"
+    },
+    %{
+      id: :vllm_local,
+      name: "vLLM",
+      base_url: "http://localhost:8000/v1",
+      require_key: false
     }
   ]
 ```
@@ -302,11 +326,43 @@ Override any profile's base URL at runtime without changing config:
 export REYCODE_DEEPSEEK_BASE_URL=https://your-proxy.example
 ```
 
+### Strict servers and capability flags
+
+Some servers reject optional request features with HTTP 400. Profiles carry two
+capability flags, both defaulting to `true`: `supports_tools` and
+`supports_stream_options`. A strict endpoint can be pinned in profile config or
+through the environment without touching files:
+
+```sh
+export REYCODE_LMSTUDIO_SUPPORTS_STREAM_OPTIONS=false
+export REYCODE_VLLM_LOCAL_SUPPORTS_TOOLS=false
+```
+
+Unpinned, ReyCode fails loudly rather than silently degrading: if a server
+rejects `stream_options`, the request is retried once without it and the
+working shape is remembered for later rounds; if the server then still rejects
+the request while tools were offered, the invocation fails non-retryably with
+`tool_calls_unsupported`, naming the flag to pin. Dropping tools silently to
+degrade into chat-only mode never happens.
+
 Fresh Sessions copy the current Assistant and task-agent runtime assignments.
 Sending is blocked only when the addressed agent has no ready runtime. The
 ReyCode-owned tool loop is active for all providers with the `:reycode_tools`
 capability (OpenAI-compatible and the simulator); OpenCode's stdio adapter uses
 the legacy `:provider_managed_tools` capability.
+
+### Tool security model
+
+Providers can only request workspace tools — `read`, `write`, `edit`, `bash`,
+`grep`, `glob`, and `list`. ReyCode executes them itself, one durable tool run
+at a time, inside the trusted workspace roots configured via
+`REYCODE_WORKSPACE_ROOTS`; paths outside the roots fail closed. Read-only and
+edit tools run without prompting after containment checks; `bash` and `write`
+always wait for explicit owner approval. Every adapter runs under focused
+resource caps — wall-clock timeouts, bounded output sizes, environment
+allowlists, CPU-second and open-file limits — declared per tool in
+configuration. Unknown tools are denied. See [Tool approval](#tool-approval)
+for the approval surface.
 
 ## Tool approval
 
@@ -416,7 +472,6 @@ which keeps clean-code complexity from drifting: functions scoring above 30
 must shrink or gain tests, existing offenders may never worsen, and new
 offenders fail the build. Legacy offenders are pinned in a committed ratchet
 baseline (`quality/crap-baseline.json`):
-z
 ```sh
 MIX_ENV=test mix quality.crap --lcov cover/lcov.info --baseline quality/crap-baseline.json
 MIX_ENV=test mix quality.crap --write-baseline   # regenerate after improvements only
