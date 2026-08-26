@@ -42,6 +42,11 @@ defmodule ReyCode.AgentLoop do
         Agent.execute_tool_run(state, run)
         run(state)
 
+      {:ok, {:delegate, _run}} ->
+        # Durable suspension: the child invocation owns the workspace until it
+        # reports; the parent resumes from admission with the recorded result.
+        {:stop, state}
+
       {:ok, {:await, _run}} ->
         {:stop, state}
 
@@ -50,6 +55,9 @@ defmodule ReyCode.AgentLoop do
 
       {:ok, {:denied, _run}} ->
         run(state)
+
+      {:waiting, _reason} ->
+        {:stop, state}
 
       {:error, reason} ->
         Agent.fail(state, internal_error("tool run rejected: " <> inspect(reason)))

@@ -29,7 +29,10 @@ defmodule ReyCode.Orchestration.Invocation do
     :pending_tool_review,
     :completion_metadata,
     :last_frame_sequence,
-    :error
+    :error,
+    :delegation_depth,
+    :delegated_from_invocation_id,
+    :delegated_from_tool_run_id
   ]
 
   defstruct id: nil,
@@ -55,7 +58,10 @@ defmodule ReyCode.Orchestration.Invocation do
             pending_tool_review: nil,
             completion_metadata: nil,
             last_frame_sequence: 0,
-            error: nil
+            error: nil,
+            delegation_depth: 0,
+            delegated_from_invocation_id: nil,
+            delegated_from_tool_run_id: nil
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
@@ -81,7 +87,10 @@ defmodule ReyCode.Orchestration.Invocation do
           pending_tool_review: ToolAsk.t() | nil,
           completion_metadata: map() | nil,
           last_frame_sequence: non_neg_integer(),
-          error: Failure.t() | nil
+          error: Failure.t() | nil,
+          delegation_depth: non_neg_integer(),
+          delegated_from_invocation_id: String.t() | nil,
+          delegated_from_tool_run_id: String.t() | nil
         }
 
   @doc "Converts a decoded or legacy invocation map into the current record."

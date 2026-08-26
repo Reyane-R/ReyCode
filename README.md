@@ -387,6 +387,31 @@ never approve a different request than the one displayed. Waiting approvals
 consume no concurrency slot, survive an engine restart, and denial finishes the
 turn as failed without any side effect.
 
+## Agent-initiated delegation
+
+A running assistant can hand bounded subtasks to one of your task agents by
+calling the `spawn_task` orchestration tool with an exact participant name and
+a self-contained brief:
+
+    spawn_task  {"agent": "Luna", "brief": "Run the focused test suite and report failures"}
+
+The child invocation runs in the same turn with its own durable loop, its own
+model resolved through the provider catalog, and the same workspace roots and
+approval gates as any other run. The parent pauses — zero further provider
+rounds — until the child terminates; the child's structured report (output,
+usage) then enters the parent's conversation as the tool result. The timeline
+shows the child as its own message under the turn, with a `delegate · <agent>`
+row on the parent.
+
+Delegation is depth-bounded: children cannot delegate further (delegation
+depth 1), each invocation spawns at most
+`delegation_max_children_per_invocation` children (default 8), and briefs are
+capped at `delegation_brief_max_bytes` (default 16384). Addressing fails
+closed — unknown names and primary participants are rejected without
+spawning. Delegation itself is auto-allowed; everything the child executes
+still passes the normal tool approval model above. Suspension, restart
+recovery (child first, exactly once per side), and cancellation are durable.
+
 ## Diagnostics
 
 Inspect production readiness with the doctor task:

@@ -118,7 +118,9 @@ defmodule ReyCode.RuntimeConfig do
         workspace_concurrency: values.workspace_concurrency,
         global_queue_limit: values.global_queue_limit,
         workspace_queue_limit: values.workspace_queue_limit,
-        agent_delay_ms: values.agent_delay_ms
+        agent_delay_ms: values.agent_delay_ms,
+        delegation_max_children: values.delegation_max_children_per_invocation,
+        delegation_brief_max_bytes: values.delegation_brief_max_bytes
       },
       providers: %Providers{
         allow_simulator?: values.allow_simulator_provider,

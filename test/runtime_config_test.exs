@@ -174,6 +174,8 @@ defmodule ReyCode.RuntimeConfigTest do
       global_queue_limit: config.orchestration.global_queue_limit,
       workspace_queue_limit: config.orchestration.workspace_queue_limit,
       agent_delay_ms: config.orchestration.agent_delay_ms,
+      delegation_max_children_per_invocation: config.orchestration.delegation_max_children,
+      delegation_brief_max_bytes: config.orchestration.delegation_brief_max_bytes,
       allow_simulator_provider: config.providers.allow_simulator?,
       default_provider: config.providers.default_provider,
       provider_discovery: config.providers.discovery?,

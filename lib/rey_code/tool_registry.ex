@@ -82,7 +82,22 @@ defmodule ReyCode.ToolRegistry do
   def requires_approval?(%Request{tool: tool}), do: requires_approval?(tool)
   def requires_approval?(tool), do: MapSet.member?(@ask_tools, to_string(tool))
 
-  @doc "The set of registered tool names."
+  @orchestration_tools MapSet.new(["spawn_task"])
+
+  @doc "Tools that route through the engine lifecycle instead of the workspace sandbox."
+  @spec orchestration_tool_names() :: [String.t()]
+  def orchestration_tool_names, do: @orchestration_tools |> MapSet.to_list() |> Enum.sort()
+
+  @doc """
+  Every tool name advertised on outgoing provider requests: workspace-sandbox
+  tools plus orchestration tools. Orchestration tools are never executable via
+  `dispatch/2` or `execute/2` — the engine claims them before the registry is
+  consulted.
+  """
+  @spec wire_tool_names() :: [String.t()]
+  def wire_tool_names, do: tool_names() ++ orchestration_tool_names()
+
+  @doc "The set of registered workspace-sandbox tool names."
   @spec tool_names() :: [String.t()]
   def tool_names, do: @tools |> Map.keys() |> Enum.sort()
 end

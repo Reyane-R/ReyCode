@@ -2,11 +2,12 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   @moduledoc "Owns turn recovery, scheduling, cancellation, and finalization transitions."
 
   alias ReyCode.Failure
+
+  alias ReyCode.Orchestration.{Delegation, EventEntries, ToolRuns, Validation}
   alias ReyCode.Orchestration.Engine.{Admission, Identity, Options, Persistence}
-  alias ReyCode.Orchestration.{EventEntries, ToolRuns, Validation}
+  alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
 
   @worker_stop_timeout_ms 5_000
-  alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
 
   def interrupt_started_runs(state, invocation) do
     invocation
@@ -116,11 +117,34 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   defp cancellable_turn_invocations(state, turn) do
     turn.invocation_order
     |> Enum.map(&state.projection.invocations[&1])
-    |> Enum.filter(&(&1.status in [:queued, :running, :waiting_tool_approval]))
+    |> Enum.filter(
+      &(&1.status in [:queued, :running, :waiting_tool_approval, :awaiting_delegation])
+    )
   end
 
   defp persist_turn_cancellation(state, turn, invocations, reason) do
-    Persistence.append_and_apply!(state, EventEntries.cancel_turn(turn, invocations, reason))
+    entries =
+      delegation_cancellation_entries(invocations) ++
+        EventEntries.cancel_turn(turn, invocations, reason)
+
+    Persistence.append_and_apply!(state, entries)
+  end
+
+  # Cancelling mid-child fails the pending spawn_task run so a suspended
+  # parent never waits on a child that will never report; both workers are
+  # terminated exactly once by kill_cancelled_executions.
+  defp delegation_cancellation_entries(invocations) do
+    Enum.flat_map(invocations, fn invocation ->
+      invocation
+      |> ToolRuns.running()
+      |> Enum.filter(&(&1.tool == Delegation.tool_name()))
+      |> Enum.map(fn run ->
+        EventEntries.tool_run_failed(invocation, run, %{
+          "ok" => false,
+          "error" => "turn_cancelled"
+        })
+      end)
+    end)
   end
 
   defp kill_execution(state, invocation_id) do
@@ -177,11 +201,16 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     end)
     |> Enum.reduce(state, &recover_invocation(&2, &1))
     |> pump_admission()
+    |> resume_stale_delegations()
   end
 
   # A waiting approval is dormant: it holds no worker or admission slot and is
   # resumed only by the owner's resolution.
   defp recover_invocation(state, %{status: :waiting_tool_approval}), do: state
+
+  # A suspended parent is dormant like a waiting approval; it resumes only on
+  # its child's terminal event or the stale-delegation sweep below.
+  defp recover_invocation(state, %{status: :awaiting_delegation}), do: state
 
   defp recover_invocation(state, %{status: status}) when status not in [:queued, :running],
     do: state
@@ -445,8 +474,110 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
         |> apply_finalization(state, invocation, prepend)
       end
 
-    pump_admission(next)
+    next = pump_admission(next)
+    resume_parent_delegation(next, invocation, outcome)
   end
+
+  # A finished child hands its structured report to the suspended parent as
+  # the spawn_task run's result and re-arms parent admission. Guarded by the
+  # run's :running status, so replaying or re-entering resolves exactly once.
+  defp resume_parent_delegation(state, %{delegated_from_invocation_id: nil}, _outcome),
+    do: state
+
+  defp resume_parent_delegation(state, _child, :cancelled), do: state
+
+  defp resume_parent_delegation(state, child, outcome) do
+    parent = state.projection.invocations[child.delegated_from_invocation_id]
+    run = parent && Map.get(parent.tool_runs, child.delegated_from_tool_run_id)
+
+    cond do
+      parent == nil or run == nil ->
+        state
+
+      run.status != :running ->
+        state
+
+      true ->
+        report = delegation_report(child, outcome, state.projection)
+        entries = [EventEntries.tool_run_completed(parent, run, report)]
+
+        state
+        |> Persistence.append_and_apply!(entries)
+        |> Admission.enqueue(parent.id)
+        |> pump_admission()
+    end
+  end
+
+  defp delegation_report(child, {:completed, _metadata}, projection) do
+    body = projection.messages[child.message_id] && projection.messages[child.message_id].body
+    Delegation.report(true, body, child.usage)
+  end
+
+  defp delegation_report(child, {:failed, error}, _projection) do
+    wire = Failure.to_wire(error)
+    Delegation.report(false, "#{wire["category"]}: #{wire["message"]}", child.usage)
+  end
+
+  # Crash between a child's terminal record and the parent's resume write
+  # leaves a suspended parent with a finished child; recovery completes the
+  # handoff exactly once. Children recover first (created earlier in the sort,
+  # enqueued during the reduce), so parents resume after them.
+  defp resume_stale_delegations(state) do
+    state.projection.invocations
+    |> Map.values()
+    |> Enum.filter(&(&1.status == :awaiting_delegation))
+    |> Enum.sort_by(& &1.id)
+    |> Enum.reduce(state, &resume_stale_delegation/2)
+  end
+
+  defp resume_stale_delegation(parent, state) do
+    parent
+    |> pending_spawn_run()
+    |> case do
+      nil ->
+        state
+
+      %{status: :running} = run ->
+        resume_stale_child(state, run)
+
+      _run ->
+        # The report was recorded before the crash; only re-arming is missing.
+        state
+        |> Admission.enqueue(parent.id)
+        |> pump_admission()
+    end
+  end
+
+  defp pending_spawn_run(parent) do
+    parent.tool_run_order
+    |> List.wrap()
+    |> Enum.map(&parent.tool_runs[&1])
+    |> Enum.find(fn run ->
+      run != nil and run.tool == Delegation.tool_name() and run.child_invocation_id != nil
+    end)
+  end
+
+  defp resume_stale_child(state, run) do
+    child = state.projection.invocations[run.child_invocation_id]
+
+    cond do
+      is_nil(child) ->
+        state
+
+      child.status == :completed ->
+        resume_parent_delegation(state, child, {:completed, nil})
+
+      child.status == :failed ->
+        resume_parent_delegation(state, child, {:failed, child.error || interrupted_failure()})
+
+      true ->
+        # The child is still recovering; its own terminal event resumes the parent.
+        state
+    end
+  end
+
+  defp interrupted_failure,
+    do: Failure.new(:interrupted, "The delegated task failed during recovery")
 
   defp apply_finalization({:advance, entries}, state, invocation, prepend) do
     state

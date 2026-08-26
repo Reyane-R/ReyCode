@@ -511,6 +511,18 @@ defmodule ReyCode.EventContractTest do
       "reason" => "worker exit"
     }
 
+  defp valid_data(:delegation_opened),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "tool_run_id" => "run-1",
+      "child_invocation_id" => "inv-child",
+      "child_message_id" => "msg-child",
+      "delegation_depth" => 1
+    }
+
   defp wire_event(type, data) do
     %{
       "id" => Integer.to_string(7),

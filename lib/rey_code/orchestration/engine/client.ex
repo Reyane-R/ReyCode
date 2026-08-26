@@ -56,7 +56,10 @@ defmodule ReyCode.Orchestration.Engine.Client do
   durable even if the worker dies immediately afterwards.
   """
   @spec take_tool_run(GenServer.server(), String.t()) ::
-          {:ok, :none} | {:ok, {atom(), map()}} | {:error, term()}
+          {:ok, :none}
+          | {:ok, {atom(), map()}}
+          | {:waiting, atom()}
+          | {:error, term()}
   def take_tool_run(server, invocation_id) do
     GenServer.call(server, {:take_tool_run, invocation_id}, :infinity)
   end

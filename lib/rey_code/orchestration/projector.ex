@@ -209,7 +209,10 @@ defmodule ReyCode.Orchestration.Projector do
       pending_tool_review: nil,
       completion_metadata: nil,
       last_frame_sequence: 0,
-      error: nil
+      error: nil,
+      delegation_depth: data["delegation_depth"] || 0,
+      delegated_from_invocation_id: data["delegated_from_invocation_id"],
+      delegated_from_tool_run_id: data["delegated_from_tool_run_id"]
     }
 
     state
@@ -340,9 +343,11 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :tool_run_completed, data: data} = event, state) do
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
-      update_run(invocation, data["tool_run_id"], fn run ->
+      invocation
+      |> update_run(data["tool_run_id"], fn run ->
         %{run | status: :completed, result: data["result"], completed_at: event.recorded_at}
       end)
+      |> release_suspended()
     end)
     |> put_sequence(event.sequence)
   end
@@ -350,7 +355,8 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :tool_run_failed, data: data} = event, state) do
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
-      update_run(invocation, data["tool_run_id"], fn run ->
+      invocation
+      |> update_run(data["tool_run_id"], fn run ->
         %{
           run
           | status: :failed,
@@ -359,6 +365,7 @@ defmodule ReyCode.Orchestration.Projector do
             completed_at: event.recorded_at
         }
       end)
+      |> release_suspended()
     end)
     |> put_sequence(event.sequence)
   end
@@ -369,6 +376,18 @@ defmodule ReyCode.Orchestration.Projector do
       update_run(invocation, data["tool_run_id"], fn run ->
         %{run | status: :interrupted, completed_at: event.recorded_at}
       end)
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :delegation_opened, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      invocation
+      |> update_run(data["tool_run_id"], fn run ->
+        %{run | child_invocation_id: data["child_invocation_id"]}
+      end)
+      |> then(&%{&1 | status: :awaiting_delegation})
     end)
     |> put_sequence(event.sequence)
   end
@@ -704,6 +723,14 @@ defmodule ReyCode.Orchestration.Projector do
   defp requested_status("ask"), do: :awaiting_approval
   defp requested_status("denied"), do: :denied
   defp requested_status(_authorization), do: :ready
+
+  # A terminal run on a suspended parent unfreezes it: the child's report is
+  # recorded, so the parent re-enters admission as an ordinary queued
+  # invocation. This keeps the resume exactly-once and replay-derived.
+  defp release_suspended(%{status: :awaiting_delegation} = invocation),
+    do: %{invocation | status: :queued}
+
+  defp release_suspended(invocation), do: invocation
 
   defp decision("approve"), do: :approve
   defp decision("deny"), do: :deny

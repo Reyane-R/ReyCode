@@ -278,21 +278,38 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp tool_definitions do
-    Enum.map(ToolRegistry.tool_names(), fn name ->
+    Enum.map(ToolRegistry.wire_tool_names(), fn name ->
       %{
         "type" => "function",
         "function" => %{
           "name" => name,
-          "description" => "ReyCode workspace tool #{name}",
+          "description" => wire_tool_description(name),
           "parameters" => %{
             "type" => "object",
             "additionalProperties" => true,
-            "properties" => %{}
+            "properties" => tool_parameters(name)
           }
         }
       }
     end)
   end
+
+  defp wire_tool_description("spawn_task") do
+    "Delegate a bounded subtask to a named task agent. The parent pauses until " <>
+      "the child reports; the report returns as this tool's result. " <>
+      "Arguments: {\"agent\": <exact task participant name>, \"brief\": <instruction>}"
+  end
+
+  defp wire_tool_description(name), do: "ReyCode workspace tool #{name}"
+
+  defp tool_parameters("spawn_task") do
+    %{
+      "agent" => %{"type" => "string", "description" => "Exact task participant name"},
+      "brief" => %{"type" => "string", "description" => "Self-contained task instruction"}
+    }
+  end
+
+  defp tool_parameters(_name), do: %{}
 
   defp fetch_key(%Profile{require_key: false}), do: {:ok, nil}
 

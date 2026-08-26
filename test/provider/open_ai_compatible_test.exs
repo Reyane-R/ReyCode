@@ -658,6 +658,30 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert Map.has_key?(second, "tools")
     end
 
+    test "advertises the orchestration spawn_task tool on the wire" do
+      FakeTransport.set_stream_script([{:chunks, @success_stream}])
+
+      assert {:ok, %Response{}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      body =
+        FakeTransport.requests()
+        |> List.last()
+        |> Map.fetch!(:body)
+        |> Jason.decode!()
+
+      tools = body["tools"]
+      names = Enum.map(tools, & &1["function"]["name"])
+      assert "spawn_task" in names
+      assert "read" in names
+
+      spawn_task = Enum.find(tools, &(&1["function"]["name"] == "spawn_task"))
+
+      assert spawn_task["type"] == "function"
+      assert spawn_task["function"]["parameters"]["properties"]["agent"]
+      assert spawn_task["function"]["parameters"]["properties"]["brief"]
+    end
+
     test "remembers the downgraded shape for the next round" do
       FakeTransport.set_stream_script([
         {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},

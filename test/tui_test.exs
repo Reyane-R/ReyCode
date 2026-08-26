@@ -427,6 +427,37 @@ defmodule ReyCode.TUITest do
     refute screen =~ "reasoning step 2"
   end
 
+  test "renders agent-initiated delegation as a delegate tool row" do
+    %{engine: tui_engine_13} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_13)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection =
+      long_response_projection(session)
+      |> put_in([:invocations, "inv-layout", :tool_runs], %{
+        "run-spawn" => %{
+          tool: :spawn_task,
+          arguments: %{"agent" => "Luna", "brief" => "run the focused tests"},
+          status: :running,
+          result: nil,
+          error: nil,
+          child_invocation_id: "inv-child"
+        }
+      })
+      |> put_in([:invocations, "inv-layout", :tool_run_order], ["run-spawn"])
+
+    assert %{sequence: _applied} = push_projection(session, projection)
+
+    type(session, "/resume")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Tool · delegate"
+    assert screen =~ "Luna"
+    assert screen =~ "running"
+  end
+
   test "renders nested provider usage totals" do
     %{engine: tui_engine_11} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_11)
