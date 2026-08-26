@@ -201,12 +201,12 @@ defmodule ReyCode.Orchestration.EngineTest do
     assert Enum.map(invocations, & &1.label) == ["proposal", "revision"]
   end
 
-  test "fan-out records independent parallel branches" do
+  test "compare records independent parallel branches" do
     %{engine: engine} = start_isolated_engine([])
     room_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Explore three designs", :fan_out, engine)
+             Engine.post_message(room_id, "Explore three designs", :compare, engine)
 
     turn = wait_until_terminal_on(engine, turn_id)
     snapshot = Engine.snapshot(engine)
@@ -214,7 +214,7 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     assert turn.outcome == :completed
     assert length(invocations) == 1
-    assert Enum.all?(invocations, &(&1.label == "parallel branch"))
+    assert Enum.all?(invocations, &(&1.label == "independent response"))
   end
 
   test "creates project rooms and queues follow-up turns FIFO" do
