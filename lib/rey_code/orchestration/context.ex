@@ -22,6 +22,16 @@ defmodule ReyCode.Orchestration.Context do
           Invocation.t(),
           Projection.t()
         ) :: boolean()
+  # A delegation child receives its self-contained brief through the system
+  # prompt. The current parent user message often says "delegate to <name>";
+  # exposing it again makes the child repeat spawn_task and hit the depth
+  # guard instead of doing the delegated work. Earlier completed room history
+  # remains visible.
+  def include?(message, turn, %{delegated_from_invocation_id: parent_id}, _projection)
+      when not is_nil(parent_id) do
+    message.created_sequence < turn.context_through_sequence and message.status == :completed
+  end
+
   def include?(message, %{mode: :debate} = turn, invocation, projection) do
     stage_visible?(message, turn, invocation, projection)
   end

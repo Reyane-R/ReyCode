@@ -334,22 +334,27 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
     end
   end
 
-  defp apply_event({:text, text}, state, emit), do: buffer_text(state, text, emit)
-
-  # Notes bypass the text buffer: they are activity lines rendered beside the
-  # reply, never part of the assistant message body. They never set
-  # valid_output?: a reasoning-only stream stays content-free and fails
-  # closed like any other output-free completion.
-  defp apply_event({:note, note}, state, emit) do
-    sequence = state.sequence + 1
-    :ok = emit.(Frame.agent_note(sequence, note))
-    %{state | sequence: sequence}
+  defp apply_event({:text, text}, state, emit) do
+    state |> flush_note(emit) |> buffer_text(text, emit)
   end
 
-  defp apply_event({:tool_started, tool, tool_state}, state, _emit),
-    do: put_in(state.tool_calls[tool_call_id(tool_state)], unfinished_call(tool, tool_state))
+  # Reasoning fields arrive as token-sized deltas. Keep one reversed fragment
+  # list per reasoning segment and flush at the next content/tool boundary or
+  # DONE, avoiding one durable event per token. Notes remain advisory and never
+  # set valid_output?.
+  defp apply_event({:note, note}, state, emit) do
+    state
+    |> flush_pending(emit)
+    |> Map.update!(:note_fragments, &[note | &1])
+  end
 
-  defp apply_event({:tool_completed, tool, tool_state}, state, _emit) do
+  defp apply_event({:tool_started, tool, tool_state}, state, emit) do
+    state
+    |> flush_note(emit)
+    |> put_in([:tool_calls, tool_call_id(tool_state)], unfinished_call(tool, tool_state))
+  end
+
+  defp apply_event({:tool_completed, tool, tool_state}, state, emit) do
     id = tool_call_id(tool_state)
 
     call = %{
@@ -359,12 +364,13 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
     }
 
     state
+    |> flush_note(emit)
     |> put_in([:tool_calls, id], call)
     |> Map.put(:valid_output?, true)
   end
 
   defp apply_event({:usage, usage}, state, _emit), do: %{state | usage: usage}
-  defp apply_event(:done, state, _emit), do: state
+  defp apply_event(:done, state, emit), do: flush_note(state, emit)
 
   defp apply_event({:protocol_error, reason}, state, _emit),
     do: %{state | protocol_error: reason}
@@ -412,6 +418,15 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
   defp decode_arguments(_other), do: %{}
 
+  defp flush_note(%{note_fragments: []} = state, _emit), do: state
+
+  defp flush_note(state, emit) do
+    sequence = state.sequence + 1
+    note = state.note_fragments |> Enum.reverse() |> IO.iodata_to_binary()
+    :ok = emit.(Frame.agent_note(sequence, note))
+    %{state | sequence: sequence, note_fragments: []}
+  end
+
   defp buffer_text(state, "", _emit), do: state
 
   defp buffer_text(state, text, emit) do
@@ -457,6 +472,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
       sequence: request.resume_from,
       bytes: 0,
       max_bytes: profile.max_output_bytes,
+      note_fragments: [],
       usage: nil,
       protocol_error: nil,
       valid_output?: false,

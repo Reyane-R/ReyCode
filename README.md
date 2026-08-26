@@ -219,10 +219,14 @@ mix rey_code.squad \
   "Implement the requested change"
 
 # Keyed API profile:
-mix rey_code.squad --provider deepseek --model deepseek-chat "$PWD" "Fix the flaky test"
+mix rey_code.squad \
+  --provider deepseek --model deepseek-chat --workspace "$PWD" \
+  "Fix the flaky test"
 
 # Keyless local profile (Ollama running on this machine):
-mix rey_code.squad --provider ollama --model llama3 "$PWD" "Summarize the README"
+mix rey_code.squad \
+  --provider ollama --model llama3 --workspace "$PWD" \
+  "Summarize the README"
 ```
 
 Run deterministic Monte Carlo testing without processes or sleeping:
