@@ -127,6 +127,14 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     defp child_round(test_pid, request, emit, round) do
       send(test_pid, {:child_round, round})
+
+      user_messages =
+        Enum.flat_map(request.messages, fn
+          %{role: :user, content: content} -> [content]
+          _other -> []
+        end)
+
+      send(test_pid, {:child_user_messages, user_messages})
       brief = child_brief(request)
 
       cond do
@@ -234,6 +242,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
       # parent round zero spawns, only the child streams, then the parent
       # resumes and cites the recorded result.
       assert_receive {:parent_round, 0}, 5_000
+      assert_receive {:child_user_messages, []}, 5_000
       assert_receive {:child_round, 0}, 5_000
       assert_receive {:tool_result_in_conversation, tool_result}, 5_000
       assert tool_result =~ "child report"
