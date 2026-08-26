@@ -82,13 +82,7 @@ defmodule ReyCode.Diagnostics do
     end
   end
 
-  defp default_data_home do
-    if :os.type() == {:unix, :darwin} do
-      Path.expand("~/Library/Application Support/ReyCode")
-    else
-      Path.join(System.get_env("XDG_DATA_HOME") || Path.expand("~/.local/share"), "rey_code")
-    end
-  end
+  defp default_data_home, do: ReyCode.Paths.data_home()
 
   defp system_info(nil) do
     {family, name} = :os.type()
