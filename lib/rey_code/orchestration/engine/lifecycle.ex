@@ -522,11 +522,10 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
         state
 
       true ->
-        report = delegation_report(child, outcome, state.projection)
-        entries = [EventEntries.tool_run_completed(parent, run, report)]
+        entry = delegation_result_entry(parent, run, child, outcome, state.projection)
 
         state
-        |> Persistence.append_and_apply!(entries)
+        |> Persistence.append_and_apply!([entry])
         |> Admission.enqueue(parent.id)
         |> pump_admission()
     end
@@ -542,6 +541,22 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     Delegation.report(false, "#{wire["category"]}: #{wire["message"]}", child.usage)
   end
 
+  defp delegation_result_entry(parent, run, child, {:completed, _metadata}, projection) do
+    EventEntries.tool_run_completed(
+      parent,
+      run,
+      delegation_report(child, {:completed, nil}, projection)
+    )
+  end
+
+  defp delegation_result_entry(parent, run, child, {:failed, error}, projection) do
+    EventEntries.tool_run_failed(
+      parent,
+      run,
+      delegation_report(child, {:failed, error}, projection)
+    )
+  end
+
   # Crash between a child's terminal record and the parent's resume write
   # leaves a suspended parent with a finished child; recovery completes the
   # handoff exactly once. Children recover first (created earlier in the sort,
@@ -555,29 +570,20 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   defp resume_stale_delegation(parent, state) do
-    parent
-    |> pending_spawn_run()
-    |> case do
-      nil ->
-        state
-
-      %{status: :running} = run ->
-        resume_stale_child(state, run)
-
-      _run ->
-        # The report was recorded before the crash; only re-arming is missing.
-        state
-        |> Admission.enqueue(parent.id)
-        |> pump_admission()
+    case pending_spawn_run(parent) do
+      nil -> state
+      run -> resume_stale_child(state, run)
     end
   end
 
   defp pending_spawn_run(parent) do
     parent.tool_run_order
     |> List.wrap()
+    |> Enum.reverse()
     |> Enum.map(&parent.tool_runs[&1])
     |> Enum.find(fn run ->
-      run != nil and run.tool == Delegation.tool_name() and run.child_invocation_id != nil
+      run != nil and run.tool == Delegation.tool_name() and run.status == :running and
+        run.child_invocation_id != nil
     end)
   end
 

@@ -11,6 +11,7 @@ defmodule ReyCode.Orchestration.Delegation do
   """
 
   alias ReyCode.Orchestration.{Invocation, Participant, Projection}
+  alias ReyCode.Provider.TextBuffer
 
   @tool_name "spawn_task"
 
@@ -26,9 +27,9 @@ defmodule ReyCode.Orchestration.Delegation do
           | :delegation_depth_exceeded
           | :child_cap_exceeded
           | :unknown_agent
+          | :ambiguous_agent
           | :primary_target
-
-  @doc "The orchestration tool name agents call to delegate."
+          | :delegation_unsupported_in_squad
   @spec tool_name() :: String.t()
   def tool_name, do: @tool_name
 
@@ -48,6 +49,7 @@ defmodule ReyCode.Orchestration.Delegation do
           {:ok, Participant.t()} | {:error, rejection()}
   def authorize(invocation, arguments, projection, bounds) do
     with {:ok, agent, brief} <- parse_arguments(arguments),
+         :ok <- check_mode(invocation, projection),
          :ok <- check_brief(brief, bounds.brief_max_bytes),
          :ok <- check_depth(invocation),
          :ok <- check_child_cap(invocation, bounds.max_children) do
@@ -73,31 +75,35 @@ defmodule ReyCode.Orchestration.Delegation do
   """
   @spec report(boolean(), String.t() | nil, map() | nil) :: map()
   def report(ok?, output, usage) do
+    truncated? = is_binary(output) and byte_size(output) > @report_max_bytes
     text = bounded(output)
 
     if ok? do
       %{
         "output" => text || "",
-        "truncated" => truncated?(text),
+        "truncated" => truncated?,
         "metadata" => %{"usage" => usage || %{}}
       }
     else
       %{
         "error" => text || "delegation failed",
-        "truncated" => false,
+        "truncated" => truncated?,
         "metadata" => %{"usage" => usage || %{}}
       }
     end
   end
-
-  defp truncated?(text) when is_binary(text), do: byte_size(text) >= @report_max_bytes
-  defp truncated?(_), do: false
 
   defp parse_arguments(%{"agent" => agent, "brief" => brief})
        when is_binary(agent) and is_binary(brief),
        do: {:ok, agent, brief}
 
   defp parse_arguments(_arguments), do: {:error, :invalid_arguments}
+
+  defp check_mode(invocation, projection) do
+    if projection.turns[invocation.turn_id].mode == :squad,
+      do: {:error, :delegation_unsupported_in_squad},
+      else: :ok
+  end
 
   defp check_brief(brief, brief_max_bytes) do
     if byte_size(brief) > brief_max_bytes,
@@ -119,8 +125,11 @@ defmodule ReyCode.Orchestration.Delegation do
       |> List.wrap()
       |> Enum.count(fn run_id ->
         case Map.get(invocation.tool_runs, run_id) do
-          %{tool: tool} -> tool == @tool_name
-          _other -> false
+          %{tool: tool, child_invocation_id: child_id} ->
+            tool == @tool_name and not is_nil(child_id)
+
+          _other ->
+            false
         end
       end)
 
@@ -132,18 +141,19 @@ defmodule ReyCode.Orchestration.Delegation do
   defp resolve_participant(nil, _agent), do: {:error, :unknown_agent}
 
   defp resolve_participant(room, agent) do
-    case Enum.find(room.participants, &(&1.name == agent)) do
-      nil -> {:error, :unknown_agent}
-      %Participant{kind: :task} = participant -> {:ok, participant}
-      %Participant{} -> {:error, :primary_target}
-      _seat_or_other -> {:error, :unknown_agent}
+    case Enum.filter(room.participants, &(&1.name == agent)) do
+      [] -> {:error, :unknown_agent}
+      [%Participant{kind: :task} = participant] -> {:ok, participant}
+      [%Participant{}] -> {:error, :primary_target}
+      [_single] -> {:error, :unknown_agent}
+      _multiple -> {:error, :ambiguous_agent}
     end
   end
 
   defp bounded(nil), do: nil
 
   defp bounded(text) when is_binary(text),
-    do: binary_slice(text, 0, min(byte_size(text), @report_max_bytes))
+    do: TextBuffer.truncate_utf8(text, @report_max_bytes)
 
   defp bounded(other), do: other
 end
