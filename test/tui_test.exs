@@ -730,6 +730,7 @@ defmodule ReyCode.TUITest do
 
     invocation = %{
       id: invocation_id,
+      notes: [],
       participant: %{
         id: "assistant",
         name: "Assistant",

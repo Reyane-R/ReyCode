@@ -495,6 +495,21 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert {:ok, %Response{text: "ok"}} = result
       assert [%Frame{kind: :text_delta}] = emitted
     end
+
+    test "a reasoning-only stream fails closed as content-free output" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning_content":"only thinking"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:error, %{"category" => "protocol_error"}} = result
+      assert [%Frame{kind: :agent_note}] = emitted
+    end
   end
 
   describe "keyless profiles" do
@@ -785,6 +800,49 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert length(FakeTransport.requests()) == 1
     after
       System.delete_env("PINNED_KEY")
+    end
+
+    test "an explicit capability pin wins over a remembered downgrade" do
+      # Prime the sticky cache: first round downgrades stream_options.
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
+        {:chunks, @success_stream}
+      ])
+
+      assert {:ok, %Response{}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      # The operator then pins tools off; the memory must not re-enable them.
+      # load/2 is what production uses, so it applies the env pin.
+      System.put_env("REYCODE_DEEPSEEK_SUPPORTS_TOOLS", "false")
+
+      policy =
+        RuntimeConfig.load(
+          fn
+            :openai_compatible_transport, _default -> FakeTransport
+            _key, default -> default
+          end,
+          &System.get_env/1
+        ).open_ai
+
+      pinned_runtime = %{runtime() | provider_id: :deepseek, config: policy}
+
+      FakeTransport.set_stream(@success_stream)
+
+      assert {:ok, %Response{}} =
+               wire_result(
+                 OpenAICompatible.stream(pinned_runtime, request(), fn _frame -> :ok end)
+               )
+
+      body =
+        FakeTransport.requests()
+        |> List.last()
+        |> Map.fetch!(:body)
+        |> Jason.decode!()
+
+      refute Map.has_key?(body, "tools")
+    after
+      System.delete_env("REYCODE_DEEPSEEK_SUPPORTS_TOOLS")
     end
   end
 

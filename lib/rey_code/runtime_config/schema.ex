@@ -419,6 +419,12 @@ defmodule ReyCode.RuntimeConfig.Schema do
   defp capability_field_env(:supports_tools), do: "SUPPORTS_TOOLS"
   defp capability_field_env(:supports_stream_options), do: "SUPPORTS_STREAM_OPTIONS"
 
+  @doc "The environment variable that pins one capability flag for one profile."
+  @spec capability_environment_name(atom(), :supports_tools | :supports_stream_options) ::
+          String.t()
+  def capability_environment_name(profile_id, field),
+    do: environment_name(profile_id, capability_field_env(field))
+
   defp boolean_environment_value!(name, value) do
     case String.downcase(value) do
       "true" -> true

@@ -75,6 +75,7 @@ defmodule ReyCode.Orchestration.Invocation do
           usage: map() | nil,
           tool_events: [map()],
           notes: [String.t()],
+          rounds: [ProviderRound.t()],
           tool_runs: %{optional(String.t()) => ToolRun.t()},
           tool_run_order: [String.t()],
           pending_tool_review: ToolAsk.t() | nil,

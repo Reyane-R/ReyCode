@@ -14,6 +14,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, RequestShape, Stream}
   alias ReyCode.RuntimeConfig
   alias ReyCode.RuntimeConfig.OpenAICompatible, as: OpenAIPolicy
+  alias ReyCode.RuntimeConfig.Schema
   alias ReyCode.ToolRegistry
 
   @behaviour ReyCode.Provider
@@ -65,7 +66,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
         config: policy
       }
 
-      run_stream(context, RequestShape.get(profile) || default_shape(profile))
+      run_stream(context, initial_shape(profile))
     end
   end
 
@@ -101,6 +102,24 @@ defmodule ReyCode.Provider.OpenAICompatible do
   # capabilities; surface it unchanged.
   defp downgrade(_context, _shape, error), do: {:error, error}
 
+  # A remembered shape only ever suppresses features the server rejected, so
+  # it intersects with today's profile: an explicit pin always wins over the
+  # memory of an older downgrade.
+  defp initial_shape(profile) do
+    default = default_shape(profile)
+
+    case RequestShape.get(profile) do
+      nil ->
+        default
+
+      remembered ->
+        %{
+          tools?: default.tools? and remembered.tools?,
+          stream_options?: default.stream_options? and remembered.stream_options?
+        }
+    end
+  end
+
   defp default_shape(profile),
     do: %{tools?: profile.supports_tools, stream_options?: profile.supports_stream_options}
 
@@ -111,7 +130,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp tool_calls_unsupported(profile, original) do
-    pin = "REYCODE_#{profile.id |> Atom.to_string() |> String.upcase()}_SUPPORTS_TOOLS=false"
+    pin = Schema.capability_environment_name(profile.id, :supports_tools) <> "=false"
 
     HTTP.error(
       :tool_calls_unsupported,
