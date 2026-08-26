@@ -749,6 +749,43 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     after
       System.delete_env("REYCODE_DEEPSEEK_SUPPORTS_TOOLS")
     end
+
+    test "a 400 from a fully pinned profile surfaces unchanged" do
+      System.put_env("PINNED_KEY", "k")
+
+      config =
+        RuntimeConfig.fresh(
+          openai_compatible_transport: FakeTransport,
+          openai_compatible_providers: [
+            %{
+              id: :pinned,
+              name: "Pinned",
+              base_url: "https://pinned.example.test",
+              key_env: "PINNED_KEY",
+              supports_tools: false,
+              supports_stream_options: false
+            }
+          ]
+        )
+
+      runtime = %Runtime{
+        module: OpenAICompatible,
+        provider_id: :pinned,
+        status: :configured,
+        config: config.open_ai
+      }
+
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"bad request for other reasons"}})}
+      ])
+
+      assert {:error, %{"category" => "request_failed"}} =
+               wire_result(OpenAICompatible.stream(runtime, request(), fn _frame -> :ok end))
+
+      assert length(FakeTransport.requests()) == 1
+    after
+      System.delete_env("PINNED_KEY")
+    end
   end
 
   describe "Profile" do

@@ -109,12 +109,8 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp visible_notes(%{note_rows: notes}) when is_list(notes),
     do: Enum.take(notes, -@max_visible_notes)
 
-  defp visible_notes(_message), do: []
-
   defp note_overflow(%{note_rows: notes}) when is_list(notes),
     do: max(length(notes) - @max_visible_notes, 0)
-
-  defp note_overflow(_message), do: 0
 
   defp split_lines(spans) do
     {lines, current} = Enum.reduce(spans, {[], []}, &split_span/2)

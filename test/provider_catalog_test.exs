@@ -60,6 +60,7 @@ defmodule ReyCode.Provider.CatalogTest do
        registry: @registry,
        task_supervisor: @task_supervisor,
        discover: discover,
+       api_discover: fn -> %{} end,
        discovery?: true}
     )
 
@@ -176,6 +177,7 @@ defmodule ReyCode.Provider.CatalogTest do
        registry: @registry,
        task_supervisor: @task_supervisor,
        discover: discover,
+       api_discover: fn -> %{} end,
        discovery?: true,
        probe_timeout: 30,
        retry_interval: 30,
@@ -212,6 +214,7 @@ defmodule ReyCode.Provider.CatalogTest do
        registry: @registry,
        task_supervisor: @task_supervisor,
        discover: discover,
+       api_discover: fn -> %{} end,
        discovery?: true,
        probe_timeout: 500,
        refresh_interval: 10_000}

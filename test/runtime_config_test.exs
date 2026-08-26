@@ -97,6 +97,30 @@ defmodule ReyCode.RuntimeConfigTest do
     end
   end
 
+  test "validates capability override shapes at the configuration boundary" do
+    for {capability, expectation} <- [
+          {%{deepseek: %{supports_tools: "yes"}},
+           ~r/expected supports_tools or supports_stream_options booleans/},
+          {%{deepseek: [:invalid]}, ~r/expected %\{provider_atom => capability flags\}/},
+          {"not-a-map", ~r/expected %\{provider_atom => capability flags\}/}
+        ] do
+      assert_raise ArgumentError, expectation, fn ->
+        RuntimeConfig.fresh(openai_compatible_capability_overrides: capability)
+      end
+    end
+
+    assert %RuntimeConfig{} =
+             RuntimeConfig.fresh(squad_simulator: [failure_plan: %{retryable: :retryable}])
+
+    assert_raise ArgumentError, ~r/failure_plan.*expected a failure map/s, fn ->
+      RuntimeConfig.fresh(squad_simulator: [failure_plan: %{retryable: :bogus}])
+    end
+
+    assert_raise ArgumentError, ~r/failure_plan/, fn ->
+      RuntimeConfig.fresh(squad_simulator: [failure_plan: :bogus])
+    end
+  end
+
   test "validates simulator options and rejects unknown explicit overrides" do
     assert %RuntimeConfig{} =
              RuntimeConfig.fresh(squad_simulator: [delay_ms: 0, emit_process: :task])
