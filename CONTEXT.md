@@ -46,6 +46,12 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ToolAsk** — Pending owner decision recorded when a ToolRun execution needs approval, addressed by request id.
 
+**spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant.
+
+**Delegation (agent-initiated)** — Durable parent/child handoff via `spawn_task`: the parent Invocation suspends (`:awaiting_delegation`) with zero provider rounds until the child terminates; the child's report re-enters the parent conversation as the ToolRun result.
+
+**Delegation depth** — Persisted per-Invocation count of delegation ancestors; 1 denies further `spawn_task` calls deterministically.
+
 **Author** — Typed attribution of a Message to the Operator or the executing Participant or Seat.
 
 **Failure** — Internal typed description of a failure category, message, retryability, and optional cause.

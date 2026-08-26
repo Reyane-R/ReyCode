@@ -22,6 +22,41 @@ not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
 
+### D27 — Offload harness: agent-initiated delegation over static orchestration (Direction — 2026-08-26)
+
+Product thesis: the high-tier Primary assistant hands bounded subtasks — test
+cycles, git/PR chores, doc passes — to explicitly configured cheap-tier task
+agents and resumes with the result. Routing intelligence lives in the model,
+not a classifier: the assistant decides *when* to delegate by calling a
+`spawn_task` tool (#70). Static orchestration stops being the growth path; it
+freezes behind recorded triggers.
+
+Disposition of existing surfaces:
+
+- **Keystone**: #70 `spawn_task` durable delegation — depth-bounded
+  (depth 1 v1), fail-closed addressing (task agents only), parent suspends
+  durably, child report re-enters the parent conversation, restart recovers
+  both sides exactly once.
+- **Compare graduates** into the model-tier audition surface (#72): same task,
+  N candidate models, per-participant outcome/tokens/time. This is how a Luna
+  tier gets picked.
+- **Fan-out retires** (#71): mechanically identical to Compare; legacy replay
+  preserved via inert decode at event application.
+- **Debate freezes**: propose → critique → revise is a planning seed, but its
+  canned-prompt implementation predates the tool loop. It retires when
+  delegated critics organically cover that pattern across real runs (#73).
+- **Squad stays frozen under D4**, with one new post-delegation trigger: a
+  recurring need that fixed multi-role sequencing serves but depth-1
+  delegation genuinely cannot express reopens evaluation (#73).
+
+Non-goals: no activity classifier, no delegation management UI, no recursive
+delegation beyond depth 1 in v1.
+
+Acceptance: `spawn_task` ships restart-safe with fail-closed addressing and
+bounds (#70); an operator can audition two local models for a testing tier via
+`mix rey_code.eval` without writing code (#72); every retirement above happens
+by its recorded trigger with evidence in History (#73) — never by whim.
+
 ### D25 — Single assistant, explicit task agents (Policy — 2026-08-24)
 
 Startup presents a home screen and ordinary messages invoke exactly one Primary
@@ -86,6 +121,13 @@ loop. No further feature investment in the HTTP transport layer is planned
 beyond bugfixes.
 
 Acceptance: squad configuration statically rejects chat-only runtimes.
+
+**Amended 2026-08-26 (D27):** the chat-only framing is obsolete.
+OpenAI-compatible providers run the native tool loop and are first-class
+standalone runtimes; their remaining non-default surface is Compare, which
+graduates to the model-tier audition path (#72). Squad's runtime restrictions
+are unchanged.
+
 
 ### D4 — Static squad FSM until evidence (Policy)
 

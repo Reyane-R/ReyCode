@@ -54,6 +54,9 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:squad_release_gate_human, fn -> true end, :boolean},
       {:squad_rework_budget, fn -> Squad.max_rework() end, {:integer, 1}},
       {:squad_simulator, fn -> [] end, :simulator_options},
+      # Agent-initiated delegation policy
+      {:delegation_max_children_per_invocation, fn -> 8 end, {:integer, 1}},
+      {:delegation_brief_max_bytes, fn -> 16_384 end, {:integer, 1}},
       # Event store / persistence policy
       {:projection_checkpoint_interval, fn -> 500 end, {:integer, 1}},
       {:max_replay_events, fn -> 2_000 end, {:integer, 1}},

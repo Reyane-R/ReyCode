@@ -429,6 +429,29 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  @doc """
+  Builds the event linking one parent `spawn_task` tool run to its child
+  invocation and durably suspending the parent until the child terminates.
+  """
+  @spec delegation_opened(Invocation.t(), ToolRun.t(), String.t(), String.t(), non_neg_integer()) ::
+          event_entry()
+  def delegation_opened(parent_invocation, run, child_invocation_id, child_message_id, depth) do
+    invocation_event(
+      :delegation_opened,
+      %{
+        "invocation_id" => parent_invocation.id,
+        "message_id" => parent_invocation.message_id,
+        "turn_id" => parent_invocation.turn_id,
+        "room_id" => parent_invocation.room_id,
+        "tool_run_id" => run.id,
+        "child_invocation_id" => child_invocation_id,
+        "child_message_id" => child_message_id,
+        "delegation_depth" => depth
+      },
+      parent_invocation
+    )
+  end
+
   @doc "Builds the event durably extending a squad turn's rework budget."
   @spec squad_budget_extended(Turn.t(), pos_integer()) :: event_entry()
   def squad_budget_extended(turn, budget) do
@@ -701,13 +724,29 @@ defmodule ReyCode.Orchestration.EventEntries do
         "label" => spec.label,
         "system_prompt" => spec.system_prompt,
         "attempt" => Map.get(spec, :attempt, 1)
-      },
+      }
+      |> Map.merge(delegation_origin(spec)),
       %Invocation{
         id: invocation_id,
         room_id: room.id,
         turn_id: turn.id
       }
     )
+  end
+
+  # Delegation origin keys are optional with strict :id rules; they are only
+  # emitted for agent-initiated delegation children, never as nils.
+  defp delegation_origin(spec) do
+    spec
+    |> Map.take([:delegated_from_invocation_id, :delegated_from_tool_run_id])
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+    |> then(fn merged ->
+      case Map.get(spec, :delegation_depth) do
+        nil -> merged
+        depth -> Map.put(merged, "delegation_depth", depth)
+      end
+    end)
   end
 
   defp room_participant(%Participant{} = participant), do: wire_participant(participant)

@@ -347,6 +347,12 @@ defmodule ReyCode.TUI.State do
 
   defp note_rows(_invocation), do: []
 
+  defp tool_run_row(%{tool: :spawn_task} = run),
+    do: delegation_row(run, arguments_agent(run.arguments))
+
+  defp tool_run_row(%{tool: "spawn_task"} = run),
+    do: delegation_row(run, arguments_agent(run.arguments))
+
   defp tool_run_row(run) do
     %{
       tool: to_string(run.tool),
@@ -354,6 +360,21 @@ defmodule ReyCode.TUI.State do
       status: run_status_label(run)
     }
   end
+
+  # Delegation results use the tool-result envelope without an "ok" key;
+  # completion itself is the success signal for the row label.
+  defp delegation_row(run, agent) do
+    %{
+      tool: "delegate",
+      target: agent || "unknown agent",
+      status: delegation_status_label(run)
+    }
+  end
+
+  defp delegation_status_label(%{status: :completed}), do: "ok"
+  defp delegation_status_label(run), do: run_status_label(run)
+  defp arguments_agent(arguments) when is_map(arguments), do: arguments["agent"]
+  defp arguments_agent(_arguments), do: nil
 
   defp run_status_label(%{status: :completed, result: %{"ok" => true}}), do: "ok"
 

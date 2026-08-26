@@ -50,7 +50,7 @@ defmodule ReyCode.Event do
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
     gate_review_requested gate_resolved squad_budget_extended tool_ask_requested tool_ask_resolved
     provider_round_recorded tool_run_requested tool_run_approval_resolved tool_run_started
-    tool_run_completed tool_run_failed tool_run_interrupted
+    tool_run_completed tool_run_failed tool_run_interrupted delegation_opened
   )a
   @type type ::
           unquote(
@@ -177,7 +177,10 @@ defmodule ReyCode.Event do
         "cycle" => :non_negative_integer,
         "logical_work_id" => :nullable_text,
         "dependencies" => :text_list,
-        "attempt" => :positive_integer
+        "attempt" => :positive_integer,
+        "delegated_from_invocation_id" => :id,
+        "delegated_from_tool_run_id" => :id,
+        "delegation_depth" => :non_negative_integer
       }
     },
     invocation_started: %{
@@ -376,6 +379,17 @@ defmodule ReyCode.Event do
       required:
         Map.merge(@invocation_identity, @turn_room_identity)
         |> Map.merge(%{"tool_run_id" => :id, "tool" => :text, "reason" => :text}),
+      optional: %{}
+    },
+    delegation_opened: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "tool_run_id" => :id,
+          "child_invocation_id" => :id,
+          "child_message_id" => :id,
+          "delegation_depth" => :non_negative_integer
+        }),
       optional: %{}
     }
   }

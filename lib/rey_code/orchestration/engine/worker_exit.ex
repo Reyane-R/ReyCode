@@ -15,7 +15,7 @@ defmodule ReyCode.Orchestration.Engine.WorkerExit do
     do: :ignore
 
   def classify(invocation, _reason, _replayable?)
-      when invocation.status == :waiting_tool_approval,
+      when invocation.status in [:waiting_tool_approval, :awaiting_delegation],
       do: :release
 
   def classify(invocation, reason, replayable?) do

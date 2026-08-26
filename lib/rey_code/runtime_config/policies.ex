@@ -7,8 +7,11 @@ defmodule ReyCode.RuntimeConfig.Orchestration do
     :workspace_concurrency,
     :global_queue_limit,
     :workspace_queue_limit,
-    :agent_delay_ms
+    :agent_delay_ms,
+    :delegation_max_children,
+    :delegation_brief_max_bytes
   ]
+
   defstruct @enforce_keys
 
   @type limit :: pos_integer() | :infinity
@@ -19,8 +22,9 @@ defmodule ReyCode.RuntimeConfig.Orchestration do
           global_concurrency: limit(),
           workspace_concurrency: limit(),
           global_queue_limit: queue_limit(),
-          workspace_queue_limit: queue_limit(),
-          agent_delay_ms: non_neg_integer()
+          agent_delay_ms: non_neg_integer(),
+          delegation_max_children: pos_integer(),
+          delegation_brief_max_bytes: pos_integer()
         }
 end
 

@@ -15,7 +15,8 @@ defmodule ReyCode.Orchestration.ToolRun do
     :error,
     :requested_at,
     :started_at,
-    :completed_at
+    :completed_at,
+    :child_invocation_id
   ]
 
   defstruct id: nil,
@@ -31,7 +32,8 @@ defmodule ReyCode.Orchestration.ToolRun do
             error: nil,
             requested_at: nil,
             started_at: nil,
-            completed_at: nil
+            completed_at: nil,
+            child_invocation_id: nil
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
@@ -47,7 +49,8 @@ defmodule ReyCode.Orchestration.ToolRun do
           error: map() | nil,
           requested_at: term(),
           started_at: term(),
-          completed_at: term()
+          completed_at: term(),
+          child_invocation_id: String.t() | nil
         }
 
   @doc "Converts a decoded or legacy tool-run map into the current record."
