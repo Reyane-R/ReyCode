@@ -156,7 +156,6 @@ defmodule ReyCode.TUI.Activity do
   defp selected_invocation_ids(room, projection) do
     {ids, _seen, truncated?} =
       room.message_order
-      |> Enum.reverse()
       |> Enum.reduce_while({[], MapSet.new(), false}, fn message_id, {ids, seen, _truncated?} ->
         invocation_id = invocation_id(projection, message_id)
 
@@ -308,13 +307,15 @@ defmodule ReyCode.TUI.Activity do
         |> Map.put(:id, invocation.id)
 
       nil ->
-        item(invocation.id, :approval, :blocked, "Paused", "tool approval required", nil, nil, 90)
+        target = truncate("tool approval required · /tools", target_graphemes)
+        item(invocation.id, :approval, :blocked, "Paused", target, nil, nil, 90)
     end
   end
 
   defp approval_tool_item(run, _workspace, _now_ms, target_graphemes) do
-    tool = run.tool |> to_string() |> single_line() |> truncate(target_graphemes)
-    item(run.id, :approval, :blocked, "Paused", "#{tool} approval required", nil, nil, 90)
+    tool = run.tool |> to_string() |> single_line()
+    target = truncate("#{tool} approval required · /tools", target_graphemes)
+    item(run.id, :approval, :blocked, "Paused", target, nil, nil, 90)
   end
 
   defp tool_item(run, workspace, now_ms, target_graphemes) do
@@ -421,7 +422,6 @@ defmodule ReyCode.TUI.Activity do
 
   defp recent_turn(room, projection) do
     room.message_order
-    |> Enum.reverse()
     |> Enum.find_value(fn message_id ->
       case Map.get(projection.messages, message_id) do
         %{turn_id: turn_id} when not is_nil(turn_id) -> Map.get(projection.turns, turn_id)
@@ -507,7 +507,7 @@ defmodule ReyCode.TUI.Activity do
 
     root = Path.expand(workspace)
 
-    if expanded == root or String.starts_with?(expanded, root <> "/"),
+    if root == "/" or expanded == root or String.starts_with?(expanded, root <> "/"),
       do: Path.relative_to(expanded, root),
       else: "<outside workspace>"
   end

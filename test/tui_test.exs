@@ -544,7 +544,7 @@ defmodule ReyCode.TUITest do
     engine_sequence = Engine.snapshot(tui_engine_activity_static).sequence
     projection_sequence = Breeze.Test.metadata(session).assigns.projection.sequence
     paused = session |> Breeze.Test.render!() |> plain()
-    assert paused =~ "Ⅱ · Paused · bash approval required"
+    assert paused =~ "Ⅱ · Paused · bash approval required · /tools"
 
     Enum.each(1..3, fn _ ->
       assert {:noreply, _focused} = Breeze.Test.info(session, {:activity_tick, make_ref()})

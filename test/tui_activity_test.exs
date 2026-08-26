@@ -43,8 +43,8 @@ defmodule ReyCode.TUI.ActivityTest do
     refute Activity.active?(view)
     assert item.state == :blocked
     assert item.label == "Paused"
-    assert item.target == "read approval required"
-    assert Activity.text(item, "unused") == "Ⅱ · Paused · read approval required"
+    assert item.target == "read approval required · /tools"
+    assert Activity.text(item, "unused") == "Ⅱ · Paused · read approval required · /tools"
 
     ready = %{run | status: :ready}
 
@@ -108,7 +108,7 @@ defmodule ReyCode.TUI.ActivityTest do
       workspace: @workspace,
       participants: [parent.participant, participant],
       active_turn_id: turn.id,
-      message_order: ["msg-parent", "msg-child"]
+      message_order: ["msg-child", "msg-parent"]
     }
 
     projection = %Projection{
@@ -168,6 +168,15 @@ defmodule ReyCode.TUI.ActivityTest do
 
     assert outside.target == "<outside workspace>"
 
+    root_workspace =
+      Activity.tool(
+        tool_run("root", :read, :running, %{"path" => "/tmp/file"}),
+        "/",
+        @now_ms
+      )
+
+    assert root_workspace.target == "tmp/file"
+
     bounded =
       Activity.tool(
         tool_run("bounded", :bash, :running, %{"command" => String.duplicate("é", 100)}),
@@ -221,7 +230,7 @@ defmodule ReyCode.TUI.ActivityTest do
       tool_run_order: []
     }
 
-    selected_room = %{Map.fetch!(projection.rooms, room_id) | message_order: ["msg-1", "msg-2"]}
+    selected_room = %{Map.fetch!(projection.rooms, room_id) | message_order: ["msg-2", "msg-1"]}
 
     selected_turn = %{
       Map.fetch!(projection.turns, "turn")
@@ -365,7 +374,7 @@ defmodule ReyCode.TUI.ActivityTest do
     view = Activity.present(room_id, projection, %{}, @now_ms)
     item = Activity.invocation(view, invocation_id)
     assert item.state == :blocked
-    assert item.target == "tool approval required"
+    assert item.target == "tool approval required · /tools"
     refute Activity.active?(view)
 
     {projection, room_id, invocation_id} = fixture(invocation_status: :awaiting_delegation)
@@ -373,6 +382,40 @@ defmodule ReyCode.TUI.ActivityTest do
     item = Activity.invocation(view, invocation_id)
     assert item.state == :blocked
     assert item.label == "Paused"
+  end
+
+  test "room header selects the newest terminal Turn from newest-first message order" do
+    {projection, room_id, _invocation_id} =
+      fixture(invocation_status: :completed, turn_status: :terminal, outcome: :completed)
+
+    newest_turn = %Turn{
+      id: "turn-newest",
+      room_id: room_id,
+      status: :terminal,
+      outcome: :failed,
+      invocation_order: [],
+      created_at: "2026-08-26T22:00:09Z"
+    }
+
+    room = %{
+      Map.fetch!(projection.rooms, room_id)
+      | message_order: ["msg-newest", "msg-1"]
+    }
+
+    projection = %{
+      projection
+      | rooms: Map.put(projection.rooms, room_id, room),
+        turns: Map.put(projection.turns, newest_turn.id, newest_turn),
+        messages:
+          Map.put(projection.messages, "msg-newest", %{
+            invocation_id: nil,
+            turn_id: newest_turn.id
+          })
+    }
+
+    view = Activity.present(room_id, projection, %{}, @now_ms)
+    assert view.header.outcome == :failed
+    assert view.header.label == "Failed"
   end
 
   test "selected activity view keeps a bounded newest invocation window" do
@@ -393,7 +436,7 @@ defmodule ReyCode.TUI.ActivityTest do
         }
 
         {
-          order ++ [message_id],
+          [message_id | order],
           Map.put(message_acc, message_id, %{invocation_id: invocation_id, turn_id: "turn"}),
           Map.put(invocation_acc, invocation_id, invocation)
         }
