@@ -76,7 +76,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:tool_grep_timeout_ms, fn -> 10_000 end, {:integer, 1}},
       {:workspace_roots, fn -> nil end, :optional_string_list},
       {:file_logging, fn -> false end, :boolean},
-      {:log_dir, fn -> Path.expand("~/Library/Logs/ReyCode") end, :string}
+      {:log_dir, fn -> ReyCode.Paths.log_home() end, :string}
     ]
   end
 
