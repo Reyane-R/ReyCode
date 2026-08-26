@@ -42,6 +42,11 @@ defmodule ReyCode.RuntimeConfigTest do
     assert config.workspace.roots == ["/tmp/a", "/tmp/b"]
   end
 
+  test "assembles reduced-motion presentation policy" do
+    assert RuntimeConfig.fresh(tui_reduced_motion: true).tui.reduced_motion?
+    refute RuntimeConfig.fresh().tui.reduced_motion?
+  end
+
   test "accepts :infinity only for concurrency and queue limits" do
     assert %RuntimeConfig{} = load_with(%{global_queue_limit: :infinity})
 
@@ -246,6 +251,7 @@ defmodule ReyCode.RuntimeConfigTest do
       tool_grep_max_file_bytes: config.tools.grep.max_file_bytes,
       tool_grep_max_files: config.tools.grep.max_files,
       tool_grep_timeout_ms: config.tools.grep.timeout_ms,
+      tui_reduced_motion: config.tui.reduced_motion?,
       workspace_roots: config.workspace.roots,
       file_logging: config.logging.enabled?,
       log_dir: config.logging.log_dir

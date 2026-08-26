@@ -24,6 +24,7 @@ defmodule ReyCode.RuntimeConfig do
     Simulator,
     Squad,
     Tools,
+    TUI,
     Workspace
   }
 
@@ -36,6 +37,7 @@ defmodule ReyCode.RuntimeConfig do
     :squad,
     :persistence,
     :tools,
+    :tui,
     :workspace,
     :logging
   ]
@@ -50,6 +52,7 @@ defmodule ReyCode.RuntimeConfig do
           squad: Squad.t(),
           persistence: Persistence.t(),
           tools: Tools.t(),
+          tui: TUI.t(),
           workspace: Workspace.t(),
           logging: Logging.t()
         }
@@ -199,6 +202,7 @@ defmodule ReyCode.RuntimeConfig do
           timeout_ms: values.tool_grep_timeout_ms
         }
       },
+      tui: %TUI{reduced_motion?: values.tui_reduced_motion},
       workspace: %Workspace{roots: values.workspace_roots},
       logging: %Logging{enabled?: values.file_logging, log_dir: values.log_dir}
     }

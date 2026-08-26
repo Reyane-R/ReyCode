@@ -14,6 +14,8 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:workspace_concurrency, fn -> 1 end, :limit},
       {:global_queue_limit, fn -> 100 end, :queue_limit},
       {:workspace_queue_limit, fn -> 20 end, :queue_limit},
+      # Terminal presentation policy
+      {:tui_reduced_motion, fn -> false end, :boolean},
       # Provider policy
       {:agent_delay_ms, fn -> 0 end, {:integer, 0}},
       {:allow_simulator_provider, fn -> false end, :boolean},

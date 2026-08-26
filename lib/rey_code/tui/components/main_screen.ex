@@ -6,11 +6,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   import ReyCode.TUI.Components.MainScreen.Timeline, only: [timeline: 1]
 
-  alias ReyCode.Orchestration.Projection
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.Spinner
-
-  @compile {:no_warn_undefined, ReyCode.TUI.Spinner}
+  alias ReyCode.TUI.Activity
   attr :modal, :any, required: true
   attr :home, :boolean, required: true
   attr :rooms, :list, required: true
@@ -19,6 +16,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :projection, :map, required: true
   attr :providers, :map, required: true
   attr :messages, :list, required: true
+  attr :activity, :map, required: true
+  attr :activity_frame, :string, required: true
   attr :timeline_id, :string, required: true
   attr :message_width, :integer, required: true
   attr :draft, :string, required: true
@@ -35,12 +34,10 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <.room_header
           :if={room_visible?(@home)}
           room={@room}
-          projection={@projection}
-          providers={@providers}
-          mode={@mode}
+          activity={@activity}
+          activity_frame={@activity_frame}
           git_branch={@git_branch}
           token_label={@token_label}
-          elapsed_seconds={@elapsed_seconds}
           terminal_width={@terminal_width}
         />
         <.timeline
@@ -48,6 +45,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           messages={@messages}
           timeline_id={@timeline_id}
           message_width={@message_width}
+          activity_frame={@activity_frame}
         />
         <.composer draft={@draft} notice={@notice}/>
         <.slash_palette modal={@modal} slash_rows={@slash_rows} slash_style={@slash_style}/>
@@ -87,13 +85,10 @@ defmodule ReyCode.TUI.Components.MainScreen do
   end
 
   attr :room, :map, required: true
-  attr :projection, :map, required: true
-  attr :providers, :map, required: true
-
-  attr :mode, :atom, required: true
+  attr :activity, :map, required: true
+  attr :activity_frame, :string, required: true
   attr :git_branch, :any, required: true
   attr :token_label, :string, required: true
-  attr :elapsed_seconds, :any, required: true
   attr :terminal_width, :integer, required: true
 
   defp room_header(assigns) do
@@ -103,8 +98,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box class="font-bold">ReyCode</box>
         <box class="text-muted">{header_context(@room, @terminal_width, @git_branch)}</box>
         <box class="text-muted">{@token_label}</box>
-        <box class={room_status_class(@room, @projection, @providers, @mode)}>
-          {room_status(@room, @projection, @providers, @mode, @elapsed_seconds)}
+        <box class={room_status_class(@activity.header)}>
+          {Activity.text(@activity.header, @activity_frame)}
         </box>
       </box>
     </box>
@@ -151,53 +146,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
     """
   end
 
-  defp room_status(room, projection, _providers, _mode, elapsed_seconds) do
-    cond do
-      tool_approval_status(room, projection) != "" ->
-        tool_approval_status(room, projection)
-
-      turn = projection.turns[room.active_turn_id] ->
-        if turn && turn.status == :running,
-          do: Spinner.glyph() <> " " <> running_label(elapsed_seconds),
-          else: "working"
-
-      room.queued_turn_ids != [] ->
-        "queued"
-
-      true ->
-        "ready"
-    end
-  end
-
-  defp running_label(elapsed_seconds) do
-    if is_integer(elapsed_seconds), do: "thinking · #{elapsed_seconds}s", else: "thinking"
-  end
-
-  defp room_status_class(room, projection, providers, _mode) do
-    participants = primary_participants(room)
-
-    class =
-      cond do
-        tool_approval_status(room, projection) != "" ->
-          "text-warning"
-
-        room.active_turn_id != nil ->
-          "text-warning"
-
-        room.queued_turn_ids != [] ->
-          "text-warning"
-
-        Enum.all?(participants, &Presentation.ready?(providers[&1.provider], &1)) ->
-          "text-success"
-
-        true ->
-          "text-muted"
-      end
-
-    "w-full text-right #{class}"
-  end
-
-  defp primary_participants(room), do: Enum.filter(room.participants, &(&1.kind == :primary))
+  defp room_status_class(item), do: "w-full text-right text-#{Activity.color(item)}"
 
   defp primary_summary(room) do
     case Enum.find(room.participants, &(&1.kind == :primary)) do
@@ -258,11 +207,4 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   defp content_class(true), do: "grid grid-cols-1 grid-rows-2 h-full w-full overflow-hidden"
   defp content_class(_home), do: "grid grid-cols-1 grid-rows-3 h-full w-full overflow-hidden"
-
-  defp tool_approval_status(room, projection) do
-    case Projection.pending_tool_invocation(projection, room.active_turn_id) do
-      nil -> ""
-      %{pending_tool_review: review} -> "tool approval required  /  #{review.tool}  /  /tools"
-    end
-  end
 end

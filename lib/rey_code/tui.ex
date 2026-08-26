@@ -115,7 +115,7 @@ defmodule ReyCode.TUI do
       end
     end)
 
-    {:stop, term}
+    {:stop, State.stop_animation(term)}
   end
 
   defp post_message(term, draft) do
@@ -258,5 +258,20 @@ defmodule ReyCode.TUI do
 
   def handle_info({:provider_catalog_updated, providers}, term) do
     {:noreply, State.providers_updated(term, providers)}
+  end
+
+  def handle_info({:activity_tick, token}, term) do
+    case State.animation_tick(term, token) do
+      {:ok, next} -> {:noreply, next}
+      :stale -> {:noreply, term}
+    end
+  end
+
+  @doc false
+  def handle_info({:activity_tick, token, now_ms}, term) do
+    case State.animation_tick(term, token, now_ms) do
+      {:ok, next} -> {:noreply, next}
+      :stale -> {:noreply, term}
+    end
   end
 end

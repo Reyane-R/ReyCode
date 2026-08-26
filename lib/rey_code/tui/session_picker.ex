@@ -3,7 +3,7 @@ defmodule ReyCode.TUI.SessionPicker do
 
   use Breeze.Component
   alias Breeze.{Component, View}
-  alias ReyCode.TUI.{SlashPalette, TimeAgo}
+  alias ReyCode.TUI.{SlashPalette, State, TimeAgo}
 
   @spec initial() :: map()
   def initial, do: %{index: 0}
@@ -48,16 +48,17 @@ defmodule ReyCode.TUI.SessionPicker do
   def submit(term) do
     session = Enum.at(sessions(term), term.assigns.session_picker.index)
 
-    {:noreply,
-     term
-     |> Component.assign(
-       selected_room_id: session.id,
-       home: false,
-       modal: nil,
-       session_picker: initial(),
-       notice: nil
-     )
-     |> View.focus("prompt")}
+    next =
+      term
+      |> Component.assign(
+        modal: nil,
+        session_picker: initial(),
+        notice: nil
+      )
+      |> State.select_session(session.id)
+      |> View.focus("prompt")
+
+    {:noreply, next}
   end
 
   defp cancel(term) do
