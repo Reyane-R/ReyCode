@@ -2,10 +2,8 @@ defmodule ReyCode.Orchestration.Engine.Turns do
   @moduledoc "Handles user-facing turn commands for the Engine."
 
   alias ReyCode.Orchestration.Engine.{Admission, Lifecycle, Persistence}
-  alias ReyCode.Orchestration.{EventEntries, Squad, Validation}
+  alias ReyCode.Orchestration.{EventEntries, Mode, Squad, Validation}
   alias ReyCode.Provider.Catalog
-
-  @modes [:direct, :compare, :debate, :fan_out, :squad]
 
   @type response :: {:reply, term(), map()}
 
@@ -26,7 +24,7 @@ defmodule ReyCode.Orchestration.Engine.Turns do
       not Map.has_key?(state.projection.rooms, room_id) ->
         {:reply, {:error, :room_not_found}, state}
 
-      mode not in [:delegate | @modes] ->
+      not Mode.known?(mode) ->
         {:reply, {:error, :invalid_mode}, state}
 
       true ->

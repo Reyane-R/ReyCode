@@ -9,6 +9,7 @@ defmodule ReyCode.Orchestration.Projector do
     Author,
     Invocation,
     Message,
+    Mode,
     Participant,
     Projection,
     ProviderRound,
@@ -797,13 +798,21 @@ defmodule ReyCode.Orchestration.Projector do
   defp participant_kind(:task), do: :task
   defp participant_kind(_kind), do: :legacy
 
-  defp mode("direct"), do: :direct
-  defp mode("delegate"), do: :delegate
-  defp mode("compare"), do: :compare
-  defp mode("debate"), do: :debate
-  defp mode("fan_out"), do: :fan_out
-  defp mode("squad"), do: :squad
-  defp mode(value) when is_atom(value), do: value
+  # Durable mode values are decoded through the closed contract; an
+  # unknown value is impossible validated input and fails at detection.
+  defp mode(value) when is_binary(value) do
+    case Mode.decode(value) do
+      {:ok, mode} -> mode
+      {:error, :invalid_mode} -> raise ArgumentError, "invalid durable mode #{inspect(value)}"
+    end
+  end
+
+  defp mode(value) when is_atom(value) do
+    case Mode.decode(value) do
+      {:ok, mode} -> mode
+      {:error, :invalid_mode} -> raise ArgumentError, "invalid durable mode #{inspect(value)}"
+    end
+  end
 
   defp provider(value) when is_binary(value) or is_atom(value),
     do: Registry.normalize_provider_id(value)

@@ -9,8 +9,11 @@ defmodule ReyCode do
   @spec create_room(String.t(), String.t()) :: {:ok, String.t()} | {:error, atom()}
   def create_room(title, workspace \\ File.cwd!()), do: Engine.create_room(title, workspace)
 
+  @mode_ids ReyCode.Orchestration.Mode.ids()
+            |> Enum.reduce(fn id, union -> {:|, [], [id, union]} end)
+
   @doc "Posts an ordinary message to the room's primary assistant."
-  @spec post_message(String.t(), String.t(), :direct | :compare | :debate | :fan_out | :squad) ::
+  @spec post_message(String.t(), String.t(), unquote(@mode_ids)) ::
           {:ok, String.t()} | {:error, term()}
   def post_message(room_id, body, mode \\ :direct) do
     Engine.post_message(room_id, body, mode)
