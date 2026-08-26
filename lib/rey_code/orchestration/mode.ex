@@ -10,13 +10,13 @@ defmodule ReyCode.Orchestration.Mode do
   every boundary instead of surviving to fail later in dispatch.
   """
 
-  alias ReyCode.Orchestration.Workflow.{Compare, Debate, Direct, Squad}
+  alias ReyCode.Orchestration.Workflow.{Compare, Debate, Direct, Eval, Squad}
 
   @enforce_keys [:id, :wire, :label, :workflow]
   defstruct [:id, :wire, :label, :workflow]
 
   @type id ::
-          :direct | :delegate | :compare | :debate | :squad
+          :direct | :delegate | :compare | :debate | :eval | :squad
 
   # IDs that remain decodable from durable events after leaving the registry.
   @type durable_id :: id() | :fan_out
@@ -35,6 +35,7 @@ defmodule ReyCode.Orchestration.Mode do
     %{id: :delegate, wire: "delegate", label: "Delegate", workflow: Direct},
     %{id: :compare, wire: "compare", label: "Compare", workflow: Compare},
     %{id: :debate, wire: "debate", label: "Debate", workflow: Debate},
+    %{id: :eval, wire: "eval", label: "Eval", workflow: Eval},
     %{id: :squad, wire: "squad", label: "Squad", workflow: Squad}
   ]
 
