@@ -717,19 +717,19 @@ defmodule ReyCode.Orchestration.EngineTest do
                Engine.post_message(room_id, "Second while busy", :compare, engine)
 
       # Snapshots are cumulative, so the regression signal is referential:
-      # the snapshot carrying the queued message must carry its turn too,
-      # never the message alone.
-      assert [snapshot | _rest] = new_snapshots()
+      # every published snapshot that carries the queued message carries its
+      # turn too, never the message alone. Under parallel load unrelated
+      # broadcasts may interleave, so collect a window and scan it.
+      snapshots = new_snapshots()
+      assert snapshots != []
+      assert Enum.all?(snapshots, &referentially_consistent?/1)
 
-      refute is_nil(snapshot.turns[queued_turn_id])
-
-      refute is_nil(
-               Enum.find(snapshot.messages, fn {_id, message} ->
-                 message.turn_id == queued_turn_id
-               end)
-             )
-
-      assert referentially_consistent?(snapshot)
+      assert Enum.any?(snapshots, fn snapshot ->
+               Map.has_key?(snapshot.turns, queued_turn_id) and
+                 Enum.any?(snapshot.messages, fn {_id, message} ->
+                   message.turn_id == queued_turn_id
+                 end)
+             end)
     end
 
     test "cancellation publishes the cancelled invocation and terminal turn in one snapshot" do
