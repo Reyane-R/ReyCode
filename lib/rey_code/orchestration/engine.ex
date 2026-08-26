@@ -8,15 +8,14 @@ defmodule ReyCode.Orchestration.Engine do
   alias ReyCode.Orchestration.Projector
 
   alias ReyCode.Orchestration.Engine.{
-    Admission,
+    Execution,
     Lifecycle,
     Loop,
     Options,
     OwnerCommand,
     Persistence,
     Rooms,
-    Turns,
-    WorkerExit
+    Turns
   }
 
   alias ReyCode.Provider.Catalog
@@ -202,15 +201,7 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   @impl true
-  def handle_continue(:recover, state) do
-    state = Lifecycle.recover_invocations(state)
-
-    state =
-      state.projection.room_order
-      |> Enum.reduce(state, fn room_id, acc -> Lifecycle.recover_room(acc, room_id) end)
-
-    {:noreply, state}
-  end
+  def handle_continue(:recover, state), do: {:noreply, Execution.recover(state)}
 
   @impl true
   def handle_call(:snapshot, _from, state), do: {:reply, state.projection, state}
@@ -306,45 +297,8 @@ defmodule ReyCode.Orchestration.Engine do
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-    case Map.pop(state.agent_monitors, ref) do
-      {nil, _monitors} ->
-        {:noreply, state}
-
-      {invocation_id, monitors} ->
-        state = %{state | agent_monitors: monitors}
-        invocation = state.projection.invocations[invocation_id]
-
-        case WorkerExit.classify(invocation, reason, &Lifecycle.replayable?/1) do
-          :ignore ->
-            {:noreply, state}
-
-          :release ->
-            # A paused approval is durable: release the execution slot without
-            # failing so the resolution can resume the loop.
-            state
-            |> Lifecycle.release_execution(invocation_id)
-            |> Lifecycle.pump_admission()
-            |> noreply()
-
-          :requeue ->
-            # The loop stopped for a mid-flight handoff (for example an
-            # approval that raced this exit and could not enqueue while the
-            # worker still held its slot): re-arm scheduling instead of
-            # failing the invocation.
-            state
-            |> Lifecycle.release_execution(invocation_id)
-            |> Admission.enqueue(invocation_id)
-            |> Lifecycle.pump_admission()
-            |> noreply()
-
-          {:fail, error} ->
-            state = Lifecycle.interrupt_started_runs(state, invocation)
-            {:noreply, Lifecycle.finalize_invocation(state, invocation.id, {:failed, error})}
-        end
-    end
+    {:noreply, Execution.apply_worker_exit(state, ref, reason)}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
-
-  defp noreply(state), do: {:noreply, state}
 end
