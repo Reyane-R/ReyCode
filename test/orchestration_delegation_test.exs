@@ -15,7 +15,16 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
   alias ReyCode.Orchestration.Projector
 
-  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.{
+    Delegation,
+    Engine,
+    Invocation,
+    Participant,
+    Projection,
+    Room,
+    ToolRun,
+    Turn
+  }
 
   alias ReyCode.Provider.{Response, Runtime, ToolCall}
 
@@ -90,7 +99,8 @@ defmodule ReyCode.Orchestration.DelegationTest do
       end
     end
 
-    defp spawn_twice?({_agent, brief}), do: brief == "twice"
+    defp spawn_twice?({_agent, brief}),
+      do: brief == "twice" or String.starts_with?(brief, "recovery twice")
 
     defp spawn_call(call_index, {agent, brief}) do
       ToolCall.new("call-spawn-#{call_index}", "spawn_task", %{
@@ -127,26 +137,46 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     defp child_round(test_pid, request, emit, round) do
       send(test_pid, {:child_round, round})
+      send(test_pid, {:child_user_messages, child_user_messages(request)})
+      dispatch_child(test_pid, request, emit, round, child_brief(request))
+    end
 
-      user_messages =
-        Enum.flat_map(request.messages, fn
-          %{role: :user, content: content} -> [content]
-          _other -> []
-        end)
+    defp child_user_messages(request) do
+      Enum.flat_map(request.messages, fn
+        %{role: :user, content: content} -> [content]
+        _other -> []
+      end)
+    end
 
-      send(test_pid, {:child_user_messages, user_messages})
-      brief = child_brief(request)
+    defp dispatch_child(test_pid, request, emit, round, brief) do
+      case child_scenario(brief, round) do
+        :recovery ->
+          recovery_child(test_pid, request, emit)
 
-      cond do
-        String.contains?(brief || "", "block") ->
+        :block ->
           block_child(test_pid, request, emit)
 
-        nested?(brief) and round == 0 ->
+        :fail ->
+          {:error, ReyCode.Failure.new(:internal, "child exploded")}
+
+        :nested ->
           nested_spawn(brief)
 
-        true ->
+        :finish ->
           report_nested_denial(test_pid, request, brief, round)
           finish_child(emit, request)
+      end
+    end
+
+    defp child_scenario(brief, round) do
+      brief = brief || ""
+
+      cond do
+        String.contains?(brief, "recovery twice") -> :recovery
+        String.contains?(brief, "block") -> :block
+        String.contains?(brief, "fail child") -> :fail
+        nested?(brief) and round == 0 -> :nested
+        true -> :finish
       end
     end
 
@@ -174,6 +204,17 @@ defmodule ReyCode.Orchestration.DelegationTest do
       case Regex.run(~r/target (\S+)/, brief || "") do
         [_match, target] -> target
         _none -> "Luna"
+      end
+    end
+
+    defp recovery_child(test_pid, request, emit) do
+      send(test_pid, {:recovery_child_waiting, request.invocation_id, self()})
+
+      receive do
+        :child_complete -> finish_child(emit, request)
+      after
+        5_000 ->
+          {:error, %{category: "internal", message: "recovery child timed out", retryable: false}}
       end
     end
 
@@ -273,6 +314,34 @@ defmodule ReyCode.Orchestration.DelegationTest do
       assert child.delegated_from_tool_run_id == hd(parent.tool_run_order)
       assert is_map(child.usage) and child.usage != %{}
     end
+
+    test "failed child remains a failed tool result for the resumed parent" do
+      stack = start_stack()
+      room_id = new_room(stack)
+      configure_room(room_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 room_id,
+                 "delegate: #{@task_agent} :: fail child",
+                 :direct,
+                 @engine
+               )
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :partial
+      assert_receive {:tool_result_in_conversation, tool_result}, 5_000
+      assert tool_result =~ ~s("ok":false)
+      assert tool_result =~ "child exploded"
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id, child_id] = snapshot.turns[turn_id].invocation_order
+      assert snapshot.invocations[child_id].status == :failed
+
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      assert run.status == :failed
+      assert run.error["error"] =~ "child exploded"
+    end
   end
 
   describe "recovery" do
@@ -312,6 +381,47 @@ defmodule ReyCode.Orchestration.DelegationTest do
       snapshot = Engine.snapshot(@engine)
       assert Map.has_key?(snapshot.invocations, parent_id)
       assert Map.has_key?(snapshot.invocations, child_inv)
+    end
+
+    test "recovery resumes the newest running child after an earlier delegation completed" do
+      stack = start_stack(delegation_max_children_per_invocation: 2)
+      room_id = new_room(stack)
+      configure_room(room_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 room_id,
+                 "delegate: #{@task_agent} :: recovery twice",
+                 :direct,
+                 @engine
+               )
+
+      assert_receive {:recovery_child_waiting, first_child_id, first_child_pid}, 5_000
+      send(first_child_pid, :child_complete)
+      assert_receive {:parent_round, 1}, 5_000
+      assert_receive {:recovery_child_waiting, second_child_id, old_second_pid}, 5_000
+      refute second_child_id == first_child_id
+      _parent_id = suspended_parent(turn_id)
+
+      :ok = GenServer.stop(@engine)
+      start_engine(stack.store, stack.config, stack.catalog)
+
+      assert_receive {:recovery_child_waiting, ^second_child_id, new_second_pid}, 5_000
+      refute new_second_pid == old_second_pid
+      send(new_second_pid, :child_complete)
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+      snapshot = Engine.snapshot(@engine)
+
+      assert [parent_id, ^first_child_id, ^second_child_id] =
+               snapshot.turns[turn_id].invocation_order
+
+      parent = snapshot.invocations[parent_id]
+
+      assert Enum.map(parent.tool_run_order, &parent.tool_runs[&1].status) == [
+               :completed,
+               :completed
+             ]
     end
 
     test "cancelling mid-child fails the pending run and terminates the child exactly once" do
@@ -443,6 +553,98 @@ defmodule ReyCode.Orchestration.DelegationTest do
       assert Enum.map(runs, & &1.status) == [:completed, :failed]
       assert runs |> List.last() |> then(& &1.error["error"]) == "child_cap_exceeded"
     end
+  end
+
+  describe "delegation policy" do
+    test "rejects ambiguous exact names" do
+      {invocation, projection} = policy_fixture(:direct, duplicate_name?: true)
+
+      assert {:error, :ambiguous_agent} =
+               Delegation.authorize(
+                 invocation,
+                 %{"agent" => "Luna", "brief" => "task"},
+                 projection,
+                 %{max_children: 1, brief_max_bytes: 100}
+               )
+    end
+
+    test "rejects squad children before finalization" do
+      {invocation, projection} = policy_fixture(:squad)
+
+      assert {:error, :delegation_unsupported_in_squad} =
+               Delegation.authorize(
+                 invocation,
+                 %{"agent" => "Luna", "brief" => "task"},
+                 projection,
+                 %{max_children: 1, brief_max_bytes: 100}
+               )
+    end
+
+    test "rejected calls do not consume the spawned-child cap" do
+      denied = %ToolRun{
+        id: "denied",
+        tool: "spawn_task",
+        status: :failed,
+        child_invocation_id: nil
+      }
+
+      {invocation, projection} =
+        policy_fixture(:direct,
+          tool_runs: %{"denied" => denied},
+          tool_run_order: ["denied"]
+        )
+
+      assert {:ok, %Participant{name: "Luna"}} =
+               Delegation.authorize(
+                 invocation,
+                 %{"agent" => "Luna", "brief" => "task"},
+                 projection,
+                 %{max_children: 1, brief_max_bytes: 100}
+               )
+    end
+
+    test "report truncation preserves UTF-8 and the byte cap" do
+      report = Delegation.report(true, String.duplicate("é", 9_000), %{})
+
+      assert report["truncated"]
+      assert byte_size(report["output"]) <= 16_384
+      assert String.valid?(report["output"])
+    end
+  end
+
+  defp policy_fixture(mode, opts \\ []) do
+    task = %Participant{
+      id: "luna",
+      name: "Luna",
+      perspective: "task",
+      kind: :task,
+      provider: :simulator,
+      model: nil
+    }
+
+    participants =
+      if opts[:duplicate_name?],
+        do: [task, %{task | id: "luna-2"}],
+        else: [task]
+
+    room = %Room{id: "room-policy", participants: participants}
+    turn = %Turn{id: "turn-policy", room_id: room.id, mode: mode}
+
+    invocation = %Invocation{
+      id: "inv-policy",
+      room_id: room.id,
+      turn_id: turn.id,
+      delegation_depth: 0,
+      tool_runs: opts[:tool_runs] || %{},
+      tool_run_order: opts[:tool_run_order] || []
+    }
+
+    projection = %Projection{
+      rooms: %{room.id => room},
+      turns: %{turn.id => turn}
+    }
+
+    {invocation, projection}
   end
 
   defp run_delegation_scenario(message) do

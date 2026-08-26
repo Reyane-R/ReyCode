@@ -480,6 +480,28 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
              ]
     end
 
+    test "coalesces adjacent reasoning token deltas into one activity frame" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning":"thinking"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"reasoning":" hard"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"reasoning":" now"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:ok, %Response{text: "Answer"}} = result
+
+      assert emitted == [
+               %Frame{sequence: 1, kind: :agent_note, data: %{note: "thinking hard now"}},
+               %Frame{sequence: 2, kind: :text_delta, data: %{text: "Answer"}}
+             ]
+    end
+
     test "non-binary reasoning values are ignored without failing the stream" do
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"reasoning":42}}]}\n\n),
@@ -727,6 +749,23 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert Jason.decode!(last.body)["tools"]
     end
 
+    test "an unrelated HTTP 400 is preserved and never retried" do
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"model does not exist"}})}
+      ])
+
+      assert {:error,
+              %{
+                "category" => "request_failed",
+                "retryable" => false,
+                "message" => message
+              }} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      assert message =~ "model does not exist"
+      assert length(FakeTransport.requests()) == 1
+    end
+
     test "non-400 failures keep their semantics and are never retried" do
       FakeTransport.set_stream_script([{:status, 429, ~s({"error":{"message":"slow down"}})}])
 
@@ -901,6 +940,27 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                Profile.fetch(:deepseek, config.open_ai)
     after
       System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
+    end
+
+    test "configured profiles override colliding built-in IDs without moving their slot" do
+      config =
+        RuntimeConfig.fresh(
+          openai_compatible_providers: [
+            %{
+              id: :ollama,
+              name: "Remote Ollama",
+              base_url: "https://ollama.example.test/v1",
+              key_env: "REMOTE_OLLAMA_KEY"
+            }
+          ]
+        )
+
+      assert {:ok, ollama} = Profile.fetch(:ollama, config.open_ai)
+      assert ollama.name == "Remote Ollama"
+      assert ollama.base_url == "https://ollama.example.test/v1"
+      assert ollama.require_key
+
+      assert Enum.take(Profile.ids(config.open_ai), 3) == [:deepseek, :ollama, :lmstudio]
     end
   end
 
