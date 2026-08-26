@@ -57,6 +57,9 @@ bounds (#70); an operator can audition two local models for a testing tier via
 `mix rey_code.eval` without writing code (#72); every retirement above happens
 by its recorded trigger with evidence in History (#73) — never by whim.
 
+Evidence and trigger verdicts:
+[D27 live delegation evidence](#d27--live-delegation-evidence-executed-2026-08-26).
+
 ### D25 — Single assistant, explicit task agents (Policy — 2026-08-24)
 
 Startup presents a home screen and ordinary messages invoke exactly one Primary
@@ -208,6 +211,64 @@ the tool loop runs a squad end-to-end on direct providers.
 
 Executed, resolved, and verified decisions. Kept as the recorded *why* behind
 the current code; nothing here is in effect as forward-looking policy.
+
+### D27 — Live delegation evidence (Executed 2026-08-26)
+
+Issue #73 exercised `spawn_task` three times on real repository work. Both
+participants used the keyless OpenAI-compatible native loop against Hy3 Free;
+Luna was the configured cheap-tier task Participant. A localhost evidence
+adapter relayed the real Zen SSE stream verbatim through `[DONE]` and discarded
+only Zen's non-standard cost event after the terminal marker. Raw transcripts
+remain local per D18.
+
+The first test-cycle attempt found a real integration bug: the child could see
+the parent's current instruction to "delegate to Luna", repeated `spawn_task`,
+and hit the depth guard. Commit `321ad4c` removed the current parent message
+from delegation-child context while preserving prior completed room history;
+the successful rerun below is the acceptance run.
+
+1. **Focused test cycle** — Luna ran
+   `mix test test/orchestration_mode_test.exs`: 6 tests, 0 failures.
+   The owner approved that exact Bash command. Parent: 2 rounds, 905 input /
+   92 output tokens. Child: 2 rounds, 836 input / 40 output tokens (876 total),
+   $0 actual model cost. The equivalent no-offload high-tier work is at least
+   those 2 child rounds / 876 tokens; priced at GPT-5.4 Mini's published Zen
+   rates ($0.75/M input, $4.50/M output), about $0.000807. The parent accepted
+   Luna's result and summarized it without rework.
+2. **Git chore** — Luna ran `git status --short` and reported a clean working
+   tree. The owner approved that exact Bash command. Parent: 2 rounds, 880 input
+   / 89 output tokens. Child: 2 rounds, 774 input / 61 output tokens (835
+   total), $0 actual model cost; token-equivalent GPT-5.4 Mini estimate:
+   $0.000855. The parent accepted the result without rework.
+3. **Documentation pass** — Luna read README's
+   `Agent-initiated delegation` section and produced the requested three-bullet
+   summary without modifying files. Parent: 2 rounds, 1061 input / 214 output
+   tokens. Child: 3 rounds, 6164 input / 699 output tokens (6863 total), $0
+   actual model cost; token-equivalent GPT-5.4 Mini estimate: $0.007769. The
+   parent accepted the findings and compressed them without changing their
+   substance.
+
+The high-tier figures are token-equivalent estimates, not duplicate model
+runs: rerunning completed work solely to estimate cost would spend tokens
+without improving the evidence. The three successful children reached terminal
+status, their structured output and usage returned through the parent
+ToolRuns, and each parent resumed exactly once.
+
+**Trigger verdicts:**
+
+- **Debate: deferred with reason.** These runs prove organic delegation for
+  tests, git chores, and documentation, but none delegated a critic through a
+  propose → critique → revise cycle or caused a parent plan revision. D27's
+  recorded evidence trigger is therefore not met; Debate remains frozen. Its
+  next evidence run must delegate a repo-aware critic whose report materially
+  changes the parent's plan before retirement is reconsidered.
+- **Squad: continued freeze.** Every observed need fit one depth-1 child and
+  parent integration. No recurring need emerged that fixed multi-role
+  sequencing can express but depth-1 delegation cannot. D4's existing
+  live-run obligations remain unchanged.
+
+No Debate or Squad removal is mandated by these verdicts. Fan-out retirement is
+the separate unconditional D27 action tracked by #71 (PR #75).
 
 ### D5 — Unified release authority (Executed 2026-08-20)
 
