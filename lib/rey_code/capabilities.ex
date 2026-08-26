@@ -50,7 +50,7 @@ defmodule ReyCode.Capabilities do
     %{
       title: "Squads",
       items: [
-        "Run compare, debate, fan-out, and squad workflows",
+        "Run compare, debate, and squad workflows",
         "Track roles, retries, artifacts, gates, and rework"
       ]
     }

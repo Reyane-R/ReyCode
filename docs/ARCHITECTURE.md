@@ -562,7 +562,7 @@ lib/rey_code/
 │   ├── provider_round.ex, tool_run.ex, tool_runs.ex  ← Loop records
 │   ├── squad.ex                ← Squad roster and phase definitions
 │   ├── squad_fsm.ex            ← Pure squad state machine
-│   ├── workflow.ex             ← Workflow behaviour (compare/debate/fan-out)
+│   ├── workflow.ex             ← Workflow behaviour (compare/debate/squad)
 │   ├── supervisor.ex           ← Orchestration supervisor
 │   └── squad/                  ← Role, Phase, Seat, gates, dashboard, simulator
 ├── agent_loop.ex               ← Durable tool loop (the "brain" of an invocation)

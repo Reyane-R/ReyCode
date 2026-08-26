@@ -80,8 +80,10 @@ defmodule ReyCode.Event do
           | :failure
           | :snapshot_binary
 
-  # Wire values come from the closed orchestration mode contract.
-  @modes Enum.map(ReyCode.Orchestration.Mode.all(), & &1.wire)
+  # Wire values come from the closed orchestration mode contract; retired
+  # wire values stay valid here so historical turns keep replaying.
+  @durable_modes Enum.map(ReyCode.Orchestration.Mode.all(), & &1.wire) ++
+                   ReyCode.Orchestration.Mode.retired_wire_values()
   @outcomes ~w(completed partial failed reworked cancelled)
   @gate_decisions ~w(approve rework abort)
   @tool_decisions ~w(approve deny)
@@ -154,7 +156,7 @@ defmodule ReyCode.Event do
         "turn_id" => :id,
         "room_id" => :id,
         "user_message_id" => :id,
-        "mode" => {:one_of, @modes},
+        "mode" => {:one_of, @durable_modes},
         "context_through_sequence" => :non_negative_integer
       },
       # participant_id postdates early schema-v2 turns; legacy events omit it.

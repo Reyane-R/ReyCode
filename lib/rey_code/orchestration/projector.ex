@@ -840,17 +840,19 @@ defmodule ReyCode.Orchestration.Projector do
   defp participant_kind(:task), do: :task
   defp participant_kind(_kind), do: :legacy
 
-  # Durable mode values are decoded through the closed contract; an
-  # unknown value is impossible validated input and fails at detection.
+  # Durable mode values decode with legacy tolerance through the closed
+  # contract: retired wire values replay as inert markers so historical
+  # turns project cleanly; anything else is impossible validated input and
+  # fails at detection.
   defp mode(value) when is_binary(value) do
-    case Mode.decode(value) do
+    case Mode.decode_durable(value) do
       {:ok, mode} -> mode
       {:error, :invalid_mode} -> raise ArgumentError, "invalid durable mode #{inspect(value)}"
     end
   end
 
   defp mode(value) when is_atom(value) do
-    case Mode.decode(value) do
+    case Mode.decode_durable(value) do
       {:ok, mode} -> mode
       {:error, :invalid_mode} -> raise ArgumentError, "invalid durable mode #{inspect(value)}"
     end

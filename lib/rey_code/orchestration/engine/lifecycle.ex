@@ -3,7 +3,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
   alias ReyCode.Failure
 
-  alias ReyCode.Orchestration.{Delegation, EventEntries, ToolRuns, Validation}
+  alias ReyCode.Orchestration.{Delegation, EventEntries, Mode, ToolRuns, Validation}
   alias ReyCode.Orchestration.Engine.{Admission, Identity, Options, Persistence}
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
 
@@ -182,9 +182,11 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   defp recover_active_turn(state, turn_id) do
     turn = state.projection.turns[turn_id]
 
-    if turn.invocation_order == [],
-      do: start_initial_invocations(state, turn),
-      else: advance_turn(state, turn_id)
+    cond do
+      Mode.retired?(turn.mode) -> retire_legacy_turn(state, turn)
+      turn.invocation_order == [] -> start_initial_invocations(state, turn)
+      true -> advance_turn(state, turn_id)
+    end
   end
 
   defp start_initial_invocations(state, turn) do
@@ -281,10 +283,16 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
   defp start_turn(state, turn_id) do
     turn = state.projection.turns[turn_id]
+
+    if Mode.retired?(turn.mode),
+      do: retire_legacy_turn(state, turn),
+      else: start_supported_turn(state, turn)
+  end
+
+  defp start_supported_turn(state, turn) do
     room = state.projection.rooms[turn.room_id]
     specs = WorkflowDispatcher.for_mode(turn.mode).plan(room, turn, state.projection)
     invocation_entries = build_invocation_entries(room, turn, specs)
-
     turn_entry = EventEntries.turn_started(turn)
 
     state =
@@ -307,6 +315,22 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
       end
 
     start_invocation_workers(state, invocation_entries)
+  end
+
+  defp retire_legacy_turn(state, turn) do
+    cancellable = cancellable_turn_invocations(state, turn)
+    invocation_ids = Enum.map(cancellable, & &1.id)
+    reason = "Cancelled because the orchestration mode is retired"
+
+    entries =
+      EventEntries.cancel_invocations(cancellable, reason) ++
+        [EventEntries.turn_completed(turn, :failed)]
+
+    state
+    |> Persistence.append_and_apply!(entries)
+    |> Admission.drop_executions(invocation_ids)
+    |> kill_cancelled_executions(invocation_ids)
+    |> start_next_queued_turn(turn.room_id)
   end
 
   def advance_turn(state, turn_id) do
