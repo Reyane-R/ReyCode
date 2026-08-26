@@ -217,14 +217,6 @@ defmodule ReyCode.SubscriptionMonotonicTest do
     end
   end
 
-  defp next_broadcast do
-    receive do
-      {:provider_catalog_updated, snapshot} -> snapshot
-    after
-      2_000 -> flunk("expected a catalog broadcast")
-    end
-  end
-
   defp mounted_term(assign_overrides) do
     assigns =
       Map.merge(
