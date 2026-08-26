@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.EngineTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.{Engine, Projector, Squad}
@@ -9,11 +9,12 @@ defmodule ReyCode.Orchestration.EngineTest do
   alias ReyCode.Test.Wait
 
   test "ordinary messages invoke only the primary assistant" do
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Handle this directly")
+    %{engine: engine} = start_isolated_engine([])
+    room_id = default_room_id(engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Handle this directly", :direct, engine)
 
-    turn = wait_until_terminal(turn_id)
-    snapshot = ReyCode.snapshot()
+    turn = wait_until_terminal_on(engine, turn_id)
+    snapshot = Engine.snapshot(engine)
     [invocation_id] = turn.invocation_order
 
     assert turn.mode == :direct
@@ -170,11 +171,14 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   test "advanced compare invokes only participants explicitly present in the room" do
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "How should this ship?", :compare)
+    %{engine: engine} = start_isolated_engine([])
+    room_id = default_room_id(engine)
 
-    turn = wait_until_terminal(turn_id)
-    snapshot = ReyCode.snapshot()
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "How should this ship?", :compare, engine)
+
+    turn = wait_until_terminal_on(engine, turn_id)
+    snapshot = Engine.snapshot(engine)
     room = snapshot.rooms[room_id]
     messages = Enum.map(room.message_order, &snapshot.messages[&1])
 
@@ -184,11 +188,12 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   test "debate schedules proposal, critiques, and revision in durable stages" do
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Choose an event model", :debate)
+    %{engine: engine} = start_isolated_engine([])
+    room_id = default_room_id(engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Choose an event model", :debate, engine)
 
-    turn = wait_until_terminal(turn_id)
-    snapshot = ReyCode.snapshot()
+    turn = wait_until_terminal_on(engine, turn_id)
+    snapshot = Engine.snapshot(engine)
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
     assert turn.outcome == :completed
@@ -197,11 +202,14 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   test "fan-out records independent parallel branches" do
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Explore three designs", :fan_out)
+    %{engine: engine} = start_isolated_engine([])
+    room_id = default_room_id(engine)
 
-    turn = wait_until_terminal(turn_id)
-    snapshot = ReyCode.snapshot()
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Explore three designs", :fan_out, engine)
+
+    turn = wait_until_terminal_on(engine, turn_id)
+    snapshot = Engine.snapshot(engine)
     invocations = Enum.map(turn.invocation_order, &snapshot.invocations[&1])
 
     assert turn.outcome == :completed
@@ -210,13 +218,18 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   test "creates project rooms and queues follow-up turns FIFO" do
-    assert {:ok, room_id} = ReyCode.create_room("Payments Rewrite", System.tmp_dir!())
-    assert {:ok, first_id} = ReyCode.post_message(room_id, "First question", :compare)
-    assert {:ok, second_id} = ReyCode.post_message(room_id, "Follow-up question", :compare)
+    %{engine: engine} = start_isolated_engine([])
 
-    first = wait_until_terminal(first_id)
-    second = wait_until_terminal(second_id)
-    snapshot = ReyCode.snapshot()
+    assert {:ok, room_id} = Engine.create_room("Payments Rewrite", System.tmp_dir!(), engine)
+
+    assert {:ok, first_id} = Engine.post_message(room_id, "First question", :compare, engine)
+
+    assert {:ok, second_id} =
+             Engine.post_message(room_id, "Follow-up question", :compare, engine)
+
+    first = wait_until_terminal_on(engine, first_id)
+    second = wait_until_terminal_on(engine, second_id)
+    snapshot = Engine.snapshot(engine)
 
     assert first.outcome == :completed
     assert second.outcome == :completed
@@ -244,10 +257,14 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   test "persists provider frames before terminal invocation events" do
-    room_id = default_room_id()
-    assert {:ok, turn_id} = ReyCode.post_message(room_id, "Durable frame check", :compare)
-    turn = wait_until_terminal(turn_id)
-    events = EventStore.load()
+    %{engine: engine, store: store} = start_isolated_engine([])
+    room_id = default_room_id(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(room_id, "Durable frame check", :compare, engine)
+
+    turn = wait_until_terminal_on(engine, turn_id)
+    events = EventStore.load(store)
 
     Enum.each(turn.invocation_order, fn invocation_id ->
       frame_sequences =
@@ -266,21 +283,27 @@ defmodule ReyCode.Orchestration.EngineTest do
       assert Enum.all?(frame_sequences, &(&1 < terminal.sequence))
     end)
 
-    assert ReyCode.snapshot() == Projector.replay(events)
+    assert Engine.snapshot(engine) == Projector.replay(events)
   end
 
   test "rejects an OpenCode model when provider discovery is unavailable" do
-    assert {:ok, room_id} = ReyCode.create_room("Provider Assignment", System.tmp_dir!())
+    %{engine: engine} = start_isolated_engine([])
+
+    assert {:ok, room_id} = Engine.create_room("Provider Assignment", System.tmp_dir!(), engine)
 
     assert {:error, :unchecked} =
-             ReyCode.configure_participants(
+             Engine.configure_participants(
                room_id,
                ["assistant"],
                :opencode,
-               "openai/gpt-5.6-sol"
+               "openai/gpt-5.6-sol",
+               engine
              )
 
-    assert Enum.all?(ReyCode.snapshot().rooms[room_id].participants, &(&1.provider == :simulator))
+    assert Enum.all?(
+             Engine.snapshot(engine).rooms[room_id].participants,
+             &(&1.provider == :simulator)
+           )
   end
 
   @tag capture_log: true
@@ -620,6 +643,7 @@ defmodule ReyCode.Orchestration.EngineTest do
       store: nil,
       agent_registry: :"engine_test_agents_#{suffix}",
       event_registry: :"engine_test_events_#{suffix}",
+      catalog: :"engine_test_catalog_#{suffix}",
       agent_supervisor: :"engine_test_agent_sup_#{suffix}",
       task_supervisor: :"engine_test_tasks_#{suffix}",
       engine: :"engine_test_engine_#{suffix}",
@@ -635,6 +659,16 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     start_supervised!({Registry, keys: :unique, name: stack.agent_registry})
     start_supervised!({Registry, keys: :duplicate, name: stack.event_registry})
+
+    start_supervised!(
+      {ReyCode.Provider.Catalog,
+       name: stack.catalog,
+       registry: stack.event_registry,
+       task_supervisor: stack.task_supervisor,
+       config: stack.config,
+       discovery?: false}
+    )
+
     %{stack | store: store}
   end
 
@@ -646,7 +680,7 @@ defmodule ReyCode.Orchestration.EngineTest do
       agent_registry: stack.agent_registry,
       event_registry: stack.event_registry,
       task_supervisor: stack.task_supervisor,
-      provider_catalog: ReyCode.Provider.Catalog,
+      provider_catalog: stack.catalog,
       agent_delay_ms: stack.agent_delay_ms,
       simulator_opts: stack.simulator_opts,
       config: stack.config

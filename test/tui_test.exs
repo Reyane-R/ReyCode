@@ -1,5 +1,5 @@
 defmodule ReyCode.TUITest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.Engine
@@ -7,7 +7,8 @@ defmodule ReyCode.TUITest do
   alias ReyCode.TUI.State
 
   test "starts clean and creates a fresh durable session for the first message" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_1} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_1)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     source_session_id = Breeze.Test.metadata(session).assigns.selected_room_id
@@ -19,7 +20,9 @@ defmodule ReyCode.TUITest do
     assert screen =~ "/ for commands"
     refute screen =~ "You  ·"
     refute screen =~ "# reycode"
-    baseline_sequence = ReyCode.snapshot().sequence
+
+    engine = Breeze.Test.metadata(session).assigns.engine
+    baseline_sequence = Engine.snapshot(engine).sequence
 
     type(session, "Handle this directly")
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, ctrl("s"))
@@ -28,7 +31,7 @@ defmodule ReyCode.TUITest do
     metadata = Breeze.Test.metadata(session)
     assert metadata.assigns.selected_room_id != source_session_id
 
-    session_room = ReyCode.snapshot().rooms[metadata.assigns.selected_room_id]
+    session_room = Engine.snapshot(engine).rooms[metadata.assigns.selected_room_id]
     assert session_room.title == "Handle this directly"
     session_screen = Breeze.Test.render!(session)
     assert session_screen =~ "ReyCode"
@@ -127,7 +130,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "/model rejects when no provider is configured" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_2} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_2)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     assert {:noreply, _focused} = push_providers(session, %{})
@@ -138,7 +142,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "shows the untruncated workspace from the command palette" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_3} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_3)
     on_exit(fn -> Breeze.Test.stop(session) end)
     metadata = Breeze.Test.metadata(session)
 
@@ -182,7 +187,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "keeps the session home and command palette usable in a narrow terminal" do
-    session = start_session({50, 20})
+    %{engine: tui_engine_4} = start_isolated_stack([])
+    session = start_session({50, 20}, engine: tui_engine_4)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     screen = Breeze.Test.render!(session)
@@ -269,7 +275,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "opens the truthful agent configuration flow" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_5} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_5)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, ctrl("g"))
@@ -284,8 +291,9 @@ defmodule ReyCode.TUITest do
   end
 
   test "keeps the settings flow usable at narrow and wide terminal sizes" do
-    narrow = start_session({50, 20})
-    wide = start_session({160, 32})
+    %{engine: tui_engine_6} = start_isolated_stack([])
+    narrow = start_session({50, 20}, engine: tui_engine_6)
+    wide = start_session({160, 32}, engine: tui_engine_6)
     on_exit(fn -> Breeze.Test.stop(narrow) end)
     on_exit(fn -> Breeze.Test.stop(wide) end)
 
@@ -299,7 +307,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "lists DeepSeek as an API runtime and points to its key on selection" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_7} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_7)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, ctrl("g"))
@@ -318,8 +327,9 @@ defmodule ReyCode.TUITest do
   end
 
   test "never exposes room navigation at any terminal width" do
-    medium = start_session({120, 32})
-    wide = start_session({160, 32})
+    %{engine: tui_engine_8} = start_isolated_stack([])
+    medium = start_session({120, 32}, engine: tui_engine_8)
+    wide = start_session({160, 32}, engine: tui_engine_8)
     on_exit(fn -> Breeze.Test.stop(medium) end)
     on_exit(fn -> Breeze.Test.stop(wide) end)
 
@@ -333,9 +343,12 @@ defmodule ReyCode.TUITest do
   end
 
   test "cycles focus directly between the prompt and current session" do
-    session = start_session({160, 32})
+    %{engine: tui_engine_9} = start_isolated_stack([])
+    session = start_session({160, 32}, engine: tui_engine_9)
     on_exit(fn -> Breeze.Test.stop(session) end)
-    baseline_sequence = ReyCode.snapshot().sequence
+
+    engine = Breeze.Test.metadata(session).assigns.engine
+    baseline_sequence = Engine.snapshot(engine).sequence
 
     type(session, "Focus this session")
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, ctrl("s"))
@@ -355,11 +368,12 @@ defmodule ReyCode.TUITest do
   end
 
   test "wraps long responses without transcript rails or excess turn spacing" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_10} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_10)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     session_id = Breeze.Test.metadata(session).assigns.selected_room_id
-    push_projection(session, long_response_projection(session_id))
+    push_projection(session, long_response_projection(session))
 
     type(session, "/resume")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
@@ -388,13 +402,14 @@ defmodule ReyCode.TUITest do
   end
 
   test "renders nested provider usage totals" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_11} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_11)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     session_id = Breeze.Test.metadata(session).assigns.selected_room_id
 
     projection =
-      long_response_projection(session_id)
+      long_response_projection(session)
       |> put_in(
         [:invocations, "inv-layout", :usage],
         %{
@@ -483,7 +498,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "Ctrl+P opens commands and Escape restores the existing draft" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_12} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_12)
     on_exit(fn -> Breeze.Test.stop(session) end)
     session_id = Breeze.Test.metadata(session).assigns.selected_room_id
 
@@ -504,7 +520,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "an unknown slash command is never posted to the session" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_13} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_13)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     type(session, "/bogus")
@@ -520,7 +537,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "runs a slash command with the prompt shortcut" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_14} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_14)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     type(session, "/theme")
@@ -531,7 +549,8 @@ defmodule ReyCode.TUITest do
   end
 
   test "opens the deterministic capability help modal" do
-    session = start_session({120, 32})
+    %{engine: tui_engine_15} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_15)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     providers = %{
@@ -644,8 +663,10 @@ defmodule ReyCode.TUITest do
     assert {:noreply, _focused} = Breeze.Test.info(session, {:provider_catalog_updated, snapshot})
   end
 
-  defp long_response_projection(session_id) do
-    projection = ReyCode.snapshot()
+  defp long_response_projection(session) do
+    engine = Breeze.Test.metadata(session).assigns.engine
+    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    projection = Engine.snapshot(engine)
     room = projection.rooms[session_id]
     turn_id = "turn-layout"
     invocation_id = "inv-layout"
