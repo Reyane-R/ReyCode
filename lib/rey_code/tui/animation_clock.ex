@@ -25,11 +25,11 @@ defmodule ReyCode.TUI.AnimationClock do
 
   @doc "Creates an idle clock with injectable timer adapters."
   @spec new(keyword()) :: t()
-  def new(opts \\ []) do
+  def new(opts) do
     %__MODULE__{
       reduced_motion?: Keyword.get(opts, :reduced_motion?, false),
-      schedule: Keyword.get(opts, :schedule, &schedule/2),
-      cancel: Keyword.get(opts, :cancel, &cancel/1)
+      schedule: Keyword.fetch!(opts, :schedule),
+      cancel: Keyword.fetch!(opts, :cancel)
     }
   end
 
@@ -84,10 +84,4 @@ defmodule ReyCode.TUI.AnimationClock do
 
   defp advance_frame(%__MODULE__{reduced_motion?: true, frame_index: index}), do: index
   defp advance_frame(%__MODULE__{frame_index: index}), do: index + 1
-
-  defp schedule(token, delay_ms),
-    do: Process.send_after(self(), {:activity_tick, token}, delay_ms)
-
-  defp cancel(nil), do: false
-  defp cancel(timer_ref), do: Process.cancel_timer(timer_ref)
 end

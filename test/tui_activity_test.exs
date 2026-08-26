@@ -236,6 +236,204 @@ defmodule ReyCode.TUI.ActivityTest do
     assert map_size(view.invocation_items) == 2
   end
 
+  test "nil/missing selection and provider/queue header states are explicit" do
+    assert Activity.present(nil, %Projection{}, %{}, @now_ms) == %Activity.View{}
+    assert Activity.present("missing", %Projection{}, %{}, @now_ms) == %Activity.View{}
+
+    {projection, room_id, _invocation_id} = fixture(turn_status: :terminal, outcome: :completed)
+
+    room = %{
+      Map.fetch!(projection.rooms, room_id)
+      | message_order: [],
+        queued_turn_ids: ["queued"]
+    }
+
+    projection = %{projection | rooms: Map.put(projection.rooms, room_id, room)}
+    assert Activity.present(room_id, projection, %{}, @now_ms).header.state == :queued
+
+    room = %{room | queued_turn_ids: [], participants: []}
+    projection = %{projection | rooms: Map.put(projection.rooms, room_id, room)}
+    assert Activity.present(room_id, projection, %{}, @now_ms).header.label == "Model required"
+
+    primary = participant("assistant", "Assistant", :primary)
+    room = %{room | participants: [primary]}
+    projection = %{projection | rooms: Map.put(projection.rooms, room_id, room)}
+
+    checking = %{simulator: %{status: :checking}}
+
+    assert Activity.present(room_id, projection, checking, @now_ms).header.label ==
+             "Checking provider"
+
+    assert Activity.present(room_id, projection, checking, @now_ms).active?
+
+    configured = %{
+      simulator: %{id: :simulator, status: :configured, models: [], credential_count: 0}
+    }
+
+    ready = Activity.present(room_id, projection, configured, @now_ms).header
+    assert ready.state == :idle
+    assert Activity.text(ready, "unused") == "• · Ready"
+
+    assert Activity.present(room_id, projection, %{simulator: %{status: :error}}, @now_ms).header.label ==
+             "Provider unavailable"
+  end
+
+  test "queued, terminal, blocked, and unknown ToolRun states use stable presentation" do
+    cases = [
+      {:ready, :queued, "Queued"},
+      {:requested, :queued, "Queued"},
+      {:completed, :terminal, "Read"},
+      {:failed, :terminal, "Read"},
+      {:denied, :terminal, "Read"},
+      {:interrupted, :terminal, "Read"},
+      {:unknown, :idle, "Read"}
+    ]
+
+    Enum.each(cases, fn {status, state, label} ->
+      item =
+        Activity.tool(
+          tool_run("run-#{status}", :read, status, %{"path" => "file"}),
+          @workspace,
+          @now_ms
+        )
+
+      assert item.state == state
+      assert item.label == label
+    end)
+
+    unknown =
+      Activity.tool(
+        tool_run("unknown-tool", :custom_tool, :running, %{z: "value"}),
+        @workspace,
+        @now_ms
+      )
+
+    assert unknown.label == "Working"
+    assert unknown.target == "z=value"
+
+    no_arguments =
+      Activity.tool(
+        %ToolRun{id: "none", tool: :custom_tool, status: :running},
+        @workspace,
+        @now_ms
+      )
+
+    assert no_arguments.target == nil
+
+    date_started = %{
+      tool_run("date", :bash, :running, %{"command" => "echo ok"})
+      | started_at: ~U[2026-08-26 22:00:05Z]
+    }
+
+    assert Activity.tool(date_started, @workspace, @now_ms).elapsed_seconds == 5
+  end
+
+  test "waiting invocation without a run and delegation without a child are blocked, not active" do
+    {projection, room_id, invocation_id} = fixture(invocation_status: :waiting_tool_approval)
+    view = Activity.present(room_id, projection, %{}, @now_ms)
+    item = Activity.invocation(view, invocation_id)
+    assert item.state == :blocked
+    assert item.target == "tool approval required"
+    refute Activity.active?(view)
+
+    {projection, room_id, invocation_id} = fixture(invocation_status: :awaiting_delegation)
+    view = Activity.present(room_id, projection, %{}, @now_ms)
+    item = Activity.invocation(view, invocation_id)
+    assert item.state == :blocked
+    assert item.label == "Paused"
+  end
+
+  test "selected activity view keeps a bounded newest invocation window" do
+    {projection, room_id, _invocation_id} = fixture(invocation_status: :completed)
+
+    {message_order, messages, invocations} =
+      Enum.reduce(1..300, {[], %{}, %{}}, fn index, {order, message_acc, invocation_acc} ->
+        invocation_id = "bulk-inv-#{index}"
+        message_id = "bulk-msg-#{index}"
+
+        invocation = %Invocation{
+          id: invocation_id,
+          room_id: room_id,
+          turn_id: "turn",
+          message_id: message_id,
+          participant: participant("p-#{index}", "P#{index}", :task),
+          status: :completed
+        }
+
+        {
+          order ++ [message_id],
+          Map.put(message_acc, message_id, %{invocation_id: invocation_id, turn_id: "turn"}),
+          Map.put(invocation_acc, invocation_id, invocation)
+        }
+      end)
+
+    room = %{Map.fetch!(projection.rooms, room_id) | message_order: message_order}
+
+    projection = %{
+      projection
+      | rooms: Map.put(projection.rooms, room_id, room),
+        messages: messages,
+        invocations: invocations
+    }
+
+    view = Activity.present(room_id, projection, %{}, @now_ms)
+    assert length(view.ordered_invocation_ids) == 256
+    assert view.truncated_invocation_count == 44
+    assert List.first(view.ordered_invocation_ids) == "bulk-inv-45"
+  end
+
+  test "theme terminal glyphs are distinct for every supported Outcome" do
+    glyphs =
+      Enum.map([:completed, :partial, :reworked, :failed, :cancelled], fn outcome ->
+        ReyCode.Theme.activity_outcome_glyph(outcome)
+      end)
+
+    assert length(Enum.uniq(glyphs)) == 5
+    assert ReyCode.Theme.activity_outcome_glyph(:unknown) == "·"
+    assert ReyCode.Theme.activity_idle_glyph() == "•"
+  end
+
+  test "presentation fallbacks are bounded, static, and fail closed" do
+    assert Activity.text(nil, "frame") == ""
+
+    failed = %Activity.Item{
+      id: "failed",
+      kind: :turn,
+      state: :terminal,
+      label: "Failed",
+      outcome: :failed,
+      active?: false,
+      priority: 0
+    }
+
+    partial = %{failed | id: "partial", label: "Partial", outcome: :partial}
+    assert Activity.color(failed) == "error"
+    assert Activity.color(partial) == "warning"
+    assert Activity.color(nil) == "muted"
+
+    {projection, room_id, invocation_id} = fixture(invocation_status: :unknown)
+
+    item =
+      projection
+      |> then(&Activity.present(room_id, &1, %{}, @now_ms))
+      |> Activity.invocation(invocation_id)
+
+    assert item.state == :idle
+    assert Activity.text(item, "unused") == "• · Ready"
+
+    nonbinary_path =
+      Activity.tool(tool_run("number", :read, :running, %{"path" => 42}), @workspace, @now_ms)
+
+    assert nonbinary_path.target == "42"
+
+    empty =
+      Activity.tool(tool_run("empty", :custom, :running, %{}), @workspace, @now_ms,
+        target_graphemes: 0
+      )
+
+    assert empty.target == nil
+  end
+
   defp fixture(opts) do
     room_id = "room"
     turn_id = "turn"

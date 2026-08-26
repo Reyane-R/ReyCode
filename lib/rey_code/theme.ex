@@ -28,11 +28,6 @@ defmodule ReyCode.Theme do
     )
   end
 
-  @doc "Signal-orbit frames used by truthful active-work presentation."
-  @spec activity_frames(:unicode | :ascii) :: [String.t()]
-  def activity_frames(:unicode), do: Tuple.to_list(@unicode_activity_frames)
-  def activity_frames(:ascii), do: Tuple.to_list(@ascii_activity_frames)
-
   @doc "Returns one frame without allocating or indexing a list."
   @spec activity_frame(:unicode | :ascii, non_neg_integer()) :: String.t()
   def activity_frame(:unicode, index),
@@ -41,10 +36,6 @@ defmodule ReyCode.Theme do
   def activity_frame(:ascii, index),
     do: elem(@ascii_activity_frames, Integer.mod(index, tuple_size(@ascii_activity_frames)))
 
-  @doc "Returns the number of frames for one art style."
-  @spec activity_frame_count(:unicode | :ascii) :: pos_integer()
-  def activity_frame_count(:unicode), do: tuple_size(@unicode_activity_frames)
-  def activity_frame_count(:ascii), do: tuple_size(@ascii_activity_frames)
   @doc "Static active glyph used when reduced motion is enabled."
   @spec activity_static_glyph(:unicode | :ascii) :: String.t()
   def activity_static_glyph(:unicode), do: "•"
