@@ -64,6 +64,11 @@ defmodule ReyCode.Orchestration.Mode do
   def known?(value) when is_atom(value), do: Map.has_key?(@by_id, value)
   def known?(_other), do: false
 
+  @doc "Whether an ID is a replay-only retired mode."
+  @spec retired?(term()) :: boolean()
+  def retired?(value) when is_atom(value), do: Map.has_key?(@by_retired_id, value)
+  def retired?(_other), do: false
+
   @doc "Returns the stable wire value for a mode ID."
   @spec wire(id()) :: String.t()
   def wire(id), do: fetch!(id).wire
