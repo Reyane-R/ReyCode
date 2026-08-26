@@ -4,6 +4,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
   # setting declarations
   # {key, default-lambda, kind} — validated by validate_kind!/3.
   alias ReyCode.Orchestration.Squad
+  alias ReyCode.Provider.OpenAICompatible.Profile
 
   defp settings do
     [
@@ -46,6 +47,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:openai_compatible_chunk_bytes, fn -> 8_192 end, {:integer, 1}},
       {:openai_compatible_chunk_latency_ms, fn -> 50 end, {:integer, 0}},
       {:openai_compatible_base_url_overrides, fn -> %{} end, :base_url_overrides},
+      {:openai_compatible_capability_overrides, fn -> %{} end, :capability_overrides},
       {:openai_compatible_providers, fn -> [] end, :provider_profiles},
       {:openai_compatible_transport, fn -> nil end, {:module_or_nil, nil}},
       # Squad workflow policy
@@ -100,7 +102,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
     Map.new(settings(), fn {key, default, kind} ->
       {key, validate_kind!(key, fetch.(key, default.()), kind)}
     end)
-    |> resolve_endpoint_overrides(environment_fetch)
+    |> resolve_provider_env_overrides(environment_fetch)
   end
 
   # validation implementation
@@ -150,6 +152,8 @@ defmodule ReyCode.RuntimeConfig.Schema do
   defp validate_kind!(key, value, :provider_profiles), do: provider_profiles!(key, value)
 
   defp validate_kind!(key, value, :base_url_overrides), do: base_url_overrides!(key, value)
+
+  defp validate_kind!(key, value, :capability_overrides), do: capability_overrides!(key, value)
 
   defp validate_kind!(key, value, :simulator_options), do: simulator_options!(key, value)
 
@@ -215,15 +219,26 @@ defmodule ReyCode.RuntimeConfig.Schema do
   defp provider_profile!(key, profile, index) when is_map(profile) do
     path = "#{key}[#{index}]"
     id = required_profile_value!(profile, :id, path, &is_atom/1, "an atom")
+
     _name = required_profile_value!(profile, :name, path, &non_empty_string?/1, "a string")
     base_url = required_profile_value!(profile, :base_url, path, &is_binary/1, "an HTTP(S) URL")
-    _key_env = required_profile_value!(profile, :key_env, path, &non_empty_string?/1, "a string")
+    require_key = optional_profile_flag!(profile, :require_key, path)
+
+    if require_key do
+      _key_env =
+        required_profile_value!(profile, :key_env, path, &non_empty_string?/1, "a string")
+    end
 
     if id in [:opencode, :simulator, :demo, :unconfigured] do
       raise ArgumentError, "invalid #{path}.id: #{inspect(id)} (reserved provider id)"
     end
 
     validate_http_url!(path <> ".base_url", base_url)
+
+    Enum.each(
+      [:supports_tools, :supports_stream_options],
+      &optional_profile_flag!(profile, &1, path)
+    )
 
     Enum.each([:request_timeout_ms, :max_output_bytes, :max_prompt_bytes], fn field ->
       case Map.fetch(profile, field) do
@@ -240,6 +255,33 @@ defmodule ReyCode.RuntimeConfig.Schema do
           "invalid #{key}[#{index}]: #{inspect(profile)} (expected a provider map)"
   end
 
+  defp capability_overrides!(key, value) when is_map(value) do
+    Map.new(value, fn
+      {id, flags} when is_atom(id) and is_map(flags) ->
+        Enum.each(flags, fn
+          {field, flag}
+          when field in [:supports_tools, :supports_stream_options] and is_boolean(flag) ->
+            :ok
+
+          entry ->
+            raise ArgumentError,
+                  "invalid #{key}.#{id}: #{inspect(entry)} (expected supports_tools or " <>
+                    "supports_stream_options booleans)"
+        end)
+
+        {id, flags}
+
+      entry ->
+        raise ArgumentError,
+              "invalid #{key}: #{inspect(entry)} (expected %{provider_atom => capability flags})"
+    end)
+  end
+
+  defp capability_overrides!(key, value) do
+    raise ArgumentError,
+          "invalid #{key}: #{inspect(value)} (expected %{provider_atom => capability flags})"
+  end
+
   defp required_profile_value!(profile, field, path, predicate, expectation) do
     case Map.fetch(profile, field) do
       {:ok, value} ->
@@ -249,6 +291,14 @@ defmodule ReyCode.RuntimeConfig.Schema do
 
       :error ->
         raise ArgumentError, "invalid #{path}.#{field}: required setting is missing"
+    end
+  end
+
+  defp optional_profile_flag!(profile, field, path) do
+    case Map.fetch(profile, field) do
+      {:ok, value} when is_boolean(value) -> value
+      {:ok, _value} -> raise ArgumentError, "invalid #{path}.#{field}: expected a boolean"
+      :error -> true
     end
   end
 
@@ -330,6 +380,63 @@ defmodule ReyCode.RuntimeConfig.Schema do
     )
   end
 
+  # Environment overrides apply to every known profile id: built-ins first,
+  # configured profiles after them.
+  defp resolve_provider_env_overrides(values, environment_fetch) do
+    provider_ids =
+      Profile.built_in_ids() ++ Enum.map(values.openai_compatible_providers, &Map.fetch!(&1, :id))
+
+    base_url_overrides =
+      Map.new(provider_ids, fn id ->
+        {id, environment_fetch.(environment_name(id, "BASE_URL"))}
+      end)
+      |> Map.reject(fn {_id, value} -> is_nil(value) end)
+      |> then(&base_url_overrides!(:openai_compatible_base_url_overrides, &1))
+
+    capability_overrides =
+      Map.new(provider_ids, fn id ->
+        {id, capability_environment_flags(id, environment_fetch)}
+      end)
+      |> Map.reject(fn {_id, flags} -> flags == %{} end)
+      |> then(&capability_overrides!(:openai_compatible_capability_overrides, &1))
+
+    values
+    |> Map.update!(:openai_compatible_base_url_overrides, &Map.merge(&1, base_url_overrides))
+    |> Map.update!(:openai_compatible_capability_overrides, &Map.merge(&1, capability_overrides))
+  end
+
+  defp capability_environment_flags(id, environment_fetch) do
+    Map.new([:supports_tools, :supports_stream_options], fn field ->
+      {field, environment_fetch.(environment_name(id, capability_field_env(field)))}
+    end)
+    |> Map.reject(fn {_field, value} -> is_nil(value) end)
+    |> Map.new(fn {field, value} ->
+      {field,
+       boolean_environment_value!(environment_name(id, capability_field_env(field)), value)}
+    end)
+  end
+
+  defp capability_field_env(:supports_tools), do: "SUPPORTS_TOOLS"
+  defp capability_field_env(:supports_stream_options), do: "SUPPORTS_STREAM_OPTIONS"
+
+  defp boolean_environment_value!(name, value) do
+    case String.downcase(value) do
+      "true" -> true
+      "false" -> false
+      _other -> raise ArgumentError, "invalid #{name}: #{inspect(value)} (expected true or false)"
+    end
+  end
+
+  defp environment_name(id, suffix),
+    do: "REYCODE_#{id |> Atom.to_string() |> String.upcase()}_#{suffix}"
+
+  defp valid_failure_plan?(plan) when is_map(plan) do
+    allowed = [:retryable, :permanent, :crash, :timeout, :invalid_output, :after_frame]
+    Enum.all?(Map.values(plan), &(&1 in allowed))
+  end
+
+  defp valid_failure_plan?(_plan), do: false
+
   defp validate_optional!(key, options, field, predicate, expectation) do
     case Keyword.fetch(options, field) do
       :error ->
@@ -345,13 +452,6 @@ defmodule ReyCode.RuntimeConfig.Schema do
     end
   end
 
-  defp valid_failure_plan?(plan) when is_map(plan) do
-    allowed = [:retryable, :permanent, :crash, :timeout, :invalid_output, :after_frame]
-    Enum.all?(Map.values(plan), &(&1 in allowed))
-  end
-
-  defp valid_failure_plan?(_plan), do: false
-
   defp reject_unknown_overrides!(overrides, defaults) do
     unknown = Map.keys(overrides) -- Map.keys(defaults)
 
@@ -359,23 +459,6 @@ defmodule ReyCode.RuntimeConfig.Schema do
       raise ArgumentError,
             "unknown runtime configuration overrides: #{inspect(Enum.sort(unknown))}"
     end
-  end
-
-  defp resolve_endpoint_overrides(values, environment_fetch) do
-    provider_ids =
-      [:deepseek | Enum.map(values.openai_compatible_providers, &Map.fetch!(&1, :id))]
-
-    environment_overrides =
-      Map.new(provider_ids, fn id ->
-        environment_name = "REYCODE_#{id |> Atom.to_string() |> String.upcase()}_BASE_URL"
-        {id, environment_fetch.(environment_name)}
-      end)
-      |> Map.reject(fn {_id, value} -> is_nil(value) end)
-      |> then(&base_url_overrides!(:openai_compatible_base_url_overrides, &1))
-
-    Map.update!(values, :openai_compatible_base_url_overrides, fn configured ->
-      Map.merge(configured, environment_overrides)
-    end)
   end
 
   defp non_empty_string?(value), do: is_binary(value) and value != ""

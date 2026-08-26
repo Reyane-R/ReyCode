@@ -8,8 +8,10 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   defmodule Context do
     @moduledoc false
 
-    @enforce_keys [:transport, :profile, :key, :request, :body, :emit, :config]
-    defstruct @enforce_keys
+    # `body` is built per attempt by the capability downgrade ladder in
+    # OpenAICompatible, so the initial context may carry nil.
+    @enforce_keys [:transport, :profile, :key, :request, :emit, :config]
+    defstruct [:transport, :profile, :key, :request, :body, :emit, :config]
   end
 
   defmodule StreamTask do
@@ -465,6 +467,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   defp protocol_error,
     do: {:error, HTTP.error(:protocol_error, @protocol_error_message, false)}
 
+  defp authorization(nil), do: []
   defp authorization(key), do: [{"Authorization", "Bearer " <> key}]
 
   defp base_url(profile), do: String.trim_trailing(profile.base_url, "/")

@@ -116,15 +116,22 @@ defmodule ReyCode.RuntimeConfig.OpenAICompatible do
     :chunk_bytes,
     :chunk_latency_ms,
     :base_url_overrides,
+    :capability_overrides,
     :profiles,
     :transport
   ]
   defstruct @enforce_keys
 
+  @type capability :: %{
+          optional(:supports_tools) => boolean(),
+          optional(:supports_stream_options) => boolean()
+        }
+
   @type t :: %__MODULE__{
           chunk_bytes: pos_integer(),
           chunk_latency_ms: non_neg_integer(),
           base_url_overrides: map(),
+          capability_overrides: %{optional(atom()) => capability()},
           profiles: [map()],
           transport: module() | nil
         }

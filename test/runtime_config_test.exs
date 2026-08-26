@@ -178,6 +178,7 @@ defmodule ReyCode.RuntimeConfigTest do
       openai_compatible_chunk_bytes: config.open_ai.chunk_bytes,
       openai_compatible_chunk_latency_ms: config.open_ai.chunk_latency_ms,
       openai_compatible_base_url_overrides: config.open_ai.base_url_overrides,
+      openai_compatible_capability_overrides: config.open_ai.capability_overrides,
       openai_compatible_providers: config.open_ai.profiles,
       openai_compatible_transport: config.open_ai.transport,
       squad_release_gate_human: config.squad.release_gate_human?,
