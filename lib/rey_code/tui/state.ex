@@ -6,12 +6,15 @@ defmodule ReyCode.TUI.State do
   alias ReyCode.Provider.{Catalog, Presentation}
 
   alias ReyCode.TUI.{
+    Activity,
     AgentProfile,
+    AnimationClock,
     Delegation,
     ModelPicker,
     SessionPicker,
     Settings,
     SlashPalette,
+    Spinner,
     TimeAgo,
     ToolReview
   }
@@ -25,31 +28,45 @@ defmodule ReyCode.TUI.State do
     projection = Engine.subscribe(engine)
     catalog_snapshot = Catalog.subscribe(provider_catalog)
 
-    {:ok,
-     term
-     |> View.focus("prompt")
-     |> Component.assign(
-       engine: engine,
-       config: config,
-       provider_catalog: provider_catalog,
-       providers: catalog_snapshot.providers,
-       providers_generation: catalog_snapshot.generation,
-       projection: projection,
-       selected_room_id: List.last(projection.room_order),
-       drafts: %{},
-       mode: :direct,
-       home: true,
-       modal: nil,
-       cancel_turn_id: nil,
-       agent_profile: AgentProfile.initial(),
-       delegation: Delegation.initial(),
-       tool_review: ToolReview.initial(),
-       slash: nil,
-       model_picker: ModelPicker.initial(),
-       session_picker: SessionPicker.initial(),
-       settings: Settings.initial(),
-       notice: nil
-     )}
+    now_ms = System.system_time(:millisecond)
+
+    clock =
+      AnimationClock.new(
+        reduced_motion?: config.tui.reduced_motion?,
+        schedule: Keyword.get(opts, :animation_schedule, &animation_schedule/2),
+        cancel: Keyword.get(opts, :animation_cancel, &animation_cancel/1)
+      )
+
+    term =
+      term
+      |> View.focus("prompt")
+      |> Component.assign(
+        engine: engine,
+        config: config,
+        provider_catalog: provider_catalog,
+        providers: catalog_snapshot.providers,
+        providers_generation: catalog_snapshot.generation,
+        projection: projection,
+        selected_room_id: List.last(projection.room_order),
+        drafts: %{},
+        mode: :direct,
+        home: true,
+        modal: nil,
+        cancel_turn_id: nil,
+        agent_profile: AgentProfile.initial(),
+        delegation: Delegation.initial(),
+        tool_review: ToolReview.initial(),
+        slash: nil,
+        model_picker: ModelPicker.initial(),
+        session_picker: SessionPicker.initial(),
+        settings: Settings.initial(),
+        animation_clock: clock,
+        animation_now_ms: now_ms,
+        animation_style: Keyword.get(opts, :animation_style, Spinner.style()),
+        notice: nil
+      )
+
+    {:ok, reconcile_animation(term, now_ms)}
   end
 
   @doc "Adds transient values consumed by the extracted renderer."
@@ -58,16 +75,42 @@ defmodule ReyCode.TUI.State do
     width = assigns.breeze.terminal.width
     height = assigns.breeze.terminal.height
     room = assigns.projection.rooms[assigns.selected_room_id]
+    message_width = message_width(width)
+    target_graphemes = target_graphemes(width)
+
+    activity =
+      Activity.present(
+        assigns.selected_room_id,
+        assigns.projection,
+        assigns.providers,
+        assigns.animation_now_ms,
+        target_graphemes: target_graphemes
+      )
+
+    frame =
+      Spinner.glyph(
+        AnimationClock.frame_index(assigns.animation_clock),
+        assigns.config.tui.reduced_motion?,
+        assigns.animation_style
+      )
 
     Component.assign(assigns,
       room: room,
       rooms: Enum.map(assigns.projection.room_order, &assigns.projection.rooms[&1]),
-      messages: room_messages(room, assigns.projection),
+      messages:
+        room_messages(
+          room,
+          assigns.projection,
+          activity,
+          assigns.animation_now_ms,
+          target_graphemes
+        ),
+      activity: activity,
+      activity_frame: frame,
       draft: Map.get(assigns.drafts, assigns.selected_room_id, ""),
       git_branch: git_branch(room && room.workspace),
       token_label: token_label(room, assigns.projection, assigns.config),
-      elapsed_seconds: running_elapsed(room, assigns.projection),
-      message_width: message_width(width),
+      message_width: message_width,
       timeline_id: timeline_id(room.id),
       recent_session_rows: recent_session_rows(assigns),
       slash_rows: slash_rows(assigns.slash, height),
@@ -170,21 +213,6 @@ defmodule ReyCode.TUI.State do
 
   defp format_tokens(value), do: Integer.to_string(value)
 
-  defp running_elapsed(room, projection) do
-    with turn_id when not is_nil(turn_id) <- room && room.active_turn_id,
-         %{status: :running, created_at: created_at} <- projection.turns[turn_id] do
-      case DateTime.from_iso8601(created_at) do
-        {:ok, started, _offset} ->
-          max(DateTime.to_unix(DateTime.utc_now()) - DateTime.to_unix(started), 0)
-
-        _other ->
-          nil
-      end
-    else
-      _other -> nil
-    end
-  end
-
   defp slash_rows(nil, _height), do: []
 
   defp slash_rows(slash, height) do
@@ -208,19 +236,22 @@ defmodule ReyCode.TUI.State do
   """
   @spec projection_updated(map(), map()) :: map()
   def projection_updated(term, %{sequence: sequence} = projection) do
-    if Map.has_key?(term.assigns, :projection) and
-         sequence <= term.assigns.projection.sequence do
-      term
-    else
-      selected_room_id =
-        if Map.has_key?(projection.rooms, term.assigns.selected_room_id) do
-          term.assigns.selected_room_id
-        else
-          List.last(projection.room_order)
-        end
+    term =
+      if Map.has_key?(term.assigns, :projection) and
+           sequence <= term.assigns.projection.sequence do
+        term
+      else
+        selected_room_id =
+          if Map.has_key?(projection.rooms, term.assigns.selected_room_id) do
+            term.assigns.selected_room_id
+          else
+            List.last(projection.room_order)
+          end
 
-      Component.assign(term, projection: projection, selected_room_id: selected_room_id)
-    end
+        Component.assign(term, projection: projection, selected_room_id: selected_room_id)
+      end
+
+    reconcile_animation(term)
   end
 
   @doc "Applies a catalog snapshot unless its generation is not newer."
@@ -241,8 +272,52 @@ defmodule ReyCode.TUI.State do
           notice: notice
         )
 
-      if term.assigns.modal == :settings, do: Settings.reconcile_options(term), else: term
+      term = if term.assigns.modal == :settings, do: Settings.reconcile_options(term), else: term
+      reconcile_animation(term)
     end
+  end
+
+  @doc "Reconciles the one animation timer with selected-session work."
+  @spec reconcile_animation(map(), integer()) :: map()
+  def reconcile_animation(term, now_ms \\ System.system_time(:millisecond)) do
+    if Map.has_key?(term.assigns, :animation_clock) do
+      activity = current_activity(term, now_ms)
+      active? = not term.assigns.home and Activity.active?(activity)
+      clock = AnimationClock.reconcile(term.assigns.animation_clock, active?)
+      Component.assign(term, animation_clock: clock, animation_now_ms: now_ms)
+    else
+      term
+    end
+  end
+
+  @doc "Applies one animation tick when its token is current."
+  @spec animation_tick(map(), reference(), integer()) :: {:ok, map()} | :stale
+  def animation_tick(term, token, now_ms \\ System.system_time(:millisecond)) do
+    activity = current_activity(term, now_ms)
+    active? = not term.assigns.home and Activity.active?(activity)
+
+    case AnimationClock.tick(term.assigns.animation_clock, token, active?) do
+      {:ok, clock} ->
+        {:ok, Component.assign(term, animation_clock: clock, animation_now_ms: now_ms)}
+
+      :stale ->
+        :stale
+    end
+  end
+
+  @doc "Selects one durable Session and reconciles local animation state."
+  @spec select_session(map(), String.t(), boolean()) :: map()
+  def select_session(term, session_id, home? \\ false) do
+    term
+    |> Component.assign(selected_room_id: session_id, home: home?)
+    |> reconcile_animation()
+  end
+
+  @doc "Stops local animation before TUI teardown."
+  @spec stop_animation(map()) :: map()
+  def stop_animation(term) do
+    clock = AnimationClock.stop(term.assigns.animation_clock)
+    Component.assign(term, animation_clock: clock)
   end
 
   @doc "Updates the selected session's composer draft."
@@ -264,14 +339,16 @@ defmodule ReyCode.TUI.State do
         projection = Engine.snapshot(term.assigns.engine)
         drafts = Map.put(term.assigns.drafts, session_id, "")
 
-        {:ok,
-         Component.assign(term,
-           selected_room_id: session_id,
-           projection: projection,
-           drafts: drafts,
-           home: false,
-           notice: nil
-         )}
+        next =
+          term
+          |> Component.assign(
+            projection: projection,
+            drafts: drafts,
+            notice: nil
+          )
+          |> select_session(session_id)
+
+        {:ok, next}
 
       {:error, reason} ->
         {:error, reason}
@@ -297,49 +374,57 @@ defmodule ReyCode.TUI.State do
     source_session_id = List.last(term.assigns.projection.room_order)
     drafts = Map.put(term.assigns.drafts, source_session_id, "")
 
-    Component.assign(term,
-      selected_room_id: source_session_id,
-      home: true,
+    term
+    |> Component.assign(
       drafts: drafts,
       modal: nil,
       notice: nil
     )
+    |> select_session(source_session_id, true)
   end
 
   @doc "Returns the selected session timeline element ID."
   @spec timeline_id(term()) :: String.t()
   def timeline_id(session_id), do: "timeline-#{session_id}"
 
-  defp room_messages(nil, _projection), do: []
+  defp room_messages(nil, _projection, _activity, _now_ms, _target_graphemes), do: []
 
-  defp room_messages(room, projection) do
+  defp room_messages(room, projection, activity, now_ms, target_graphemes) do
     room.message_order
     |> Enum.reverse()
     |> Enum.map(fn message_id ->
       message = projection.messages[message_id]
-
       invocation = projection.invocations[message.invocation_id]
 
       message
       |> Map.put(:invocation, invocation)
-      |> Map.put(:tool_run_rows, tool_run_rows(invocation))
+      |> Map.put(:activity, Activity.invocation(activity, message.invocation_id))
+      |> Map.put(
+        :tool_run_rows,
+        tool_run_rows(invocation, room.workspace, now_ms, target_graphemes)
+      )
       |> Map.put(:note_rows, note_rows(invocation))
       |> Map.put(:turn, projection.turns[message.turn_id])
     end)
   end
 
-  defp tool_run_rows(invocation) when is_map(invocation) do
+  defp tool_run_rows(invocation, workspace, now_ms, target_graphemes)
+       when is_map(invocation) do
     invocation.tool_run_order
     |> List.wrap()
     |> Enum.flat_map(fn run_id ->
       case Map.get(invocation.tool_runs || %{}, run_id) do
-        nil -> []
-        run -> [tool_run_row(run)]
+        nil ->
+          []
+
+        run ->
+          run = Map.put_new(run, :id, run_id)
+          [Activity.tool(run, workspace, now_ms, target_graphemes: target_graphemes)]
       end
     end)
   end
 
-  defp tool_run_rows(_invocation), do: []
+  defp tool_run_rows(_invocation, _workspace, _now_ms, _target_graphemes), do: []
 
   # Activity trail shown beside the reply: newest lines win, older ones
   # collapse into a "+k more" marker rendered by the timeline.
@@ -347,70 +432,23 @@ defmodule ReyCode.TUI.State do
 
   defp note_rows(_invocation), do: []
 
-  defp tool_run_row(%{tool: :spawn_task} = run),
-    do: delegation_row(run, arguments_agent(run.arguments))
-
-  defp tool_run_row(%{tool: "spawn_task"} = run),
-    do: delegation_row(run, arguments_agent(run.arguments))
-
-  defp tool_run_row(run) do
-    %{
-      tool: to_string(run.tool),
-      target: argument_summary(run.arguments),
-      status: run_status_label(run)
-    }
+  defp current_activity(term, now_ms) do
+    Activity.present(
+      term.assigns.selected_room_id,
+      term.assigns.projection,
+      term.assigns.providers,
+      now_ms,
+      target_graphemes: 48
+    )
   end
 
-  # Delegation results use the tool-result envelope without an "ok" key;
-  # completion itself is the success signal for the row label.
-  defp delegation_row(run, agent) do
-    %{
-      tool: "delegate",
-      target: agent || "unknown agent",
-      status: delegation_status_label(run)
-    }
-  end
+  defp target_graphemes(width), do: width |> Kernel.-(34) |> max(16) |> min(72)
 
-  defp delegation_status_label(%{status: :completed}), do: "ok"
-  defp delegation_status_label(run), do: run_status_label(run)
-  defp arguments_agent(arguments) when is_map(arguments), do: arguments["agent"]
-  defp arguments_agent(_arguments), do: nil
+  defp animation_schedule(token, delay_ms),
+    do: Process.send_after(self(), {:activity_tick, token}, delay_ms)
 
-  defp run_status_label(%{status: :completed, result: %{"ok" => true}}), do: "ok"
-
-  defp run_status_label(%{status: :completed, result: %{"ok" => false, "error" => error}}),
-    do: "failed · " <> truncate_text(inspect(error), 40)
-
-  defp run_status_label(%{status: status}) when status in [:completed, :failed],
-    do: Atom.to_string(status)
-
-  defp run_status_label(%{status: :denied}), do: "denied"
-  defp run_status_label(%{status: :interrupted}), do: "interrupted"
-  defp run_status_label(%{status: :awaiting_approval}), do: "awaiting approval"
-  defp run_status_label(%{status: :running}), do: "running"
-  defp run_status_label(_run), do: ""
-
-  defp argument_summary(arguments) when is_map(arguments) do
-    cond do
-      is_binary(arguments["path"]) -> arguments["path"]
-      is_binary(arguments["command"]) -> truncate_text(arguments["command"], 48)
-      is_binary(arguments["pattern"]) -> arguments["pattern"]
-      true -> first_argument(arguments)
-    end
-  end
-
-  defp argument_summary(_arguments), do: ""
-
-  defp first_argument(arguments) do
-    case Enum.at(Map.to_list(arguments), 0) do
-      nil -> ""
-      {key, value} -> "#{key}=#{truncate_text(to_string(value), 40)}"
-    end
-  end
-
-  defp truncate_text(value, limit) do
-    if String.length(value) <= limit, do: value, else: String.slice(value, 0, limit - 1) <> "…"
-  end
+  defp animation_cancel(nil), do: false
+  defp animation_cancel(timer_ref), do: Process.cancel_timer(timer_ref)
 
   defp message_width(width), do: max(width - 14, 16)
 end

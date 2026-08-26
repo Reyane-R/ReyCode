@@ -14,6 +14,15 @@ if config_env() == :prod do
     end
   end
 
+  parse_boolean = fn name, default ->
+    case System.get_env(name) do
+      nil -> default
+      "true" -> true
+      "false" -> false
+      _value -> raise "#{name} must be true or false"
+    end
+  end
+
   split_list = fn name ->
     name
     |> System.get_env("")
@@ -46,6 +55,7 @@ if config_env() == :prod do
     workspace_concurrency: parse_integer.("REYCODE_WORKSPACE_CONCURRENCY", 1, 1),
     global_queue_limit: parse_integer.("REYCODE_GLOBAL_QUEUE_LIMIT", 100, 0),
     workspace_queue_limit: parse_integer.("REYCODE_WORKSPACE_QUEUE_LIMIT", 20, 0),
+    tui_reduced_motion: parse_boolean.("REYCODE_TUI_REDUCED_MOTION", false),
     provider_timeout_ms: parse_integer.("REYCODE_PROVIDER_TIMEOUT_MS", 600_000, 1_000),
     opencode_max_prompt_bytes: parse_integer.("REYCODE_MAX_PROMPT_BYTES", 128_000, 1_024),
     opencode_max_output_bytes: parse_integer.("REYCODE_MAX_OUTPUT_BYTES", 2_000_000, 1_024),

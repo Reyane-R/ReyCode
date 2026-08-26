@@ -12,6 +12,7 @@ config :rey_code,
   squad_release_gate_human: true,
   openai_compatible_chunk_bytes: 8_192,
   openai_compatible_chunk_latency_ms: 50,
+  tui_reduced_motion: false,
   start_tui: config_env() != :test
 
 import_config "#{config_env()}.exs"

@@ -4,7 +4,7 @@ defmodule ReyCode.TUITest do
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Test.Wait
-  alias ReyCode.TUI.State
+  alias ReyCode.TUI.{AnimationClock, State}
 
   test "starts clean and creates a fresh durable session for the first message" do
     %{engine: tui_engine_1} = start_isolated_stack([])
@@ -393,12 +393,12 @@ defmodule ReyCode.TUITest do
 
     assert screen =~ "12.4k/200k"
     assert screen =~ "⑂"
-    assert screen =~ "thinking"
+    assert screen =~ "Thinking"
     assert screen =~ ~r/\d+s/
 
-    assert screen =~ "Tool · read"
-    assert screen =~ "hello.txt"
-    assert screen =~ "ok"
+    assert screen =~ "Tool ·"
+    assert screen =~ "Read · <outside workspace>"
+    assert screen =~ "✓"
   end
 
   test "renders agent activity notes dimmed under the message with collapse" do
@@ -453,15 +453,196 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
 
     screen = session |> Breeze.Test.render!() |> plain()
-    assert screen =~ "Tool · delegate"
-    assert screen =~ "Luna"
-    assert screen =~ "running"
+    assert screen =~ "Tool ·"
+    assert screen =~ "Delegating · Luna"
+  end
+
+  test "renders operation-specific active ToolRun labels within a narrow terminal" do
+    %{engine: tui_engine_activity_tools} = start_isolated_stack([])
+    session = start_session({72, 32}, engine: tui_engine_activity_tools)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    workspace = File.cwd!()
+    run_order = ["read", "grep", "glob", "list", "bash", "edit", "write", "spawn"]
+
+    runs = %{
+      "read" => %{
+        id: "read",
+        tool: :read,
+        arguments: %{"path" => Path.join(workspace, "lib/a.ex")},
+        status: :running
+      },
+      "grep" => %{id: "grep", tool: :grep, arguments: %{"pattern" => "needle"}, status: :running},
+      "glob" => %{id: "glob", tool: :glob, arguments: %{"path" => "lib"}, status: :running},
+      "list" => %{id: "list", tool: :list, arguments: %{"path" => "test"}, status: :running},
+      "bash" => %{
+        id: "bash",
+        tool: :bash,
+        arguments: %{"command" => "mix test\n--trace"},
+        status: :running
+      },
+      "edit" => %{id: "edit", tool: :edit, arguments: %{"path" => "lib/a.ex"}, status: :running},
+      "write" => %{
+        id: "write",
+        tool: :write,
+        arguments: %{"path" => "README.md"},
+        status: :running
+      },
+      "spawn" => %{
+        id: "spawn",
+        tool: :spawn_task,
+        arguments: %{"agent" => "Luna"},
+        status: :running,
+        child_invocation_id: "child"
+      }
+    }
+
+    projection =
+      long_response_projection(session)
+      |> put_in([:messages, "msg-layout-assistant", :status], :streaming)
+      |> put_in([:messages, "msg-layout-assistant", :body], "")
+      |> put_in([:invocations, "inv-layout", :tool_runs], runs)
+      |> put_in([:invocations, "inv-layout", :tool_run_order], run_order)
+
+    push_projection(session, projection)
+    open_first_session(session)
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Reading · lib/a.ex"
+    assert screen =~ "Searching · needle"
+    assert screen =~ "Scanning · lib"
+    assert screen =~ "Scanning · test"
+    assert screen =~ "Running · mix test --trace"
+    assert screen =~ "Editing · lib/a.ex"
+    assert screen =~ "Writing · README.md"
+    assert screen =~ "Delegating · Luna"
+    assert Enum.all?(String.split(screen, "\n"), &(String.length(&1) <= 72))
+  end
+
+  test "approval and queued presentation stay static and event-invariant across stale ticks" do
+    %{engine: tui_engine_activity_static} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_activity_static)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    approval =
+      long_response_projection(session)
+      |> put_in([:messages, "msg-layout-assistant", :status], :streaming)
+      |> put_in([:messages, "msg-layout-assistant", :body], "")
+      |> put_in([:invocations, "inv-layout", :status], :waiting_tool_approval)
+      |> put_in([:invocations, "inv-layout", :tool_runs], %{
+        "bash" => %{
+          id: "bash",
+          tool: :bash,
+          arguments: %{"command" => "mix test"},
+          status: :awaiting_approval
+        }
+      })
+      |> put_in([:invocations, "inv-layout", :tool_run_order], ["bash"])
+
+    push_projection(session, approval)
+    open_first_session(session)
+    engine_sequence = Engine.snapshot(tui_engine_activity_static).sequence
+    projection_sequence = Breeze.Test.metadata(session).assigns.projection.sequence
+    paused = session |> Breeze.Test.render!() |> plain()
+    assert paused =~ "Ⅱ · Paused · bash approval required"
+
+    Enum.each(1..3, fn _ ->
+      assert {:noreply, _focused} = Breeze.Test.info(session, {:activity_tick, make_ref()})
+    end)
+
+    assert session |> Breeze.Test.render!() |> plain() == paused
+    assert Engine.snapshot(tui_engine_activity_static).sequence == engine_sequence
+    assert Breeze.Test.metadata(session).assigns.projection.sequence == projection_sequence
+
+    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
+
+    room = %{
+      Map.fetch!(approval.rooms, room_id)
+      | active_turn_id: nil,
+        queued_turn_ids: ["turn-layout"]
+    }
+
+    turn = Map.put(Map.fetch!(approval.turns, "turn-layout"), :status, :queued)
+
+    invocation =
+      approval.invocations
+      |> Map.fetch!("inv-layout")
+      |> Map.put(:status, :queued)
+      |> Map.put(:tool_runs, %{})
+      |> Map.put(:tool_run_order, [])
+
+    queued = %{
+      approval
+      | rooms: Map.put(approval.rooms, room_id, room),
+        turns: Map.put(approval.turns, "turn-layout", turn),
+        invocations: Map.put(approval.invocations, "inv-layout", invocation)
+    }
+
+    push_projection(session, queued)
+    queued_screen = session |> Breeze.Test.render!() |> plain()
+    assert queued_screen =~ "… · Queued"
+    refute AnimationClock.armed?(Breeze.Test.metadata(session).assigns.animation_clock)
+  end
+
+  test "parallel invocation activity stays independently visible with deterministic header priority" do
+    %{engine: tui_engine_activity_parallel} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: tui_engine_activity_parallel)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection = long_response_projection(session)
+    first = Map.fetch!(projection.invocations, "inv-layout")
+    second_id = "inv-review"
+    second_message_id = "msg-review"
+
+    second = %{
+      first
+      | id: second_id,
+        participant: %{first.participant | id: "review", name: "Review"},
+        tool_runs: %{},
+        tool_run_order: []
+    }
+
+    second_message = %{
+      Map.fetch!(projection.messages, "msg-layout-assistant")
+      | id: second_message_id,
+        invocation_id: second_id,
+        author: %{kind: :agent, id: "review", name: "Review"},
+        status: :streaming,
+        body: ""
+    }
+
+    room_id = first.room_id
+
+    room = %{
+      Map.fetch!(projection.rooms, room_id)
+      | message_order: [second_message_id, "msg-layout-assistant", "msg-layout-user"]
+    }
+
+    turn =
+      projection.turns
+      |> Map.fetch!("turn-layout")
+      |> Map.put(:invocation_order, ["inv-layout", second_id])
+
+    projection = %{
+      projection
+      | rooms: Map.put(projection.rooms, room_id, room),
+        turns: Map.put(projection.turns, "turn-layout", turn),
+        invocations: Map.put(projection.invocations, second_id, second),
+        messages: Map.put(projection.messages, second_message_id, second_message)
+    }
+
+    push_projection(session, projection)
+    open_first_session(session)
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Thinking"
+    assert screen =~ "Assistant"
+    assert screen =~ "Review"
   end
 
   test "renders nested provider usage totals" do
     %{engine: tui_engine_11} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_11)
-    on_exit(fn -> Breeze.Test.stop(session) end)
 
     projection =
       long_response_projection(session)
@@ -680,6 +861,12 @@ defmodule ReyCode.TUITest do
     %{engine: engine, store: store, room_id: room_id}
   end
 
+  defp open_first_session(session) do
+    type(session, "/resume")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+  end
+
   defp type(session, text) do
     Breeze.Test.render!(session)
 
@@ -770,6 +957,8 @@ defmodule ReyCode.TUITest do
       },
       room_id: session_id,
       turn_id: turn_id,
+      status: :running,
+      attempt: 1,
       usage: %{"prompt_tokens" => 12_000, "completion_tokens" => 400},
       pending_tool_review: nil,
       tool_runs: %{
@@ -791,6 +980,7 @@ defmodule ReyCode.TUITest do
 
     running_turn = %{
       mode: :direct,
+      invocation_order: [invocation_id],
       status: :running,
       created_at:
         DateTime.utc_now()

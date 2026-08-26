@@ -29,6 +29,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
   alias ReyCode.Provider.{Response, Runtime, ToolCall}
 
   alias ReyCode.Test.Wait
+  alias ReyCode.TUI.Activity
 
   @agent_registry __MODULE__.AgentRegistry
   @event_registry __MODULE__.EventRegistry
@@ -370,6 +371,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
       # script waits again under the new worker before being released.
       assert_receive {:child_waiting, ^child_inv, new_child_pid}, 5_000
       refute new_child_pid == first_child_pid
+
+      recovered = Engine.snapshot(@engine)
+      activity = Activity.present(room_id, recovered, %{}, System.system_time(:millisecond))
+      assert Activity.active?(activity)
+      assert activity.header.label == "Delegating"
+
       send(new_child_pid, :child_complete)
 
       assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
@@ -458,6 +465,10 @@ defmodule ReyCode.Orchestration.DelegationTest do
       events = EventStore.load(stack.store)
       refute Enum.any?(events, &(&1.type == :invocation_completed))
       assert Enum.count(events, &(&1.type == :invocation_cancelled)) == 2
+
+      activity = Activity.present(room_id, snapshot, %{}, System.system_time(:millisecond))
+      refute Activity.active?(activity)
+      assert activity.header.outcome == :cancelled
     end
   end
 

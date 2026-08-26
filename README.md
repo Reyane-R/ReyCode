@@ -121,15 +121,28 @@ different models without automatically multiplying token cost.
 - `j` / `k`: scroll the focused transcript
 - `Ctrl+Q`: exit
 
-Each message shows the tool runs it produced as compact one-line blocks
-(`Tool · read · path · ok`), with the tool, its target, and the run's
-outcome. Native agents that surface intermediate reasoning render dimmed
-activity lines under the message (`· note`), collapsed behind
-`+k more activity` when the trail grows past three lines.
-The header is the ambient status line: `ReyCode · model · ⑂ branch ·
-workspace · tok 12.4k/200k`, with `thinking · 8s` while a turn runs. Token
-usage is summed from durable provider usage records against the configured
-`context_budget_tokens` budget (`REYCODE_CONTEXT_BUDGET_TOKENS`).
+Each message shows the work it produced as compact one-line activity blocks.
+Executing work uses a shared animated signal and specific verb, for example
+`Tool · ⠹ · Reading · lib/foo.ex`, `Running · mix test`, or
+`Delegating · Luna`. The animation clock runs only while the selected Session
+has executing provider/tool/delegation work. Queued work and owner approval are
+truthfully static (`… · Queued`, `Ⅱ · Paused · bash approval required`);
+terminal completed/partial/reworked/failed/cancelled Outcomes use stable,
+distinct glyphs.
+
+Native agents that surface intermediate reasoning render dimmed activity lines
+under the message (`· note`), collapsed behind `+k more activity` when the
+trail grows past three lines. The header is the ambient status line:
+`ReyCode · model · ⑂ branch · workspace · tok 12.4k/200k`, followed by the
+highest-priority activity in durable invocation order.
+
+Set `REYCODE_TUI_REDUCED_MOTION=true` in a release environment (or
+`tui_reduced_motion: true` in application configuration) to use a static active
+glyph and one-second elapsed-time refresh instead of frame animation.
+
+Token usage is summed from durable provider usage records against the
+configured `context_budget_tokens` budget
+(`REYCODE_CONTEXT_BUDGET_TOKENS`).
 
 In the command palette, arrow keys move the selection, Tab completes it, Enter
 runs it, and Escape returns to the draft. `/cancel` stops the current task and

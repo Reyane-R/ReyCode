@@ -294,3 +294,12 @@ defmodule ReyCode.RuntimeConfig.Logging do
 
   @type t :: %__MODULE__{enabled?: boolean(), log_dir: String.t()}
 end
+
+defmodule ReyCode.RuntimeConfig.TUI do
+  @moduledoc "Terminal presentation and accessibility policy."
+
+  @enforce_keys [:reduced_motion?]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{reduced_motion?: boolean()}
+end

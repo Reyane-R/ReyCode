@@ -6,15 +6,14 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   alias ReyCode.Failure
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.Spinner
-
-  @compile {:no_warn_undefined, ReyCode.TUI.Spinner}
+  alias ReyCode.TUI.Activity
 
   @max_visible_notes 3
 
   attr :messages, :list, required: true
   attr :timeline_id, :string, required: true
   attr :message_width, :integer, required: true
+  attr :activity_frame, :string, required: true
 
   def timeline(assigns) do
     ~H"""
@@ -33,7 +32,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
           <box :if={message_metadata(message) != ""} class="text-muted">
             {metadata_label(message)}
           </box>
-          <box class={message_status_class(message.status)}>{message_status(message.status)}</box>
+          <box class={message_status_class(message)}>{message_status(message)}</box>
         </box>
         <box :if={message.body != ""} class="pl-2 w-full overflow-hidden">
           <box :for={line <- render_message(message, @message_width)} class="w-full">{line}</box>
@@ -42,7 +41,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
           :if={message.body == "" and message.status in [:queued, :streaming]}
           class="pl-2 w-full text-muted"
         >
-          {message_placeholder(message.status)}
+          {message_placeholder(message, @activity_frame)}
         </box>
         <box :if={message.error} class="pl-2 w-full overflow-hidden text-error">
           Failed · {error_summary(message.error, @message_width)}
@@ -53,8 +52,8 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
         <box :for={row <- visible_notes(message)} class="pl-2 w-full overflow-hidden text-muted">
           · {row}
         </box>
-        <box :for={row <- message.tool_run_rows} class="pl-2 w-full overflow-hidden text-muted">
-          Tool · {row.tool}  {row.target}  {tool_run_status(row)}
+        <box :for={row <- message.tool_run_rows} class={tool_row_class(row)}>
+          Tool · {Activity.text(row, @activity_frame)}
         </box>
       </box>
     </.scroll>
@@ -67,8 +66,9 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     |> split_lines()
   end
 
-  defp message_placeholder(:queued), do: "Waiting…"
-  defp message_placeholder(:streaming), do: Spinner.glyph() <> " Thinking…"
+  defp message_placeholder(%{activity: nil, status: :queued}, _frame), do: "Waiting…"
+  defp message_placeholder(%{activity: nil}, frame), do: frame <> " · Thinking"
+  defp message_placeholder(%{activity: activity}, frame), do: Activity.text(activity, frame)
 
   defp message_metadata(%{role: :user, created_at: created_at, turn: %{mode: :delegate}}) do
     [timestamp(created_at), "task"] |> Enum.reject(&(&1 == "")) |> Enum.join("  ·  ")
@@ -92,19 +92,13 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp author_name_class(%{author: %{id: "critic"}}), do: "font-bold text-warning"
   defp author_name_class(_message), do: "font-bold text-primary"
 
-  defp message_status(:queued), do: "waiting"
-  defp message_status(:streaming), do: "thinking"
-  defp message_status(_status), do: ""
+  defp message_status(%{activity: activity}), do: Activity.badge(activity)
 
-  defp message_status_class(status) when status in [:queued, :streaming],
-    do: "w-full text-right text-warning"
+  defp message_status_class(%{activity: activity}) do
+    "w-full text-right text-#{Activity.color(activity)}"
+  end
 
-  defp message_status_class(_status), do: "w-full text-right text-muted"
-
-  defp tool_run_status(%{status: status}) when status in ["running", "awaiting approval"],
-    do: Spinner.glyph() <> " " <> status
-
-  defp tool_run_status(row), do: row.status
+  defp tool_row_class(row), do: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}"
 
   defp visible_notes(%{note_rows: notes}) when is_list(notes),
     do: Enum.take(notes, -@max_visible_notes)

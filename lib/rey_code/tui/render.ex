@@ -19,13 +19,14 @@ defmodule ReyCode.TUI.Render do
       projection={@projection}
       providers={@providers}
       messages={@messages}
+      activity={@activity}
+      activity_frame={@activity_frame}
       timeline_id={@timeline_id}
       message_width={@message_width}
       slash_rows={@slash_rows}
       slash_style={@slash_style}
       git_branch={@git_branch}
       token_label={@token_label}
-      elapsed_seconds={@elapsed_seconds}
       terminal_width={@breeze.terminal.width}
       terminal_height={@breeze.terminal.height}
       draft={@draft}
