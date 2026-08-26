@@ -22,6 +22,77 @@ not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
 
+### D28 — Contextual completion and truthful work feedback are presentation-only (Direction — 2026-08-26)
+
+ReyCode adopts two OMP interaction patterns next: contextual composer
+completion (#78) and continuously rendered, operation-specific active-work
+feedback (#79). We copy the interaction principles, not OMP's plugin,
+marketplace, or tool-surface architecture.
+
+Current facts justify both:
+
+- `SlashPalette` already fuzzy-matches the static `Capabilities.commands/0`
+  registry, but owns ranking and selection itself; Tab accepts the first match
+  rather than the highlighted row and no dynamic argument source exists.
+- `Spinner.glyph/0` samples a four-frame animation from monotonic time, but the
+  TUI has no animation tick. A silent provider request or long tool execution
+  can therefore leave the glyph and elapsed time visually frozen until an
+  unrelated Projection update causes another render.
+
+**Completion seam:** one deep, pure `ReyCode.TUI.Completion` module owns
+ranking, replacement ranges, selection, candidate caps, acceptance, and
+command-line parsing. The existing slash palette becomes its renderer/input
+and dispatch adapter. Internal adapters provide commands, task Participants,
+provider/models, durable Sessions, and bounded immediate-directory candidates
+from immutable Projection/catalog snapshots.
+
+Accepting a candidate is still presentation-only: it updates draft/cursor and
+retains the candidate's stable dynamic ID in completion state. On Enter,
+`Completion` parses the command plus arguments and revalidates dynamic IDs
+against the current snapshots; `SlashPalette` dispatches that structured
+result through the existing `Capabilities` action registry. Manually typed
+arguments use the same parser. Unknown, malformed, or stale arguments return a
+tagged notice and append no event. Exact lookup of the entire draft (the
+current `command/1` behavior) is not the argument-command path.
+
+Opening, filtering, cycling, or accepting candidates appends no events and
+starts no work. Reading/attaching file contents, LSP completion, shell
+completion, and extension commands stay out of #78.
+
+**Activity seam:** one deep, pure `ReyCode.TUI.Activity` presenter maps the
+selected Session's internal Room ID, immutable Projection, and `now_ms` to
+bounded view rows for provider, ToolRun, delegation, retry, queue, approval,
+and terminal states. It does not scan hidden Sessions on each tick. Header,
+message placeholder, and timeline rows consume that shared result instead of
+choosing labels independently.
+
+One TUI-local clock drives renders only while the presenter reports active
+work. It owns at most one timer, ignores stale timer tokens, and stops when the
+last active operation becomes blocked, queued, or terminal. Ticks are never
+events and never change Projection, Invocation, ToolRun, Status, or Outcome.
+Reduced-motion mode uses a static glyph and slower elapsed-time refresh.
+
+Truthfulness is the governing UX rule:
+
+- provider streaming, executing tools, and a running delegation child animate;
+- owner approval and queued work are static because no execution is occurring;
+- completed, partial, reworked, failed, and cancelled Outcomes use distinct,
+  stable terminal presentation;
+- no percentage or time-remaining estimate is fabricated.
+
+The two issues are independent and may land in either order. Both reuse current
+registries and durable records rather than introducing parallel concepts. File
+mentions, follow-up queue controls, activity visibility toggles, external draft
+editing, session forking/rewind, and OMP-style extension discovery remain
+deferred; they need separate evidence and scope.
+
+Acceptance: #78 owns contextual completion, structured argument
+parsing/revalidation/dispatch, and pure/property/Breeze/event-invariance tests;
+#79 owns selected-Session Activity presentation, the complete terminal Outcome
+matrix, active-only clock, reduced-motion behavior, tool/status matrix, and
+event-invariance tests. Each change passes `mix check`, `mix coverage`, and
+`MIX_ENV=dev mix dialyzer` before this direction is considered executed.
+
 ### D27 — Offload harness: agent-initiated delegation over static orchestration (Direction — 2026-08-26)
 
 Product thesis: the high-tier Primary assistant hands bounded subtasks — test
