@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.Activity do
   advancement is deliberately outside this module and outside the Projection.
   """
 
-  alias ReyCode.Orchestration.{Invocation, Projection, ToolRun, Turn}
+  alias ReyCode.Orchestration.{Projection, ToolRun}
   alias ReyCode.Provider.Presentation
   alias ReyCode.Theme
 
@@ -50,14 +50,14 @@ defmodule ReyCode.TUI.Activity do
               header: nil,
               invocation_items: %{},
               ordered_invocation_ids: [],
-              truncated_invocation_count: 0
+              truncated?: false
 
     @type t :: %__MODULE__{
             active?: boolean(),
             header: Item.t() | nil,
             invocation_items: %{optional(String.t()) => Item.t()},
             ordered_invocation_ids: [String.t()],
-            truncated_invocation_count: non_neg_integer()
+            truncated?: boolean()
           }
   end
 
@@ -74,8 +74,7 @@ defmodule ReyCode.TUI.Activity do
 
       room ->
         target_graphemes = Keyword.get(opts, :target_graphemes, @default_target_graphemes)
-        all_ids = selected_invocation_ids(room, projection)
-        visible_ids = Enum.take(all_ids, -@max_invocation_rows_count)
+        {visible_ids, truncated?} = selected_invocation_ids(room, projection)
 
         items =
           Map.new(visible_ids, fn invocation_id ->
@@ -100,7 +99,7 @@ defmodule ReyCode.TUI.Activity do
           header: header,
           invocation_items: items,
           ordered_invocation_ids: visible_ids,
-          truncated_invocation_count: max(length(all_ids) - length(visible_ids), 0)
+          truncated?: truncated?
         }
     end
   end
@@ -155,14 +154,32 @@ defmodule ReyCode.TUI.Activity do
   def badge(_item), do: ""
 
   defp selected_invocation_ids(room, projection) do
-    room.message_order
-    |> Enum.flat_map(fn message_id ->
-      case Map.get(projection.messages, message_id) do
-        %{invocation_id: invocation_id} when not is_nil(invocation_id) -> [invocation_id]
-        _message -> []
-      end
-    end)
-    |> Enum.uniq()
+    {ids, _seen, truncated?} =
+      room.message_order
+      |> Enum.reverse()
+      |> Enum.reduce_while({[], MapSet.new(), false}, fn message_id, {ids, seen, _truncated?} ->
+        invocation_id = invocation_id(projection, message_id)
+
+        cond do
+          is_nil(invocation_id) or MapSet.member?(seen, invocation_id) ->
+            {:cont, {ids, seen, false}}
+
+          MapSet.size(seen) >= @max_invocation_rows_count ->
+            {:halt, {ids, seen, true}}
+
+          true ->
+            {:cont, {[invocation_id | ids], MapSet.put(seen, invocation_id), false}}
+        end
+      end)
+
+    {ids, truncated?}
+  end
+
+  defp invocation_id(projection, message_id) do
+    case Map.get(projection.messages, message_id) do
+      %{invocation_id: invocation_id} -> invocation_id
+      _message -> nil
+    end
   end
 
   defp invocation_item(invocation, turn, workspace, projection, now_ms, target_graphemes) do
@@ -211,6 +228,11 @@ defmodule ReyCode.TUI.Activity do
 
       %{} = run when run.status == :awaiting_approval ->
         approval_tool_item(run, workspace, now_ms, target_graphemes)
+        |> Map.put(:id, invocation.id)
+
+      %{} = run when run.status in [:ready, :requested] ->
+        run
+        |> tool_item(workspace, now_ms, target_graphemes)
         |> Map.put(:id, invocation.id)
 
       _run when attempt > 1 ->
@@ -318,15 +340,35 @@ defmodule ReyCode.TUI.Activity do
       status when status in [:ready, :requested] ->
         item(run.id, :tool, :queued, "Queued", target || name, nil, nil, 20)
 
-      :completed ->
-        item(run.id, :tool, :terminal, terminal_tool_label(name), target, nil, :completed, 10)
-
-      status when status in [:failed, :denied, :interrupted] ->
-        item(run.id, :tool, :terminal, terminal_tool_label(name), target, nil, :failed, 10)
+      status when status in [:completed, :failed, :denied, :interrupted] ->
+        terminal_tool_item(run, name, target, target_graphemes)
 
       _status ->
         item(run.id, :tool, :idle, terminal_tool_label(name), target, nil, nil, 0)
     end
+  end
+
+  defp terminal_tool_item(%{status: :completed} = run, name, target, _target_graphemes) do
+    item(run.id, :tool, :terminal, terminal_tool_label(name), target, nil, :completed, 10)
+  end
+
+  defp terminal_tool_item(%{status: :failed} = run, name, target, target_graphemes),
+    do: terminal_tool_failure(run, name, target, "Failed", target_graphemes)
+
+  defp terminal_tool_item(%{status: :denied} = run, name, target, target_graphemes),
+    do: terminal_tool_failure(run, name, target, "Denied", target_graphemes)
+
+  defp terminal_tool_item(%{status: :interrupted} = run, name, target, target_graphemes),
+    do: terminal_tool_failure(run, name, target, "Interrupted", target_graphemes)
+
+  defp terminal_tool_failure(run, name, target, label, target_graphemes) do
+    failure_target =
+      [humanize(name), target]
+      |> Enum.reject(&blank?/1)
+      |> Enum.join(" · ")
+      |> truncate(target_graphemes)
+
+    item(run.id, :tool, :terminal, label, failure_target, nil, :failed, 10)
   end
 
   defp current_tool(invocation) do
@@ -408,8 +450,7 @@ defmodule ReyCode.TUI.Activity do
     end
   end
 
-  defp terminal_outcome(%Turn{status: :terminal, outcome: outcome}, _invocation), do: outcome
-  defp terminal_outcome(_turn, %Invocation{status: status}), do: status
+  defp terminal_outcome(_turn, invocation), do: Map.get(invocation, :status)
 
   defp terminal_item(id, kind, outcome) do
     item(id, kind, :terminal, outcome_label(outcome), nil, nil, outcome, 10)

@@ -45,6 +45,17 @@ defmodule ReyCode.TUI.ActivityTest do
     assert item.label == "Paused"
     assert item.target == "read approval required"
     assert Activity.text(item, "unused") == "Ⅱ · Paused · read approval required"
+
+    ready = %{run | status: :ready}
+
+    {projection, room_id, invocation_id} =
+      fixture(invocation_status: :running, tool_runs: [ready])
+
+    view = Activity.present(room_id, projection, %{}, @now_ms)
+    item = Activity.invocation(view, invocation_id)
+    refute Activity.active?(view)
+    assert item.state == :queued
+    assert item.label == "Queued"
   end
 
   test "retry and active delegation use deterministic priority" do
@@ -174,9 +185,11 @@ defmodule ReyCode.TUI.ActivityTest do
 
   property "every supported terminal Outcome is stable and inactive" do
     check all(outcome <- member_of([:completed, :partial, :reworked, :failed, :cancelled])) do
-      {projection, room_id, _invocation_id} =
+      invocation_status = terminal_invocation_status(outcome)
+
+      {projection, room_id, invocation_id} =
         fixture(
-          invocation_status: terminal_invocation_status(outcome),
+          invocation_status: invocation_status,
           turn_status: :terminal,
           outcome: outcome
         )
@@ -187,6 +200,9 @@ defmodule ReyCode.TUI.ActivityTest do
       assert view.header.state == :terminal
       assert view.header.outcome == outcome
       assert Activity.text(view.header, "never") =~ view.header.label
+
+      invocation_item = Activity.invocation(view, invocation_id)
+      assert invocation_item.outcome == invocation_status
     end
   end
 
@@ -276,16 +292,14 @@ defmodule ReyCode.TUI.ActivityTest do
 
     assert Activity.present(room_id, projection, %{simulator: %{status: :error}}, @now_ms).header.label ==
              "Provider unavailable"
-  end
 
-  test "queued, terminal, blocked, and unknown ToolRun states use stable presentation" do
     cases = [
       {:ready, :queued, "Queued"},
       {:requested, :queued, "Queued"},
       {:completed, :terminal, "Read"},
-      {:failed, :terminal, "Read"},
-      {:denied, :terminal, "Read"},
-      {:interrupted, :terminal, "Read"},
+      {:failed, :terminal, "Failed"},
+      {:denied, :terminal, "Denied"},
+      {:interrupted, :terminal, "Interrupted"},
       {:unknown, :idle, "Read"}
     ]
 
@@ -300,6 +314,24 @@ defmodule ReyCode.TUI.ActivityTest do
       assert item.state == state
       assert item.label == label
     end)
+
+    denied =
+      Activity.tool(
+        tool_run("denied-bash", :bash, :denied, %{"command" => "mix test"}),
+        @workspace,
+        @now_ms
+      )
+
+    assert Activity.text(denied, "unused") == "× · Denied · Bash · mix test"
+
+    interrupted =
+      Activity.tool(
+        tool_run("interrupted-bash", :bash, :interrupted, %{"command" => "mix test"}),
+        @workspace,
+        @now_ms
+      )
+
+    assert Activity.text(interrupted, "unused") == "× · Interrupted · Bash · mix test"
 
     unknown =
       Activity.tool(
@@ -378,7 +410,7 @@ defmodule ReyCode.TUI.ActivityTest do
 
     view = Activity.present(room_id, projection, %{}, @now_ms)
     assert length(view.ordered_invocation_ids) == 256
-    assert view.truncated_invocation_count == 44
+    assert view.truncated?
     assert List.first(view.ordered_invocation_ids) == "bulk-inv-45"
   end
 
