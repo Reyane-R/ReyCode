@@ -195,9 +195,10 @@ defmodule ReyCode.Provider.OpenAICompatible.SSE do
     with {:ok, delta} <- choice_delta(choice),
          :ok <- valid_finish_reason?(choice),
          {:ok, content_events} <- content_events(delta),
+         {:ok, note_events} <- note_events(delta),
          {:ok, tool_events, tools} <- tool_events(delta, tools),
          {:ok, completion_events, tools} <- complete_tool_state(tools, choice["finish_reason"]) do
-      {:ok, content_events ++ tool_events ++ completion_events, tools}
+      {:ok, content_events ++ note_events ++ tool_events ++ completion_events, tools}
     end
   end
 
@@ -223,6 +224,22 @@ defmodule ReyCode.Provider.OpenAICompatible.SSE do
       {:ok, content} when is_binary(content) -> {:ok, [{:text, content}]}
       {:ok, _invalid} -> {:error, :invalid_content}
     end
+  end
+
+  # Reasoning deltas (`reasoning_content`, `reasoning`) are advisory display
+  # data, unlike content and tool calls: a non-binary value is ignored rather
+  # than failing the whole stream, because servers may attach novel shapes to
+  # these fields without breaking the chat contract.
+  defp note_events(delta) do
+    notes =
+      Enum.flat_map(["reasoning_content", "reasoning"], fn field ->
+        case Map.fetch(delta, field) do
+          {:ok, text} when is_binary(text) and text != "" -> [text]
+          _other -> []
+        end
+      end)
+
+    {:ok, Enum.map(notes, &{:note, &1})}
   end
 
   defp tool_events(delta, tools) do

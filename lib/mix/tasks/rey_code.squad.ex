@@ -20,7 +20,8 @@ defmodule Mix.Tasks.ReyCode.Squad do
   alias ReyCode.Orchestration.Squad
   alias ReyCode.Orchestration.Squad.MonteCarlo
   alias ReyCode.Provider.Catalog
-  alias ReyCode.SquadWait
+  alias ReyCode.Provider.Registry, as: ProviderRegistry
+  alias ReyCode.{RuntimeConfig, SquadWait}
 
   @switches [
     seed: :integer,
@@ -58,8 +59,8 @@ defmodule Mix.Tasks.ReyCode.Squad do
     config = live_config(opts, args)
 
     with_application_env(config.application_env, fn ->
-      start_live_runtime(config)
-      {room_id, workspace} = prepare_room(config)
+      provider = start_live_runtime(config)
+      {room_id, workspace} = prepare_room(config, provider)
       turn = execute_turn(room_id, workspace, config)
       Mix.shell().info(render(turn, workspace, config.format))
 
@@ -80,11 +81,11 @@ defmodule Mix.Tasks.ReyCode.Squad do
     provider = Keyword.get(opts, :provider)
     model = Keyword.get(opts, :model)
 
-    if provider != "opencode",
-      do: Mix.raise("Live squad runs require --provider opencode")
+    if provider in [nil, ""],
+      do: Mix.raise("Live squad runs require --provider PROVIDER")
 
     if model in [nil, ""],
-      do: Mix.raise("Live squad runs require --model provider/model")
+      do: Mix.raise("Live squad runs require --model MODEL")
 
     %{
       application_env: [
@@ -93,6 +94,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
         squad_rework_budget: Keyword.get(opts, :rework_budget, 3)
       ],
       format: if(opts[:json], do: :json, else: :human),
+      provider: provider,
       model: model,
       release: Keyword.get(opts, :release, "auto"),
       timeout_ms: opts[:timeout_ms],
@@ -126,14 +128,31 @@ defmodule Mix.Tasks.ReyCode.Squad do
 
   defp start_live_runtime(config) do
     Mix.Task.run("app.start")
+    runtime_config = RuntimeConfig.load!()
 
-    case Catalog.resolve_when_ready(:opencode, config.model) do
-      {:ok, _runtime} -> :ok
-      {:error, reason} -> Mix.raise("OpenCode model is unavailable: #{reason}")
+    provider =
+      case provider_id(config.provider, runtime_config) do
+        {:ok, provider} -> provider
+        {:error, :unknown_provider} -> Mix.raise("Unknown provider: #{config.provider}")
+      end
+
+    case Catalog.resolve_when_ready(provider, config.model) do
+      {:ok, _runtime} -> provider
+      {:error, reason} -> Mix.raise("Provider #{provider} model is unavailable: #{reason}")
     end
   end
 
-  defp prepare_room(config) do
+  @doc false
+  @spec provider_id(term(), RuntimeConfig.t()) :: {:ok, atom()} | {:error, :unknown_provider}
+  def provider_id(value, runtime_config) do
+    provider = ProviderRegistry.normalize_provider_id(value, runtime_config)
+
+    if ProviderRegistry.configurable_provider?(provider, config: runtime_config),
+      do: {:ok, provider},
+      else: {:error, :unknown_provider}
+  end
+
+  defp prepare_room(config, provider) do
     room_id = select_room(config.workspace)
 
     workspace =
@@ -144,7 +163,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
 
     role_ids = Enum.map(Squad.roles(), & &1.id)
 
-    case ReyCode.configure_squad_roles(room_id, role_ids, :opencode, config.model) do
+    case ReyCode.configure_squad_roles(room_id, role_ids, provider, config.model) do
       :ok -> {room_id, workspace}
       {:error, reason} -> Mix.raise("Could not configure squad roles: #{inspect(reason)}")
     end

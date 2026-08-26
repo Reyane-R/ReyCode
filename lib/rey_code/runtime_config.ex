@@ -156,6 +156,7 @@ defmodule ReyCode.RuntimeConfig do
         chunk_bytes: values.openai_compatible_chunk_bytes,
         chunk_latency_ms: values.openai_compatible_chunk_latency_ms,
         base_url_overrides: values.openai_compatible_base_url_overrides,
+        capability_overrides: values.openai_compatible_capability_overrides,
         profiles: values.openai_compatible_providers,
         transport: values.openai_compatible_transport
       },

@@ -7,8 +7,11 @@ defmodule ReyCode.RuntimeConfigTest do
 
   # Configuration tests inject an explicit settings source; they never mutate
   # the global application environment, so no serialization is required.
-  defp load_with(settings) do
-    RuntimeConfig.load(fn key, default -> Map.get(settings, key, default) end)
+  defp load_with(settings, environment \\ %{}) do
+    RuntimeConfig.load(
+      fn key, default -> Map.get(settings, key, default) end,
+      &Map.get(environment, &1)
+    )
   end
 
   test "loads every declared setting with its default when unconfigured" do
@@ -97,6 +100,43 @@ defmodule ReyCode.RuntimeConfigTest do
     end
   end
 
+  test "validates capability override shapes at the configuration boundary" do
+    for {capability, expectation} <- [
+          {%{deepseek: %{supports_tools: "yes"}},
+           ~r/expected supports_tools or supports_stream_options booleans/},
+          {%{deepseek: [:invalid]}, ~r/expected %\{provider_atom => capability flags\}/},
+          {"not-a-map", ~r/expected %\{provider_atom => capability flags\}/}
+        ] do
+      assert_raise ArgumentError, expectation, fn ->
+        RuntimeConfig.fresh(openai_compatible_capability_overrides: capability)
+      end
+    end
+
+    assert %RuntimeConfig{} =
+             RuntimeConfig.fresh(squad_simulator: [failure_plan: %{retryable: :retryable}])
+
+    assert_raise ArgumentError, ~r/failure_plan.*expected a failure map/s, fn ->
+      RuntimeConfig.fresh(squad_simulator: [failure_plan: %{retryable: :bogus}])
+    end
+
+    assert_raise ArgumentError, ~r/failure_plan/, fn ->
+      RuntimeConfig.fresh(squad_simulator: [failure_plan: :bogus])
+    end
+  end
+
+  test "environment capability flags override one field without erasing configured siblings" do
+    config =
+      load_with(
+        %{openai_compatible_capability_overrides: %{deepseek: %{supports_tools: false}}},
+        %{"REYCODE_DEEPSEEK_SUPPORTS_STREAM_OPTIONS" => "false"}
+      )
+
+    assert config.open_ai.capability_overrides.deepseek == %{
+             supports_tools: false,
+             supports_stream_options: false
+           }
+  end
+
   test "validates simulator options and rejects unknown explicit overrides" do
     assert %RuntimeConfig{} =
              RuntimeConfig.fresh(squad_simulator: [delay_ms: 0, emit_process: :task])
@@ -178,6 +218,7 @@ defmodule ReyCode.RuntimeConfigTest do
       openai_compatible_chunk_bytes: config.open_ai.chunk_bytes,
       openai_compatible_chunk_latency_ms: config.open_ai.chunk_latency_ms,
       openai_compatible_base_url_overrides: config.open_ai.base_url_overrides,
+      openai_compatible_capability_overrides: config.open_ai.capability_overrides,
       openai_compatible_providers: config.open_ai.profiles,
       openai_compatible_transport: config.open_ai.transport,
       squad_release_gate_human: config.squad.release_gate_human?,

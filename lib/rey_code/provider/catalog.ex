@@ -350,11 +350,18 @@ defmodule ReyCode.Provider.Catalog do
 
   defp complete_round_if_finished(state), do: state
 
+  @optional_local_profiles MapSet.new([:ollama, :lmstudio])
+
   defp refresh_retry?(providers) do
     Enum.any?(providers, fn
-      {:simulator, _entry} -> false
-      {_key, %{status: status}} when status in [:error, :missing] -> true
-      _other -> false
+      {:simulator, _entry} ->
+        false
+
+      {key, %{status: status}} when status in [:error, :missing] ->
+        not MapSet.member?(@optional_local_profiles, key)
+
+      _other ->
+        false
     end)
   end
 

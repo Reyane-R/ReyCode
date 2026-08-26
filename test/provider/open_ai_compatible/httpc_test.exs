@@ -560,6 +560,67 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     assert_receive {:model_request, %{method: "GET", path: "/models", body: ""}}
   end
 
+  test "a keyless profile completes real discovery and one streaming round without credentials" do
+    test_pid = self()
+
+    {listen_socket, server_pid, port} =
+      start_test_server(fn %{path: path} = request ->
+        send(test_pid, {:keyless_request, path, request.headers})
+
+        case path do
+          "/v1/models" ->
+            {200, [{"Content-Type", "application/json"}], ~s({"data":[{"id":"local-model"}]})}
+
+          "/v1/chat/completions" ->
+            {:raw,
+             fn socket ->
+               send_chunked_headers(socket)
+
+               send_chunk(socket, ~s(data: {"choices":[{"delta":{"content":"local"}}]}\n\n))
+               send_chunk(socket, "data: [DONE]\n\n")
+               :gen_tcp.send(socket, "0\r\n\r\n")
+             end}
+        end
+      end)
+
+    on_exit(fn -> stop_test_server(listen_socket, server_pid) end)
+
+    config =
+      RuntimeConfig.fresh(
+        openai_compatible_providers: [
+          %{
+            id: :keyless_local,
+            name: "Keyless Local",
+            base_url: "http://#{@loopback}:#{port}/v1",
+            require_key: false
+          }
+        ]
+      ).open_ai
+
+    {:ok, profile} = Profile.fetch(:keyless_local, config)
+
+    assert {:ok, %{status: :configured, models: ["local-model"], credential_count: 0}} =
+             OpenAICompatible.discover(profile)
+
+    assert_receive {:keyless_request, "/v1/models", model_headers}, 1_000
+    refute request_has_header?(model_headers, "authorization")
+
+    runtime = %Runtime{
+      module: OpenAICompatible,
+      provider_id: :keyless_local,
+      status: :configured,
+      config: config
+    }
+
+    assert {:ok, %Response{text: "local"}} =
+             wire_result(
+               OpenAICompatible.stream(runtime, provider_request(), fn _frame -> :ok end)
+             )
+
+    assert_receive {:keyless_request, "/v1/chat/completions", chat_headers}, 1_000
+    refute request_has_header?(chat_headers, "authorization")
+  end
+
   defp request_has_header?(headers, name) do
     headers
     |> Enum.any?(fn {header_name, _value} ->

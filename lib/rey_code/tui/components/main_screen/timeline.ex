@@ -10,6 +10,8 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   @compile {:no_warn_undefined, ReyCode.TUI.Spinner}
 
+  @max_visible_notes 3
+
   attr :messages, :list, required: true
   attr :timeline_id, :string, required: true
   attr :message_width, :integer, required: true
@@ -44,6 +46,12 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
         </box>
         <box :if={message.error} class="pl-2 w-full overflow-hidden text-error">
           Failed · {error_summary(message.error, @message_width)}
+        </box>
+        <box :if={note_overflow(message) > 0} class="pl-2 w-full text-muted">
+          +{note_overflow(message)} more activity
+        </box>
+        <box :for={row <- visible_notes(message)} class="pl-2 w-full overflow-hidden text-muted">
+          · {row}
         </box>
         <box :for={row <- message.tool_run_rows} class="pl-2 w-full overflow-hidden text-muted">
           Tool · {row.tool}  {row.target}  {tool_run_status(row)}
@@ -97,6 +105,12 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     do: Spinner.glyph() <> " " <> status
 
   defp tool_run_status(row), do: row.status
+
+  defp visible_notes(%{note_rows: notes}) when is_list(notes),
+    do: Enum.take(notes, -@max_visible_notes)
+
+  defp note_overflow(%{note_rows: notes}) when is_list(notes),
+    do: max(length(notes) - @max_visible_notes, 0)
 
   defp split_lines(spans) do
     {lines, current} = Enum.reduce(spans, {[], []}, &split_span/2)

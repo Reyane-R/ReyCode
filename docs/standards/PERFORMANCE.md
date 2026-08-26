@@ -79,6 +79,8 @@ Design intent: every cycle either advances, consumes rework budget, or terminate
 |---|---|
 | Room/message/turn retention | Entire durable history retained in Projection |
 | TUI render input | Current full Projection, presentation windows selected during rendering |
+| Agent-note trail | Newest 100 notes per Invocation (`@max_invocation_notes` in Projector) |
+| TUI activity lines visible | 3 per message behind a `+k more activity` collapse |
 | Terminal dimensions | Runtime terminal size; tests include 50x20 through 160x32 |
 
 The total Projection has no retention bound. Before long-lived multi-user operation, choose one of archival, pagination/windowed projection, or explicit memory/database capacity limits.

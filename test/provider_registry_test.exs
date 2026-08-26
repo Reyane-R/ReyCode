@@ -22,6 +22,8 @@ defmodule ReyCode.Provider.RegistryTest do
              :opencode,
              :omp,
              :deepseek,
+             :ollama,
+             :lmstudio,
              :local_api
            ]
 
@@ -29,6 +31,8 @@ defmodule ReyCode.Provider.RegistryTest do
              :opencode,
              :omp,
              :deepseek,
+             :ollama,
+             :lmstudio,
              :local_api,
              :simulator
            ]
@@ -39,6 +43,16 @@ defmodule ReyCode.Provider.RegistryTest do
              %{
                id: :deepseek,
                name: "DeepSeek",
+               description: "OpenAI-compatible API"
+             },
+             %{
+               id: :ollama,
+               name: "Ollama",
+               description: "OpenAI-compatible API"
+             },
+             %{
+               id: :lmstudio,
+               name: "LM Studio",
                description: "OpenAI-compatible API"
              },
              %{
@@ -66,6 +80,8 @@ defmodule ReyCode.Provider.RegistryTest do
 
     assert Registry.normalize_provider_id("opencode") == :opencode
     assert Registry.normalize_provider_id("deepseek") == :deepseek
+    assert Registry.normalize_provider_id("ollama") == :ollama
+    assert Registry.normalize_provider_id("lmstudio") == :lmstudio
     assert Registry.normalize_provider_id("simulator") == :simulator
     assert Registry.normalize_provider_id("demo") == :demo
     assert Registry.normalize_provider_id("unconfigured") == :unconfigured
@@ -85,6 +101,8 @@ defmodule ReyCode.Provider.RegistryTest do
 
     assert Registry.configurable_provider?("opencode", allow_simulator?: false)
     assert Registry.configurable_provider?("deepseek", allow_simulator?: false)
+    assert Registry.configurable_provider?("ollama", allow_simulator?: false)
+    assert Registry.configurable_provider?(:lmstudio, allow_simulator?: false)
     refute Registry.configurable_provider?("simulator", allow_simulator?: false)
     assert Registry.configurable_provider?("simulator", allow_simulator?: true)
     refute Registry.configurable_provider?("unknown", allow_simulator?: true)

@@ -11,9 +11,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
   alias ReyCode.Capabilities
   alias ReyCode.Failure
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
-  alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, Stream}
+  alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, RequestShape, Stream}
   alias ReyCode.RuntimeConfig
   alias ReyCode.RuntimeConfig.OpenAICompatible, as: OpenAIPolicy
+  alias ReyCode.RuntimeConfig.Schema
   alias ReyCode.ToolRegistry
 
   @behaviour ReyCode.Provider
@@ -23,16 +24,28 @@ defmodule ReyCode.Provider.OpenAICompatible do
   @doc "Discovers one profile's availability and models without exposing its key."
   @spec discover(Profile.t(), keyword()) :: {:ok, map()}
   def discover(profile, opts \\ []) do
-    if blank?(System.get_env(profile.key_env)) do
-      {:ok, %{status: :available, models: [], credential_count: 0, error: nil}}
-    else
+    if profile.require_key == false or not blank?(System.get_env(profile.key_env)) do
       case fetch_models(profile, opts) do
         {:ok, models} ->
-          {:ok, %{status: :configured, models: models, credential_count: 1, error: nil}}
+          {:ok,
+           %{
+             status: :configured,
+             models: models,
+             credential_count: credential_count(profile),
+             error: nil
+           }}
 
         {:error, message} ->
-          {:ok, %{status: :error, models: [], credential_count: 1, error: message}}
+          {:ok,
+           %{
+             status: :error,
+             models: [],
+             credential_count: credential_count(profile),
+             error: message
+           }}
       end
+    else
+      {:ok, %{status: :available, models: [], credential_count: 0, error: nil}}
     end
   end
 
@@ -43,25 +56,107 @@ defmodule ReyCode.Provider.OpenAICompatible do
     transport = transport(policy)
 
     with {:ok, profile} <- Profile.fetch(provider_id, policy),
-         {:ok, key} <- fetch_key(profile),
-         {:ok, body} <- build_body(request, profile) do
-      Stream.run(%Stream.Context{
+         {:ok, key} <- fetch_key(profile) do
+      context = %Stream.Context{
         transport: transport,
         profile: profile,
         key: key,
         request: request,
-        body: body,
         emit: emit,
         config: policy
-      })
+      }
+
+      run_stream(context, initial_shape(profile))
     end
+  end
+
+  # Strict servers may reject `stream_options` or `tools` with HTTP 400 before
+  # any side effect. The ladder retries once without `stream_options`; if the
+  # server still refuses while tools were offered, the invocation fails loudly
+  # with `tool_calls_unsupported` instead of degrading to a silent chat-only
+  # round. Non-400 failures keep their existing semantics. A shape that worked
+  # is remembered via RequestShape for later rounds and invocations.
+  defp run_stream(%Stream.Context{} = context, shape) do
+    with {:ok, body} <- build_body(context.request, context.profile, shape) do
+      case Stream.run(%{context | body: body}) do
+        {:ok, response} ->
+          remember_downgrade(context.profile, shape)
+          {:ok, response}
+
+        {:error, %Failure{category: :request_failed, cause: 400} = error} ->
+          downgrade(context, shape, error)
+
+        other ->
+          other
+      end
+    end
+  end
+
+  defp downgrade(%Stream.Context{} = context, shape, error) do
+    cond do
+      shape.stream_options? and
+          rejection_mentions?(error, ["stream_options", "stream options", "include_usage"]) ->
+        run_stream(context, %{default_shape(context.profile) | stream_options?: false})
+
+      shape.tools? and
+          rejection_mentions?(error, ["tools", "tool calling", "function calling", "functions"]) ->
+        {:error, tool_calls_unsupported(context.profile, error)}
+
+      true ->
+        # A normal 400 (bad model, context limit, malformed conversation) is
+        # not capability evidence. Preserve it unchanged and do not retry.
+        {:error, error}
+    end
+  end
+
+  defp rejection_mentions?(%Failure{message: message}, needles) do
+    normalized = String.downcase(message)
+    Enum.any?(needles, &String.contains?(normalized, &1))
+  end
+
+  # A remembered shape only ever suppresses features the server rejected, so
+  # it intersects with today's profile: an explicit pin always wins over the
+  # memory of an older downgrade.
+  defp initial_shape(profile) do
+    default = default_shape(profile)
+
+    case RequestShape.get(profile) do
+      nil ->
+        default
+
+      remembered ->
+        %{
+          tools?: default.tools? and remembered.tools?,
+          stream_options?: default.stream_options? and remembered.stream_options?
+        }
+    end
+  end
+
+  defp default_shape(profile),
+    do: %{tools?: profile.supports_tools, stream_options?: profile.supports_stream_options}
+
+  defp remember_downgrade(profile, shape) do
+    if shape != default_shape(profile), do: RequestShape.put(profile.id, shape)
+
+    :ok
+  end
+
+  defp tool_calls_unsupported(profile, original) do
+    pin = Schema.capability_environment_name(profile.id, :supports_tools) <> "=false"
+
+    HTTP.error(
+      :tool_calls_unsupported,
+      "#{profile.name} rejected tool calls (#{original.message}). " <>
+        "Set supports_tools: false or #{pin} to send requests without tools explicitly.",
+      false
+    )
   end
 
   defp fetch_models(profile, opts) do
     policy = Keyword.get_lazy(opts, :policy, fn -> RuntimeConfig.fresh().open_ai end)
     transport = Keyword.get(opts, :transport) || transport(policy)
     url = base_url(profile) <> "/models"
-    headers = authorization(System.get_env(profile.key_env)) ++ [{"Accept", "application/json"}]
+    headers = authorization(api_key(profile)) ++ [{"Accept", "application/json"}]
     opts_list = [timeout: Keyword.get(opts, :timeout, profile.request_timeout_ms)]
     max_bytes = Keyword.get(opts, :max_response_bytes, @default_model_response_bytes)
 
@@ -121,19 +216,17 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
-  defp build_body(request, profile) do
-    request_body(profile, request.participant.model, chat_messages(request))
+  defp build_body(request, profile, shape) do
+    request_body(profile, request.participant.model, chat_messages(request), shape)
   end
 
-  defp request_body(profile, model, messages) do
+  # Capability flags control which optional features appear on the wire; a
+  # pinned strict-server profile omits them from the first attempt.
+  defp request_body(profile, model, messages, shape) do
     body =
-      %{
-        "model" => model,
-        "stream" => true,
-        "messages" => messages,
-        "tools" => tool_definitions(),
-        "stream_options" => %{"include_usage" => true}
-      }
+      %{"model" => model, "stream" => true, "messages" => messages}
+      |> maybe_put("tools", tool_definitions(), shape.tools?)
+      |> maybe_put("stream_options", %{"include_usage" => true}, shape.stream_options?)
       |> Jason.encode!()
 
     if byte_size(body) > profile.max_prompt_bytes do
@@ -147,6 +240,9 @@ defmodule ReyCode.Provider.OpenAICompatible do
       {:ok, body}
     end
   end
+
+  defp maybe_put(map, _key, _value, false), do: map
+  defp maybe_put(map, key, value, true), do: Map.put(map, key, value)
 
   defp chat_messages(request) do
     system =
@@ -210,6 +306,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end)
   end
 
+  defp fetch_key(%Profile{require_key: false}), do: {:ok, nil}
+
   defp fetch_key(profile) do
     if blank?(System.get_env(profile.key_env)) do
       {:error,
@@ -219,6 +317,13 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
+  defp api_key(%Profile{require_key: false}), do: nil
+  defp api_key(profile), do: System.get_env(profile.key_env)
+
+  defp credential_count(%Profile{require_key: false}), do: 0
+  defp credential_count(_profile), do: 1
+
+  defp authorization(nil), do: []
   defp authorization(key), do: [{"Authorization", "Bearer " <> key}]
 
   defp base_url(profile), do: String.trim_trailing(profile.base_url, "/")

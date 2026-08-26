@@ -24,7 +24,10 @@ defmodule ReyCode.Provider.CatalogTest do
     )
 
     providers = Catalog.snapshot(@catalog).providers
-    assert MapSet.new(Map.keys(providers)) == MapSet.new([:opencode, :omp, :deepseek])
+
+    assert MapSet.new(Map.keys(providers)) ==
+             MapSet.new([:opencode, :omp, :deepseek, :ollama, :lmstudio])
+
     refute Map.has_key?(providers, :demo)
     refute Map.has_key?(providers, :simulator)
   end
@@ -57,6 +60,7 @@ defmodule ReyCode.Provider.CatalogTest do
        registry: @registry,
        task_supervisor: @task_supervisor,
        discover: discover,
+       api_discover: fn -> %{} end,
        discovery?: true}
     )
 
@@ -173,6 +177,7 @@ defmodule ReyCode.Provider.CatalogTest do
        registry: @registry,
        task_supervisor: @task_supervisor,
        discover: discover,
+       api_discover: fn -> %{} end,
        discovery?: true,
        probe_timeout: 30,
        retry_interval: 30,
@@ -209,6 +214,7 @@ defmodule ReyCode.Provider.CatalogTest do
        registry: @registry,
        task_supervisor: @task_supervisor,
        discover: discover,
+       api_discover: fn -> %{} end,
        discovery?: true,
        probe_timeout: 500,
        refresh_interval: 10_000}
@@ -387,12 +393,15 @@ defmodule ReyCode.Provider.CatalogTest do
       end
     end
 
+    # The API profiles must not depend on real loopback endpoints: injected
+    # results keep this probe-counting test fully hermetic.
     start_supervised!(
       {Catalog,
        name: @catalog,
        registry: @registry,
        task_supervisor: @task_supervisor,
        discover: discover,
+       api_discover: fn -> %{} end,
        discovery?: true,
        probe_timeout: 1_000,
        retry_interval: 10_000,

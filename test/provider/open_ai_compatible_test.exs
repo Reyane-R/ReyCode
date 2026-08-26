@@ -10,6 +10,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     Message,
     OpenAICompatible,
     OpenAICompatible.Profile,
+    OpenAICompatible.RequestShape,
     Request,
     Response,
     Runtime,
@@ -22,11 +23,13 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
   setup do
     FakeTransport.clear()
+    RequestShape.clear()
     System.put_env(@key_env, "test-key")
 
     on_exit(fn ->
       System.delete_env(@key_env)
       FakeTransport.clear()
+      RequestShape.clear()
     end)
 
     :ok
@@ -454,6 +457,432 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     after
       System.delete_env("TINY_API_KEY")
     end
+
+    test "streams reasoning deltas as agent_note frames without touching the body" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning_content":"thinking hard"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"reasoning":"more thought"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:ok, %Response{text: "Answer"}} = result
+
+      assert emitted == [
+               %Frame{sequence: 1, kind: :agent_note, data: %{note: "thinking hard"}},
+               %Frame{sequence: 2, kind: :text_delta, data: %{text: "Answer"}},
+               %Frame{sequence: 3, kind: :agent_note, data: %{note: "more thought"}}
+             ]
+    end
+
+    test "coalesces adjacent reasoning token deltas into one activity frame" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning":"thinking"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"reasoning":" hard"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"reasoning":" now"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:ok, %Response{text: "Answer"}} = result
+
+      assert emitted == [
+               %Frame{sequence: 1, kind: :agent_note, data: %{note: "thinking hard now"}},
+               %Frame{sequence: 2, kind: :text_delta, data: %{text: "Answer"}}
+             ]
+    end
+
+    test "non-binary reasoning values are ignored without failing the stream" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning":42}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"ok"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:ok, %Response{text: "ok"}} = result
+      assert [%Frame{kind: :text_delta}] = emitted
+    end
+
+    test "a reasoning-only stream fails closed as content-free output" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning_content":"only thinking"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+        end)
+
+      assert {:error, %{"category" => "protocol_error"}} = result
+      assert [%Frame{kind: :agent_note}] = emitted
+    end
+  end
+
+  describe "keyless profiles" do
+    test "exposes built-in Ollama and LM Studio profiles on loopback endpoints" do
+      assert {:ok, ollama} = Profile.fetch(:ollama)
+      assert ollama.name == "Ollama"
+      assert ollama.base_url == "http://localhost:11434/v1"
+      refute ollama.require_key
+
+      assert {:ok, lmstudio} = Profile.fetch(:lmstudio)
+      assert lmstudio.name == "LM Studio"
+      assert lmstudio.base_url == "http://localhost:1234/v1"
+      refute lmstudio.require_key
+    end
+
+    test "discovery never sends Authorization for a keyless profile" do
+      FakeTransport.set_models(~s({"data":[{"id":"llama3"}]}))
+      {:ok, profile} = Profile.fetch(:ollama)
+
+      assert {:ok, %{status: :configured, models: ["llama3"], credential_count: 0}} =
+               OpenAICompatible.discover(profile, transport: FakeTransport)
+
+      refute authorization_header?(FakeTransport.last_request().headers)
+    end
+
+    test "streaming never sends Authorization for a keyless profile" do
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"content":"hello"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      assert {:ok, %Response{text: "hello"}} =
+               wire_result(
+                 OpenAICompatible.stream(local_runtime(:ollama), request(), fn _frame -> :ok end)
+               )
+
+      refute authorization_header?(FakeTransport.last_request().headers)
+    end
+
+    test "discovery matrix covers valid, empty, malformed, and non-2xx for both profiles" do
+      for id <- [:ollama, :lmstudio] do
+        {:ok, profile} = Profile.fetch(id)
+
+        FakeTransport.set_models(~s({"data":[{"id":"local-model"}]}))
+
+        assert {:ok, %{status: :configured, models: ["local-model"], credential_count: 0}} =
+                 OpenAICompatible.discover(profile, transport: FakeTransport)
+
+        assert FakeTransport.last_request().method == :get
+
+        assert FakeTransport.last_request().url ==
+                 "#{String.trim_trailing(profile.base_url, "/")}/models"
+
+        FakeTransport.set_models(~s({"data":[]}))
+
+        assert {:ok, %{status: :configured, models: []}} =
+                 OpenAICompatible.discover(profile, transport: FakeTransport)
+
+        FakeTransport.set_models(~s({"data":[{"id":42}]}))
+
+        assert {:ok, %{status: :error, models: [], error: error}} =
+                 OpenAICompatible.discover(profile, transport: FakeTransport)
+
+        assert is_binary(error)
+
+        FakeTransport.set_models_status(503, ~s({"error":{"message":"warming up"}}))
+
+        assert {:ok, %{status: :error, error: "warming up"}} =
+                 OpenAICompatible.discover(profile, transport: FakeTransport)
+
+        # The non-2xx stub must not leak into the next profile's iteration.
+        FakeTransport.clear()
+      end
+    end
+
+    test "a configured profile may opt out of credentials entirely" do
+      config =
+        RuntimeConfig.fresh(
+          openai_compatible_providers: [
+            %{
+              id: :vllm_local,
+              name: "vLLM",
+              base_url: "http://localhost:8000/v1",
+              require_key: false
+            }
+          ]
+        )
+
+      assert {:ok, profile} = Profile.fetch(:vllm_local, config.open_ai)
+      refute profile.require_key
+
+      FakeTransport.set_models(~s({"data":[{"id":"qwen"}]}))
+
+      assert {:ok, %{status: :configured, models: ["qwen"], credential_count: 0}} =
+               OpenAICompatible.discover(profile, transport: FakeTransport)
+
+      refute authorization_header?(FakeTransport.last_request().headers)
+    end
+
+    test "a profile without require_key still demands a key env at configuration time" do
+      assert_raise ArgumentError, ~r/key_env/, fn ->
+        RuntimeConfig.fresh(
+          openai_compatible_providers: [
+            %{id: :broken, name: "Broken", base_url: "https://example.test"}
+          ]
+        )
+      end
+    end
+
+    test "an invalid require_key flag fails configuration" do
+      assert_raise ArgumentError, ~r/require_key/, fn ->
+        RuntimeConfig.fresh(
+          openai_compatible_providers: [
+            %{
+              id: :broken,
+              name: "Broken",
+              base_url: "https://example.test",
+              key_env: "BROKEN_KEY",
+              require_key: "no"
+            }
+          ]
+        )
+      end
+    end
+  end
+
+  describe "capability downgrade" do
+    @success_stream [
+      ~s(data: {"choices":[{"delta":{"content":"ok"}}]}\n\n),
+      "data: [DONE]\n\n"
+    ]
+
+    test "retries once without stream_options on HTTP 400 and keeps tools" do
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
+        {:chunks, @success_stream}
+      ])
+
+      assert {:ok, %Response{text: "ok"}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      assert [first, second] = Enum.map(FakeTransport.requests(), &Jason.decode!(&1.body))
+      assert Map.has_key?(first, "stream_options")
+      assert Map.has_key?(first, "tools")
+      refute Map.has_key?(second, "stream_options")
+      assert Map.has_key?(second, "tools")
+    end
+
+    test "remembers the downgraded shape for the next round" do
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
+        {:chunks, @success_stream}
+      ])
+
+      assert {:ok, %Response{}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      # The second round must succeed on its first attempt: no repeated 400.
+      FakeTransport.set_stream_script([{:chunks, @success_stream}])
+
+      assert {:ok, %Response{}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      assert length(FakeTransport.requests()) == 3
+
+      refute FakeTransport.requests()
+             |> List.last()
+             |> Map.fetch!(:body)
+             |> Jason.decode!()
+             |> Map.has_key?("stream_options")
+    end
+
+    test "fails loudly with tool_calls_unsupported when tools are rejected" do
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
+        {:status, 400, ~s({"error":{"message":"function calling is not supported"}})}
+      ])
+
+      assert {:error,
+              %{
+                "category" => "tool_calls_unsupported",
+                "retryable" => false,
+                "message" => message
+              }} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      assert message =~ "function calling is not supported"
+      assert message =~ "REYCODE_DEEPSEEK_SUPPORTS_TOOLS=false"
+
+      assert [%{body: _}, last] = FakeTransport.requests()
+      assert Jason.decode!(last.body)["tools"]
+    end
+
+    test "an unrelated HTTP 400 is preserved and never retried" do
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"model does not exist"}})}
+      ])
+
+      assert {:error,
+              %{
+                "category" => "request_failed",
+                "retryable" => false,
+                "message" => message
+              }} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      assert message =~ "model does not exist"
+      assert length(FakeTransport.requests()) == 1
+    end
+
+    test "non-400 failures keep their semantics and are never retried" do
+      FakeTransport.set_stream_script([{:status, 429, ~s({"error":{"message":"slow down"}})}])
+
+      assert {:error, %{"category" => "rate_limited", "retryable" => true}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      assert length(FakeTransport.requests()) == 1
+    end
+
+    test "a pinned profile omits capabilities from the first attempt" do
+      System.put_env("STRICT_KEY", "k")
+
+      config =
+        RuntimeConfig.fresh(
+          openai_compatible_transport: FakeTransport,
+          openai_compatible_providers: [
+            %{
+              id: :strict_local,
+              name: "Strict",
+              base_url: "https://strict.example.test",
+              key_env: "STRICT_KEY",
+              supports_tools: false
+            }
+          ]
+        )
+
+      runtime = %Runtime{
+        module: OpenAICompatible,
+        provider_id: :strict_local,
+        status: :configured,
+        config: config.open_ai
+      }
+
+      FakeTransport.set_stream(@success_stream)
+
+      assert {:ok, %Response{text: "ok"}} =
+               wire_result(OpenAICompatible.stream(runtime, request(), fn _frame -> :ok end))
+
+      body = Jason.decode!(FakeTransport.last_body())
+      refute Map.has_key?(body, "tools")
+      assert Map.has_key?(body, "stream_options")
+    after
+      System.delete_env("STRICT_KEY")
+    end
+
+    test "an environment override pins a built-in profile capability" do
+      System.put_env("REYCODE_DEEPSEEK_SUPPORTS_STREAM_OPTIONS", "false")
+
+      assert {:ok, %{supports_stream_options: false, supports_tools: true}} =
+               Profile.fetch(:deepseek, RuntimeConfig.load!().open_ai)
+    after
+      System.delete_env("REYCODE_DEEPSEEK_SUPPORTS_STREAM_OPTIONS")
+    end
+
+    test "an invalid environment capability value fails configuration loudly" do
+      System.put_env("REYCODE_DEEPSEEK_SUPPORTS_TOOLS", "sometimes")
+
+      assert_raise ArgumentError, ~r/SUPPORTS_TOOLS/, fn -> RuntimeConfig.load!() end
+    after
+      System.delete_env("REYCODE_DEEPSEEK_SUPPORTS_TOOLS")
+    end
+
+    test "a 400 from a fully pinned profile surfaces unchanged" do
+      System.put_env("PINNED_KEY", "k")
+
+      config =
+        RuntimeConfig.fresh(
+          openai_compatible_transport: FakeTransport,
+          openai_compatible_providers: [
+            %{
+              id: :pinned,
+              name: "Pinned",
+              base_url: "https://pinned.example.test",
+              key_env: "PINNED_KEY",
+              supports_tools: false,
+              supports_stream_options: false
+            }
+          ]
+        )
+
+      runtime = %Runtime{
+        module: OpenAICompatible,
+        provider_id: :pinned,
+        status: :configured,
+        config: config.open_ai
+      }
+
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"bad request for other reasons"}})}
+      ])
+
+      assert {:error, %{"category" => "request_failed"}} =
+               wire_result(OpenAICompatible.stream(runtime, request(), fn _frame -> :ok end))
+
+      assert length(FakeTransport.requests()) == 1
+    after
+      System.delete_env("PINNED_KEY")
+    end
+
+    test "an explicit capability pin wins over a remembered downgrade" do
+      # Prime the sticky cache: first round downgrades stream_options.
+      FakeTransport.set_stream_script([
+        {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
+        {:chunks, @success_stream}
+      ])
+
+      assert {:ok, %Response{}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
+      # The operator then pins tools off; the memory must not re-enable them.
+      # load/2 is what production uses, so it applies the env pin.
+      System.put_env("REYCODE_DEEPSEEK_SUPPORTS_TOOLS", "false")
+
+      policy =
+        RuntimeConfig.load(
+          fn
+            :openai_compatible_transport, _default -> FakeTransport
+            _key, default -> default
+          end,
+          &System.get_env/1
+        ).open_ai
+
+      pinned_runtime = %{runtime() | provider_id: :deepseek, config: policy}
+
+      FakeTransport.set_stream(@success_stream)
+
+      assert {:ok, %Response{}} =
+               wire_result(
+                 OpenAICompatible.stream(pinned_runtime, request(), fn _frame -> :ok end)
+               )
+
+      body =
+        FakeTransport.requests()
+        |> List.last()
+        |> Map.fetch!(:body)
+        |> Jason.decode!()
+
+      refute Map.has_key?(body, "tools")
+    after
+      System.delete_env("REYCODE_DEEPSEEK_SUPPORTS_TOOLS")
+    end
   end
 
   describe "Profile" do
@@ -487,6 +916,27 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
                Profile.fetch(:deepseek, config.open_ai)
     after
       System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
+    end
+
+    test "configured profiles override colliding built-in IDs without moving their slot" do
+      config =
+        RuntimeConfig.fresh(
+          openai_compatible_providers: [
+            %{
+              id: :ollama,
+              name: "Remote Ollama",
+              base_url: "https://ollama.example.test/v1",
+              key_env: "REMOTE_OLLAMA_KEY"
+            }
+          ]
+        )
+
+      assert {:ok, ollama} = Profile.fetch(:ollama, config.open_ai)
+      assert ollama.name == "Remote Ollama"
+      assert ollama.base_url == "https://ollama.example.test/v1"
+      assert ollama.require_key
+
+      assert Enum.take(Profile.ids(config.open_ai), 3) == [:deepseek, :ollama, :lmstudio]
     end
   end
 
@@ -556,6 +1006,12 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
     {result, frames}
   end
+
+  defp local_runtime(provider_id), do: %{runtime() | provider_id: provider_id}
+
+  defp authorization_header?(headers) do
+    Enum.any?(headers, fn {name, _value} -> String.downcase(name) == "authorization" end)
+  end
 end
 
 defmodule ReyCode.OpenAICompatible.FakeTransport do
@@ -564,8 +1020,10 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
   alias ReyCode.Provider.OpenAICompatible.HTTP
 
   def clear do
-    [:models, :stream, :models_status, :stream_status, :stream_failure, :last_request]
+    [:models, :stream, :models_status, :stream_status, :stream_failure, :last_request, :script]
     |> Enum.each(&:persistent_term.erase({__MODULE__, &1}))
+
+    :persistent_term.erase({__MODULE__, :requests})
   end
 
   def set_models(body), do: :persistent_term.put({__MODULE__, :models}, body)
@@ -583,12 +1041,17 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
   def set_stream_status(status, body),
     do: :persistent_term.put({__MODULE__, :stream_status}, {status, body})
 
+  # One step per stream attempt: {:status, code, body} fails the attempt;
+  # {:chunks, list} replays a successful SSE body.
+  def set_stream_script(script), do: :persistent_term.put({__MODULE__, :script}, script)
+
+  def requests, do: :persistent_term.get({__MODULE__, :requests}, [])
+
   @impl true
   def start(method, url, headers, body, _opts) do
-    :persistent_term.put(
-      {__MODULE__, :last_request},
-      %{method: method, url: url, headers: headers, body: body}
-    )
+    request = %{method: method, url: url, headers: headers, body: body}
+    :persistent_term.put({__MODULE__, :last_request}, request)
+    :persistent_term.put({__MODULE__, :requests}, requests() ++ [request])
 
     if String.ends_with?(url, "/models"), do: {:ok, :models}, else: {:ok, :stream}
   end
@@ -619,15 +1082,36 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
   end
 
   defp collect_stream_status(on_event, acc) do
-    case :persistent_term.get({__MODULE__, :stream_status}, nil) do
-      {status, body} -> {:error, HTTP.status_error(status, body)}
-      nil -> reduce_stream(on_event, acc)
+    case take_script_step() do
+      {:status, status, body} ->
+        {:error, HTTP.status_error(status, body)}
+
+      {:chunks, chunks} ->
+        reduce_stream(on_event, acc, chunks)
+
+      nil ->
+        case :persistent_term.get({__MODULE__, :stream_status}, nil) do
+          {status, body} ->
+            {:error, HTTP.status_error(status, body)}
+
+          nil ->
+            reduce_stream(on_event, acc, :persistent_term.get({__MODULE__, :stream}, []))
+        end
     end
   end
 
-  defp reduce_stream(on_event, acc) do
-    chunks = :persistent_term.get({__MODULE__, :stream}, [])
+  defp take_script_step do
+    case :persistent_term.get({__MODULE__, :script}, nil) do
+      [step | rest] ->
+        :persistent_term.put({__MODULE__, :script}, rest)
+        step
 
+      _other ->
+        nil
+    end
+  end
+
+  defp reduce_stream(on_event, acc, chunks) do
     result =
       Enum.reduce_while(chunks, {:ok, acc}, fn
         {:pause, test_pid, token}, {:ok, current} ->

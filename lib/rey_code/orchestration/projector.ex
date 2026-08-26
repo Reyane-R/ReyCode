@@ -1,6 +1,9 @@
 defmodule ReyCode.Orchestration.Projector do
   @moduledoc "Pure projection of room orchestration events."
 
+  # Activity-trail bound: newest agent notes win when the invocation exceeds it.
+  @max_invocation_notes 100
+
   import Kernel, except: [apply: 2]
 
   alias ReyCode.{Event, Failure}
@@ -749,6 +752,18 @@ defmodule ReyCode.Orchestration.Projector do
 
   defp apply_invocation_frame(invocation, "usage", data) do
     %{invocation | usage: data["usage"]}
+  end
+
+  defp apply_invocation_frame(invocation, "agent_note", data) do
+    note = data["note"]
+
+    if is_binary(note) and note != "" do
+      # Bounded activity trail: a chatty reasoner must not grow the
+      # projection without limit; the oldest lines fall off first.
+      %{invocation | notes: Enum.take(invocation.notes ++ [note], -@max_invocation_notes)}
+    else
+      invocation
+    end
   end
 
   defp apply_invocation_frame(invocation, kind, data)
