@@ -201,6 +201,29 @@ defmodule ReyCode.TUITest do
     assert palette_screen =~ "/new"
   end
 
+  test "/connect keeps long model candidates on one row in a wide terminal" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    providers = %{
+      omp: %{
+        id: :omp,
+        name: "OMP",
+        status: :configured,
+        models: ["openai-codex/gpt-5.4-mini"]
+      }
+    }
+
+    assert {:noreply, _focused} = push_providers(session, providers)
+
+    type(session, "/connect")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Tab")
+    screen = session |> Breeze.Test.render!() |> plain()
+
+    assert screen =~ "omp/openai-codex/gpt-5.4-mini"
+  end
+
   test "creates a task agent before selecting its provider and model" do
     %{engine: engine, room_id: room_id} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)

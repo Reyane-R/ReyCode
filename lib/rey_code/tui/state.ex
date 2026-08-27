@@ -220,7 +220,7 @@ defmodule ReyCode.TUI.State do
         command: candidate.label,
         description: candidate.detail,
         option_class: SlashPalette.option_class(index, assigns.slash.index),
-        command_class: SlashPalette.command_class(index, assigns.slash.index),
+        command_class: SlashPalette.command_class(candidate.kind, index, assigns.slash.index),
         description_class: SlashPalette.description_class(index, assigns.slash.index)
       }
     end)
