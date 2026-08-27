@@ -93,6 +93,15 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert result.assigns.drafts["room-1"] == "/agents"
   end
 
+  test "rows stay within the viewport and a compact menu cap" do
+    assigns = term().assigns
+
+    assert length(SlashPalette.rows(assigns, 40)) == 12
+    assert length(SlashPalette.rows(assigns, 20)) == 11
+    assert length(SlashPalette.rows(assigns, 10)) == 1
+    assert SlashPalette.style(80, 10, assigns).height == 2
+  end
+
   test "cancel/1 restores the original draft" do
     result = term(query: "/mode", restore_draft: "original") |> SlashPalette.cancel()
 

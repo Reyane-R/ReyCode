@@ -136,7 +136,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
     ~H"""
     <box
       :if={@modal == :slash}
-      class="bg-panel border-l border-r border-muted overflow-hidden layer-40"
+      class="bg-panel border-l border-r border-t border-muted overflow-hidden layer-40"
       style={@slash_style}
     >
       <box :for={row <- @slash_rows} class={row.option_class}>

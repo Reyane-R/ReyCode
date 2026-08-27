@@ -26,6 +26,9 @@ defmodule ReyCode.TUI.SlashPalette do
   }
 
   @commands Capabilities.commands()
+  @max_visible_row_count 12
+  @reserved_composer_row_count 8
+  @palette_border_row_count 1
 
   @doc "Completes the palette query when Tab is pressed while it is open."
   @spec focus(map()) :: map()
@@ -157,7 +160,7 @@ defmodule ReyCode.TUI.SlashPalette do
       left: 0,
       bottom: 6,
       width: terminal_width,
-      height: height(slash, terminal_height),
+      height: height(slash, terminal_height) + @palette_border_row_count,
       layer: 40
     }
   end
@@ -419,6 +422,10 @@ defmodule ReyCode.TUI.SlashPalette do
     |> max(1)
   end
 
-  defp row_limit(terminal_height),
-    do: terminal_height |> Kernel.-(8) |> max(20) |> min(24) |> max(1)
+  defp row_limit(terminal_height) do
+    terminal_height
+    |> Kernel.-(@reserved_composer_row_count + @palette_border_row_count)
+    |> min(@max_visible_row_count)
+    |> max(1)
+  end
 end
