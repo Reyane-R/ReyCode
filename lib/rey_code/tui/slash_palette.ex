@@ -9,14 +9,19 @@ defmodule ReyCode.TUI.SlashPalette do
   alias ReyCode.TUI.State
 
   alias ReyCode.TUI.{
+    Advisor,
+    AgentHub,
     AgentProfile,
     Cancellation,
+    Completion,
     Delegation,
     Help,
     ModelPicker,
+    SessionCommand,
     SessionPicker,
     Settings,
     ToolReview,
+    WorkCommand,
     Workspace
   }
 
@@ -36,6 +41,9 @@ defmodule ReyCode.TUI.SlashPalette do
     offset = if key == "ArrowUp", do: -1, else: 1
     {:noreply, move(term, offset)}
   end
+
+  def handle_input(key, term) when key in ["BackTab", "Shift+Tab"],
+    do: {:noreply, move(term, -1)}
 
   def handle_input("Enter", term), do: execute_selected(term)
 
@@ -62,8 +70,9 @@ defmodule ReyCode.TUI.SlashPalette do
 
   @doc "Handles prompt changes while the palette owns the composer."
   @spec handle_event(term(), map(), map()) :: {:noreply, map()} | :unhandled
-  def handle_event("prompt_changed", %{value: value}, term) do
-    {:noreply, set_query(term, value)}
+  def handle_event("prompt_changed", %{value: value} = payload, term) do
+    cursor = Map.get(payload, :cursor, Map.get(payload, "cursor", String.length(value)))
+    {:noreply, set_query(term, value, cursor)}
   end
 
   def handle_event(_event, _payload, _term), do: :unhandled
@@ -86,22 +95,24 @@ defmodule ReyCode.TUI.SlashPalette do
     |> Component.assign(
       drafts: Map.put(term.assigns.drafts, room_id, "/"),
       modal: :slash,
-      slash: %{query: "/", index: 0, restore_draft: original_draft},
+      slash: %{
+        query: "/",
+        cursor: 1,
+        index: 0,
+        accepted_id: nil,
+        restore_draft: original_draft
+      },
       notice: nil
     )
     |> View.focus("prompt")
   end
 
-  @doc "Returns commands matching the query: exact, prefix, substring, then subsequence."
+  @doc "Returns static command matches for capability and pure ranking tests."
   @spec matches(String.t()) :: [map()]
   def matches(query) do
-    query = String.downcase(query)
-
-    @commands
-    |> Enum.map(&{&1, fuzzy_rank(&1.command, query)})
-    |> Enum.reject(fn {_command, rank} -> is_nil(rank) end)
-    |> Enum.sort_by(fn {_command, rank} -> rank end)
-    |> Enum.map(&elem(&1, 0))
+    Completion.new(draft: query, commands: @commands)
+    |> Completion.candidates()
+    |> Enum.map(& &1.payload)
   end
 
   @doc "Starts slash completion for a slash-prefixed prompt value."
@@ -110,22 +121,32 @@ defmodule ReyCode.TUI.SlashPalette do
     Component.assign(term,
       drafts: Map.put(term.assigns.drafts, term.assigns.selected_room_id, value),
       modal: :slash,
-      slash: %{query: value, index: 0, restore_draft: nil}
+      slash: %{
+        query: value,
+        cursor: String.length(value),
+        index: 0,
+        accepted_id: nil,
+        restore_draft: nil
+      }
     )
   end
 
-  @doc "Returns the visible command rows around the current selection."
-  @spec rows(map() | nil, pos_integer()) :: [{map(), non_neg_integer()}]
-  def rows(nil, _terminal_height), do: []
+  @doc "Returns visible contextual completion rows around the selection."
+  @spec rows(map(), pos_integer()) :: [{Completion.Candidate.t(), non_neg_integer()}]
+  def rows(%{slash: nil}, _terminal_height), do: []
 
-  def rows(%{query: query, index: index}, terminal_height) do
-    command_rows = matches(query) |> Enum.with_index()
+  def rows(assigns, terminal_height) do
+    completion_rows = assigns |> candidates() |> Enum.with_index()
     limit = row_limit(terminal_height)
+    index = assigns.slash.index
 
     start =
-      index |> Kernel.-(div(limit, 2)) |> max(0) |> min(max(length(command_rows) - limit, 0))
+      index
+      |> Kernel.-(div(limit, 2))
+      |> max(0)
+      |> min(max(length(completion_rows) - limit, 0))
 
-    Enum.slice(command_rows, start, limit)
+    Enum.slice(completion_rows, start, limit)
   end
 
   @doc "Returns the fixed-position style for the command palette."
@@ -153,33 +174,43 @@ defmodule ReyCode.TUI.SlashPalette do
   def description_class(index, index), do: "text-bg"
   def description_class(_index, _selected), do: "text-muted"
 
-  @doc "Moves the selected command by an offset, wrapping at either end."
+  @doc "Moves the selected candidate by an offset, wrapping at either end."
   @spec move(map(), integer()) :: map()
   def move(%{assigns: %{slash: slash}} = term, offset) do
-    count = length(matches(slash.query))
-
-    if count == 0 do
-      term
-    else
-      Component.assign(term, slash: %{slash | index: Integer.mod(slash.index + offset, count)})
-    end
+    count = length(candidates(term.assigns))
+    index = Completion.move(slash.index, count, offset)
+    Component.assign(term, slash: %{slash | index: index})
   end
 
-  @doc "Completes the palette query with the first matching command."
+  @doc "Accepts the currently highlighted candidate without executing it."
   @spec complete(map()) :: map()
   def complete(%{assigns: %{slash: slash}} = term) do
-    case matches(slash.query) do
-      [first | _] -> set_query(term, first.command)
-      [] -> term
+    context = completion_context(term.assigns)
+
+    case Enum.at(Completion.candidates(context), slash.index) do
+      nil ->
+        term
+
+      candidate ->
+        {:ok, query, cursor, accepted_id} = Completion.accept(context, candidate)
+        set_query(term, query, cursor, accepted_id)
     end
   end
 
   @doc "Updates the command query and current session draft."
-  @spec set_query(map(), String.t()) :: map()
-  def set_query(%{assigns: %{slash: slash}} = term, query) do
+  @spec set_query(map(), String.t(), non_neg_integer() | nil, String.t() | nil) :: map()
+  def set_query(term, query, cursor \\ nil, accepted_id \\ nil)
+
+  def set_query(%{assigns: %{slash: slash}} = term, query, cursor, accepted_id) do
     Component.assign(term,
       drafts: Map.put(term.assigns.drafts, term.assigns.selected_room_id, query),
-      slash: %{slash | query: query, index: 0}
+      slash: %{
+        slash
+        | query: query,
+          cursor: cursor || String.length(query),
+          index: 0,
+          accepted_id: accepted_id
+      }
     )
   end
 
@@ -217,69 +248,166 @@ defmodule ReyCode.TUI.SlashPalette do
     Component.assign(term, drafts: drafts)
   end
 
-  @doc """
-  Runs a command typed exactly into the prompt, or flags it as unknown.
-  """
+  @doc "Parses, revalidates, and dispatches a typed command."
   @spec run_typed(map(), String.t()) :: {:noreply, map()}
   def run_typed(term, command) do
-    case command(command) do
-      nil ->
-        {:noreply,
-         Component.assign(term, notice: "Unknown command. Type / to see available commands.")}
+    context = completion_context(term.assigns, command, String.length(command))
 
-      entry ->
-        term |> clear_draft() |> run_action(entry.action)
+    case Completion.parse(context) do
+      {:ok, parsed} -> run_parsed(term, parsed)
+      {:error, reason} -> {:noreply, Component.assign(term, notice: command_notice(reason))}
     end
   end
 
-  @doc "Runs the currently highlighted palette match."
+  @doc "Accepts and dispatches the currently highlighted candidate."
   @spec execute_selected(map()) :: {:noreply, map()}
   def execute_selected(%{assigns: %{slash: slash}} = term) do
-    term = clear_draft(term)
+    context = completion_context(term.assigns)
 
-    case Enum.at(matches(slash.query), slash.index) do
-      nil -> {:noreply, close(term, "Unknown command: #{slash.query}")}
-      match -> run_action(term, match.action)
+    case Enum.at(Completion.candidates(context), slash.index) do
+      nil ->
+        {:noreply, term |> clear_draft() |> close("Unknown command: #{slash.query}")}
+
+      %{kind: :command, suffix: suffix} = candidate when suffix != "" ->
+        if slash.query == candidate.insertion,
+          do: accept_and_dispatch(term, context, candidate),
+          else: accept_candidate(term, context, candidate)
+
+      candidate ->
+        accept_and_dispatch(term, context, candidate)
     end
   end
 
-  defp run_action(term, :new_session),
+  defp accept_candidate(term, context, candidate) do
+    {:ok, query, cursor, accepted_id} = Completion.accept(context, candidate)
+    {:noreply, set_query(term, query, cursor, accepted_id)}
+  end
+
+  defp accept_and_dispatch(term, context, candidate) do
+    {:ok, query, cursor, accepted_id} = Completion.accept(context, candidate)
+    term = set_query(term, query, cursor, accepted_id)
+
+    case Completion.parse(completion_context(term.assigns)) do
+      {:ok, parsed} -> run_parsed(term, parsed)
+      {:error, reason} -> {:noreply, Component.assign(term, notice: command_notice(reason))}
+    end
+  end
+
+  defp run_parsed(term, %{command: command} = parsed)
+       when command in ["/export", "/fork", "/rewind"] do
+    term |> clear_draft() |> SessionCommand.run(command, parsed.argument)
+  end
+
+  defp run_parsed(term, %{command: command} = parsed)
+       when command in ["/steer", "/unqueue"] do
+    term |> clear_draft() |> WorkCommand.run(command, parsed.argument)
+  end
+
+  defp run_parsed(term, parsed) do
+    term
+    |> clear_draft()
+    |> run_action(parsed.action, parsed.argument)
+  end
+
+  defp run_action(term, :new_session, nil),
     do: {:noreply, term |> State.start_session() |> close()}
 
-  defp run_action(term, :agent_profile), do: {:noreply, AgentProfile.open(term)}
-  defp run_action(term, :delegation), do: {:noreply, Delegation.open(term)}
-  defp run_action(term, :cancel), do: {:noreply, Cancellation.open(term)}
+  defp run_action(term, :agent_profile, nil), do: {:noreply, AgentProfile.open(term)}
+  defp run_action(term, :delegation, nil), do: {:noreply, Delegation.open(term)}
 
-  defp run_action(term, :home),
+  defp run_action(term, :delegation, participant_id),
+    do: {:noreply, Delegation.open_for(term, participant_id)}
+
+  defp run_action(term, :cancel, nil), do: {:noreply, Cancellation.open(term)}
+
+  defp run_action(term, :home, nil),
     do: {:noreply, term |> close() |> Component.assign(home: true)}
 
-  defp run_action(term, :workspace), do: {:noreply, Workspace.open(term)}
+  defp run_action(term, :workspace, nil), do: {:noreply, Workspace.open(term)}
+  defp run_action(term, :workspace, path), do: {:noreply, Workspace.open(term, path)}
 
-  defp run_action(term, :session_picker), do: {:noreply, SessionPicker.open(term)}
-  defp run_action(term, :model_picker), do: {:noreply, ModelPicker.open(term)}
-  defp run_action(term, :settings), do: {:noreply, term |> Settings.open() |> clear()}
-  defp run_action(term, :theme), do: ReyCode.TUI.cycle_theme(nil, close(term))
-  defp run_action(term, :quit), do: ReyCode.TUI.quit(nil, clear(term))
-  defp run_action(term, :tool_review), do: {:noreply, ToolReview.open(term)}
+  defp run_action(term, :session_picker, nil), do: {:noreply, SessionPicker.open(term)}
 
-  defp run_action(term, :help), do: {:noreply, term |> Help.open() |> clear()}
+  defp run_action(term, :session_picker, session_id) do
+    next = term |> close() |> State.select_session(session_id) |> View.focus("prompt")
+    {:noreply, next}
+  end
 
-  defp fuzzy_rank(command, query) do
-    cond do
-      command == query -> 0
-      String.starts_with?(command, query) -> 1
-      String.contains?(command, query) -> 2
-      subsequence?(String.graphemes(command), String.graphemes(query)) -> 3
-      true -> nil
+  defp run_action(term, :model_picker, nil), do: {:noreply, ModelPicker.open(term)}
+
+  defp run_action(term, :model_picker, %{provider: provider, model: model}),
+    do: ModelPicker.select(term, provider, model)
+
+  defp run_action(term, :settings, nil), do: {:noreply, term |> Settings.open() |> clear()}
+
+  defp run_action(term, :settings, %{provider: provider, model: model}),
+    do: {:noreply, Settings.open_at(term, provider, model)}
+
+  defp run_action(term, :theme, nil), do: ReyCode.TUI.cycle_theme(nil, close(term))
+  defp run_action(term, :quit, nil), do: ReyCode.TUI.quit(nil, clear(term))
+  defp run_action(term, :tool_review, nil), do: {:noreply, ToolReview.open(term)}
+  defp run_action(term, :help, nil), do: {:noreply, term |> Help.open() |> clear()}
+  defp run_action(term, :agent_hub, nil), do: {:noreply, AgentHub.open(term)}
+  defp run_action(term, :advisor, brief), do: Advisor.run(term, brief)
+
+  defp candidates(assigns), do: assigns |> completion_context() |> Completion.candidates()
+
+  defp completion_context(assigns, draft \\ nil, cursor \\ nil) do
+    slash = Map.get(assigns, :slash)
+    draft = draft || slash_query(slash)
+    cursor = cursor || slash_cursor(slash, draft)
+    {participants, workspace} = room_completion_context(assigns)
+    sessions = completion_sessions(Map.get(assigns, :projection))
+
+    Completion.new(
+      draft: draft,
+      cursor: cursor,
+      commands: @commands,
+      participants: participants,
+      providers: Map.get(assigns, :providers, %{}),
+      sessions: sessions,
+      workspace: workspace
+    )
+  end
+
+  defp slash_query(nil), do: ""
+  defp slash_query(slash), do: slash.query
+  defp slash_cursor(nil, draft), do: String.length(draft)
+  defp slash_cursor(slash, draft), do: Map.get(slash, :cursor, String.length(draft))
+
+  defp room_completion_context(%{projection: projection, selected_room_id: room_id}) do
+    case Map.get(projection.rooms, room_id) do
+      nil -> {[], nil}
+      room -> {room.participants, room.workspace}
     end
   end
 
-  defp subsequence?(_command, []), do: true
-  defp subsequence?([], _query), do: false
-  defp subsequence?([char | rest], [char | query]), do: subsequence?(rest, query)
-  defp subsequence?([_other | rest], query), do: subsequence?(rest, query)
+  defp room_completion_context(_assigns), do: {[], nil}
+  defp completion_sessions(nil), do: []
+
+  defp completion_sessions(projection) do
+    projection.room_order
+    |> Enum.reverse()
+    |> Enum.map(&projection.rooms[&1])
+  end
+
+  defp command_notice(:unknown_command), do: "Unknown command. Type / to see available commands."
+  defp command_notice(:missing_argument), do: "This command requires an argument"
+  defp command_notice(:unexpected_argument), do: "This command accepts one argument"
+  defp command_notice(:stale_argument), do: "The selected argument is no longer available"
+  defp command_notice(:malformed_command), do: "Malformed command"
+  defp command_notice(_reason), do: "Could not run command"
 
   defp height(nil, _terminal_height), do: 1
+  defp height(%{slash: nil}, _terminal_height), do: 1
+
+  defp height(%{slash: _slash} = assigns, terminal_height) do
+    assigns
+    |> candidates()
+    |> length()
+    |> min(row_limit(terminal_height))
+    |> max(1)
+  end
 
   defp height(%{query: query}, terminal_height) do
     query
@@ -289,5 +417,6 @@ defmodule ReyCode.TUI.SlashPalette do
     |> max(1)
   end
 
-  defp row_limit(terminal_height), do: terminal_height |> Kernel.-(12) |> min(10) |> max(1)
+  defp row_limit(terminal_height),
+    do: terminal_height |> Kernel.-(8) |> max(20) |> min(24) |> max(1)
 end

@@ -2,7 +2,17 @@ defmodule ReyCode.Orchestration.Invocation do
   @moduledoc "A durable provider execution in the orchestration projection."
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.{Participant, ProviderRound, ToolAsk, ToolRun}
+  alias ReyCode.ProjectInstructions.Capture
+
+  alias ReyCode.Orchestration.{
+    InvocationExecution,
+    Participant,
+    ProviderRound,
+    Steering,
+    ToolAsk,
+    ToolRun
+  }
+
   alias ReyCode.Orchestration.Squad.Seat
 
   @fields [
@@ -18,12 +28,15 @@ defmodule ReyCode.Orchestration.Invocation do
     :dependencies,
     :label,
     :system_prompt,
+    :project_instructions,
+    :execution_context,
     :status,
     :attempt,
     :usage,
     :tool_events,
     :notes,
     :rounds,
+    :pending_steering,
     :tool_runs,
     :tool_run_order,
     :pending_tool_review,
@@ -47,12 +60,15 @@ defmodule ReyCode.Orchestration.Invocation do
             dependencies: [],
             label: nil,
             system_prompt: nil,
+            project_instructions: nil,
+            execution_context: %InvocationExecution{},
             status: nil,
             attempt: 1,
             usage: nil,
             tool_events: [],
             notes: [],
             rounds: [],
+            pending_steering: [],
             tool_runs: %{},
             tool_run_order: [],
             pending_tool_review: nil,
@@ -76,6 +92,8 @@ defmodule ReyCode.Orchestration.Invocation do
           dependencies: [String.t()],
           label: String.t() | nil,
           system_prompt: String.t() | nil,
+          project_instructions: Capture.t() | nil,
+          execution_context: InvocationExecution.t(),
           status: atom() | nil,
           attempt: pos_integer(),
           usage: map() | nil,
@@ -84,6 +102,7 @@ defmodule ReyCode.Orchestration.Invocation do
           rounds: [ProviderRound.t()],
           tool_runs: %{optional(String.t()) => ToolRun.t()},
           tool_run_order: [String.t()],
+          pending_steering: [Steering.t()],
           pending_tool_review: ToolAsk.t() | nil,
           completion_metadata: map() | nil,
           last_frame_sequence: non_neg_integer(),
@@ -96,14 +115,20 @@ defmodule ReyCode.Orchestration.Invocation do
   @doc "Converts a decoded or legacy invocation map into the current record."
   @spec from_map(t() | map()) :: t()
   def from_map(invocation) when is_map(invocation) do
+    capture = instruction_capture(invocation)
+    execution_context = execution_context(invocation)
+
     invocation =
       invocation
+      |> Map.put(:project_instructions, capture)
+      |> Map.put(:execution_context, execution_context)
       |> Map.put_new(:phase_index, Map.get(invocation, :stage))
       |> then(&struct!(__MODULE__, Map.take(&1, @fields)))
 
     %{
       invocation
       | participant: participant(invocation.participant),
+        pending_steering: Enum.map(invocation.pending_steering || [], &Steering.from_map/1),
         rounds: Enum.map(invocation.rounds || [], &ProviderRound.from_map/1),
         tool_runs:
           Map.new(invocation.tool_runs || %{}, fn {id, run} ->
@@ -113,6 +138,48 @@ defmodule ReyCode.Orchestration.Invocation do
         error: optional_failure(invocation.error)
     }
   end
+
+  defp instruction_capture(invocation) do
+    case fetch(invocation, :project_instructions) do
+      nil ->
+        nil
+
+      %Capture{} = capture ->
+        capture
+
+      content when is_binary(content) ->
+        %Capture{
+          content: content,
+          digest: fetch(invocation, :project_instruction_digest),
+          sources: fetch(invocation, :project_instruction_sources, [])
+        }
+
+      capture when is_map(capture) ->
+        %Capture{
+          content: fetch(capture, :content, ""),
+          digest: fetch(capture, :digest),
+          sources: fetch(capture, :sources, [])
+        }
+    end
+  end
+
+  defp execution_context(invocation) do
+    case fetch(invocation, :execution_context) do
+      nil ->
+        %InvocationExecution{
+          workspace: fetch(invocation, :workspace),
+          workspace_roots: fetch(invocation, :workspace_roots, []),
+          output_schema: fetch(invocation, :output_schema),
+          isolation: fetch(invocation, :isolation)
+        }
+
+      context ->
+        InvocationExecution.from_map(context)
+    end
+  end
+
+  defp fetch(map, key, default \\ nil),
+    do: Map.get(map, key, Map.get(map, Atom.to_string(key), default))
 
   defp participant(nil), do: nil
   defp participant(%Participant{} = participant), do: participant

@@ -22,6 +22,31 @@ not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
 
+### D29 — OMP interaction depth enters through durable ReyCode seams (Executed — 2026-08-27)
+
+ReyCode adopts the remaining high-leverage OMP patterns without pursuing
+tool-count or plugin parity:
+
+- ContextSummary and ContextBoundary events bound provider context while the
+  complete transcript remains immutable.
+- ProjectInstructions are bounded and frozen per Invocation; project skills
+  require explicit `.reycode/skills/enabled` selection.
+- `read` publishes a source hash and `edit` atomically applies a bounded patch
+  batch only to that snapshot.
+- LSP read operations execute directly; mutating rename and background-process
+  lifecycle changes use durable owner approval.
+- FollowUps are distinguishable queued Turns; Steering is consumed by exactly
+  one ProviderRound using IDs frozen into the request.
+- DelegationContracts optionally validate JSON output and isolate work in a git
+  worktree whose patch applies only after successful child validation.
+- SessionFork records its parent and sequence without deleting or rewriting
+  source Events; deterministic Markdown/HTML exports are Projection reads.
+
+Every growing surface has explicit byte/count/time bounds. External process and
+worktree failures return tagged errors. OMP extensions, marketplace packages,
+desktop control, recursive delegation, and cloud collaboration remain outside
+the default harness.
+
 ### D28 — Contextual completion and truthful work feedback are presentation-only (Direction — 2026-08-26)
 
 ReyCode adopts two OMP interaction patterns next: contextual composer
@@ -80,11 +105,11 @@ Truthfulness is the governing UX rule:
   stable terminal presentation;
 - no percentage or time-remaining estimate is fabricated.
 
-The two issues are independent and may land in either order. Both reuse current
-registries and durable records rather than introducing parallel concepts. File
-mentions, follow-up queue controls, activity visibility toggles, external draft
-editing, session forking/rewind, and OMP-style extension discovery remain
-deferred; they need separate evidence and scope.
+The two original issues are independent and reuse current registries and
+durable records rather than introducing parallel concepts. File mentions,
+follow-up controls, and SessionFork/rewind subsequently shipped under D29.
+Activity visibility toggles, external draft editing, and OMP-style extension
+discovery remain deferred.
 
 Acceptance: #78 owns contextual completion, structured argument
 parsing/revalidation/dispatch, and pure/property/Breeze/event-invariance tests;

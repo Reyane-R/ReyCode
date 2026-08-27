@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.InvocationRequest do
   @moduledoc "Builds the provider request for one durable invocation round."
 
   alias ReyCode.Orchestration.Context
-  alias ReyCode.Orchestration.{Invocation, Projection}
+  alias ReyCode.Orchestration.{Invocation, Projection, Steering}
   alias ReyCode.Provider.Request
 
   @type request_policy :: %{
@@ -21,9 +21,9 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       room_id: room.id,
       mode: turn.mode,
       participant: invocation.participant,
-      system_prompt: invocation.system_prompt,
+      system_prompt: system_prompt(invocation),
       messages: Context.messages(room, turn, invocation, projection),
-      workspace: room.workspace,
+      workspace: invocation.execution_context.workspace || room.workspace,
       resume_from: invocation.last_frame_sequence,
       round_index: length(invocation.rounds),
       attempt: invocation.attempt,
@@ -33,7 +33,24 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       logical_work_id: invocation.logical_work_id,
       agent_delay_ms: request_policy.agent_delay_ms,
       simulator_opts: request_policy.simulator_opts,
-      dependencies: invocation.dependencies
+      dependencies: invocation.dependencies,
+      steering: Enum.map(invocation.pending_steering, &Steering.to_wire/1)
     }
+  end
+
+  defp system_prompt(%Invocation{project_instructions: nil} = invocation),
+    do: invocation.system_prompt
+
+  defp system_prompt(%Invocation{project_instructions: %{content: ""}} = invocation),
+    do: invocation.system_prompt
+
+  defp system_prompt(invocation) do
+    [
+      invocation.system_prompt,
+      "Follow these frozen project instructions for this Invocation:",
+      invocation.project_instructions.content
+    ]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join("\n\n")
   end
 end

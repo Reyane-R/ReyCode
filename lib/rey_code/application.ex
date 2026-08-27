@@ -18,6 +18,10 @@ defmodule ReyCode.Application do
       {ReyCode.EventStore, [config: runtime_config.persistence] ++ event_store_options},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
       {ReyCode.Provider.Catalog, [config: runtime_config]},
+      ReyCode.ProcessHub,
+      ReyCode.DebuggerHub,
+      ReyCode.EvalHub,
+      ReyCode.Memory.Store,
       {ReyCode.Orchestration.Supervisor, config: runtime_config}
     ]
 

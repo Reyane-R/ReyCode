@@ -296,11 +296,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
         "function" => %{
           "name" => name,
           "description" => wire_tool_description(name),
-          "parameters" => %{
-            "type" => "object",
-            "additionalProperties" => true,
-            "properties" => tool_parameters(name)
-          }
+          "parameters" => tool_schema(name)
         }
       }
     end)
@@ -312,16 +308,203 @@ defmodule ReyCode.Provider.OpenAICompatible do
       "Arguments: {\"agent\": <exact task participant name>, \"brief\": <instruction>}"
   end
 
-  defp wire_tool_description(name), do: "ReyCode workspace tool #{name}"
+  defp wire_tool_description("read"),
+    do: "Read a bounded UTF-8 file window and return its source_hash when editable"
 
-  defp tool_parameters("spawn_task") do
-    %{
-      "agent" => %{"type" => "string", "description" => "Exact task participant name"},
-      "brief" => %{"type" => "string", "description" => "Self-contained task instruction"}
-    }
+  defp wire_tool_description("edit") do
+    "Atomically apply unique replacement patches to the exact source_hash returned by read"
   end
 
-  defp tool_parameters(_name), do: %{}
+  defp wire_tool_description("lsp") do
+    "Query a configured language server; rename is owner-approved before workspace edits apply"
+  end
+
+  defp wire_tool_description("process") do
+    "Start, inspect, stop, or restart a bounded named process owned by ReyCode"
+  end
+
+  defp wire_tool_description("git") do
+    "Inspect Git status, diffs, branches, conflicts, review changes, commit staged changes, or resolve one conflict"
+  end
+
+  defp wire_tool_description("debug"),
+    do:
+      "Control a bounded Debug Adapter Protocol session for breakpoints, stack, variables, and evaluation"
+
+  defp wire_tool_description("eval"),
+    do:
+      "Run bounded Python or JavaScript code in a persistent kernel; host execution requires approval"
+
+  defp wire_tool_description(name), do: "ReyCode workspace tool #{name}"
+
+  defp tool_schema("spawn_task") do
+    object_schema(
+      %{
+        "agent" => %{"type" => "string", "description" => "Exact task participant name"},
+        "brief" => %{"type" => "string", "description" => "Self-contained task instruction"},
+        "output_schema" => %{
+          "type" => "object",
+          "description" => "Optional JSON Schema for the child report"
+        },
+        "isolate" => %{
+          "type" => "boolean",
+          "description" => "Run in a temporary git worktree and apply its patch on success"
+        }
+      },
+      ["agent", "brief"]
+    )
+  end
+
+  defp tool_schema("edit") do
+    object_schema(
+      %{
+        "path" => %{"type" => "string"},
+        "source_hash" => %{
+          "type" => "string",
+          "description" => "Lowercase SHA-256 returned by read"
+        },
+        "patches" => %{
+          "type" => "array",
+          "minItems" => 1,
+          "items" =>
+            object_schema(
+              %{
+                "old_string" => %{"type" => "string", "minLength" => 1},
+                "new_string" => %{"type" => "string"}
+              },
+              ["old_string", "new_string"]
+            )
+        }
+      },
+      ["path", "source_hash", "patches"]
+    )
+  end
+
+  defp tool_schema("lsp") do
+    object_schema(
+      %{
+        "action" => %{
+          "type" => "string",
+          "enum" =>
+            ~w(diagnostics definition references hover symbols implementation code_actions rename)
+        },
+        "file" => %{"type" => "string"},
+        "line" => %{"type" => "integer", "minimum" => 1},
+        "character" => %{"type" => "integer", "minimum" => 0},
+        "new_name" => %{"type" => "string", "description" => "Required for rename"}
+      },
+      ["action", "file"]
+    )
+  end
+
+  defp tool_schema("process") do
+    object_schema(
+      %{
+        "action" => %{"type" => "string", "enum" => ~w(start logs list wait stop restart)},
+        "name" => %{"type" => "string"},
+        "command" => %{
+          "type" => "array",
+          "items" => %{"type" => "string"},
+          "minItems" => 1,
+          "description" => "Executable followed by argv; required for start"
+        },
+        "pattern" => %{"type" => "string", "description" => "Required for wait"},
+        "timeout_ms" => %{"type" => "integer", "minimum" => 1}
+      },
+      ["action"]
+    )
+  end
+
+  defp tool_schema("git") do
+    object_schema(
+      %{
+        "action" => %{
+          "type" => "string",
+          "enum" => ~w(status diff log branches conflicts review commit resolve_conflict)
+        },
+        "staged" => %{"type" => "boolean"},
+        "count" => %{"type" => "integer", "minimum" => 1},
+        "message" => %{"type" => "string"},
+        "path" => %{"type" => "string"},
+        "choice" => %{"type" => "string", "enum" => ~w(ours theirs base)}
+      },
+      ["action"]
+    )
+  end
+
+  defp tool_schema("debug") do
+    object_schema(
+      %{
+        "action" => %{
+          "type" => "string",
+          "enum" =>
+            ~w(start launch attach set_breakpoints threads stack_trace scopes variables evaluate continue next step_in step_out disconnect)
+        },
+        "name" => %{"type" => "string"},
+        "command" => %{"type" => "array", "items" => %{"type" => "string"}},
+        "program" => %{"type" => "string"},
+        "source" => %{"type" => "string"},
+        "lines" => %{"type" => "array", "items" => %{"type" => "integer"}},
+        "expression" => %{"type" => "string"}
+      },
+      ["action"]
+    )
+  end
+
+  defp tool_schema("eval") do
+    object_schema(
+      %{
+        "action" => %{"type" => "string", "enum" => ~w(start run stop list)},
+        "name" => %{"type" => "string"},
+        "language" => %{"type" => "string", "enum" => ~w(python javascript js)},
+        "code" => %{"type" => "string", "maxLength" => 128_000}
+      },
+      ["action"]
+    )
+  end
+
+  defp tool_schema("memory") do
+    object_schema(
+      %{
+        "action" => %{"type" => "string", "enum" => ~w(retain recall learn forget reflect)},
+        "key" => %{"type" => "string"},
+        "value" => %{"type" => "string"},
+        "query" => %{"type" => "string"},
+        "tags" => %{"type" => "array", "items" => %{"type" => "string"}}
+      },
+      ["action"]
+    )
+  end
+
+  defp tool_schema("web_search") do
+    object_schema(
+      %{
+        "query" => %{"type" => "string", "minLength" => 1}
+      },
+      ["query"]
+    )
+  end
+
+  defp tool_schema("read_url") do
+    object_schema(
+      %{
+        "url" => %{"type" => "string", "format" => "uri"}
+      },
+      ["url"]
+    )
+  end
+
+  defp tool_schema(_name),
+    do: %{"type" => "object", "additionalProperties" => true, "properties" => %{}}
+
+  defp object_schema(properties, required) do
+    %{
+      "type" => "object",
+      "additionalProperties" => false,
+      "properties" => properties,
+      "required" => required
+    }
+  end
 
   defp fetch_key(%Profile{require_key: false}), do: {:ok, nil}
 

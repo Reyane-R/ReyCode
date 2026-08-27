@@ -40,6 +40,23 @@ defmodule ReyCode.TUI.SettingsTest do
     assert result.assigns.settings.query == ""
   end
 
+  test "open_at/3 revalidates and preselects one Primary model" do
+    result = Settings.open_at(term(), :opencode, "openai/gpt")
+
+    assert result.assigns.modal == :settings
+    assert result.assigns.settings.step == :models
+    assert result.assigns.settings.participant_ids == ["builder"]
+    assert result.assigns.settings.provider == :opencode
+    assert result.assigns.settings.index == 1
+  end
+
+  test "open_at/3 rejects a stale model into the regular settings flow" do
+    result = Settings.open_at(term(), :opencode, "missing")
+
+    assert result.assigns.settings.step == :participants
+    assert result.assigns.notice == "The selected model is no longer available"
+  end
+
   test "models/2 filters case-insensitively" do
     settings = %{Settings.initial() | provider: :opencode, query: "CLAUDE"}
 
@@ -81,8 +98,8 @@ defmodule ReyCode.TUI.SettingsTest do
   defp term(overrides \\ []) do
     room = %{
       participants: [
-        %{id: "builder", name: "Builder"},
-        %{id: "critic", name: "Critic"}
+        %{id: "builder", name: "Builder", kind: :primary},
+        %{id: "critic", name: "Critic", kind: :task}
       ]
     }
 

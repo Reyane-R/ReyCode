@@ -65,6 +65,55 @@ defmodule ReyCode.Orchestration.Engine.Rooms do
     end
   end
 
+  @doc "Forks one durable Session at an immutable Projection sequence."
+  @spec fork_session(map(), term(), term()) :: response()
+  def fork_session(state, source_room_id, through_sequence) do
+    source = state.projection.rooms[source_room_id]
+
+    with :ok <- session_source(source),
+         :ok <- fork_sequence(through_sequence, state.projection.sequence) do
+      session_id = Identity.new_id("session")
+      title = source.title <> " (fork)"
+      slug = Identity.unique_slug(Identity.slugify(title), state.projection)
+      participants = Enum.reject(source.participants, &(&1.kind == :legacy))
+
+      inherited_message_ids =
+        Enum.filter(source.message_order, fn message_id ->
+          message = state.projection.messages[message_id]
+
+          (message && message.status == :completed) and
+            message.created_sequence <= through_sequence
+        end)
+
+      entries = [
+        EventEntries.room_created(
+          session_id,
+          slug,
+          title,
+          source.workspace,
+          participants
+        ),
+        EventEntries.session_forked(
+          session_id,
+          source,
+          through_sequence,
+          inherited_message_ids
+        )
+      ]
+
+      next = Persistence.append_and_apply!(state, entries)
+      {:reply, {:ok, session_id}, next}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp fork_sequence(sequence, maximum)
+       when is_integer(sequence) and sequence >= 0 and sequence <= maximum,
+       do: :ok
+
+  defp fork_sequence(_sequence, _maximum), do: {:error, :invalid_fork_sequence}
+
   defp session_source(nil), do: {:error, :session_not_found}
   defp session_source(_source), do: :ok
 

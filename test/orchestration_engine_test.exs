@@ -21,6 +21,82 @@ defmodule ReyCode.Orchestration.EngineTest do
     assert snapshot.invocations[invocation_id].participant.kind == :primary
   end
 
+  test "forks a Session at one sequence without mutating its parent transcript" do
+    %{engine: engine} = start_isolated_engine([])
+    source_room_id = default_room_id(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(source_room_id, "Keep this request", :direct, engine)
+
+    _turn = wait_until_terminal_on(engine, turn_id)
+    source_before = Engine.snapshot(engine)
+    source = source_before.rooms[source_room_id]
+
+    user_sequence =
+      source.message_order
+      |> Enum.map(&source_before.messages[&1])
+      |> Enum.find(&(&1.role == :user))
+      |> Map.fetch!(:created_sequence)
+
+    assert {:ok, fork_id} = Engine.fork_session(source_room_id, user_sequence, engine)
+    snapshot = Engine.snapshot(engine)
+    fork = snapshot.rooms[fork_id]
+
+    assert fork.parent_room_id == source_room_id
+    assert fork.forked_from_sequence == user_sequence
+    assert Enum.map(fork.message_order, &snapshot.messages[&1].body) == ["Keep this request"]
+    assert snapshot.rooms[source_room_id].message_order == source.message_order
+
+    assert Enum.map(fork.participants, &{&1.name, &1.provider, &1.model}) ==
+             Enum.map(source.participants, &{&1.name, &1.provider, &1.model})
+  end
+
+  test "steering is durably consumed by a provider round" do
+    %{engine: engine} = start_isolated_engine(agent_delay_ms: 200)
+    room_id = default_room_id(engine)
+    assert {:ok, turn_id} = Engine.post_message(room_id, "Draft the change", :direct, engine)
+
+    assert Wait.projection(
+             engine,
+             fn projection ->
+               turn = projection.turns[turn_id]
+               turn && turn.status == :running && turn.invocation_order != []
+             end,
+             1_000
+           )
+
+    assert :ok = Engine.steer_turn(turn_id, "Use the smaller implementation", engine)
+    turn = wait_until_terminal_on(engine, turn_id)
+    snapshot = Engine.snapshot(engine)
+    invocation = snapshot.invocations[hd(turn.invocation_order)]
+
+    assert invocation.pending_steering == []
+
+    assert Enum.any?(invocation.rounds, fn round ->
+             Enum.any?(round.steering, &(&1.body == "Use the smaller implementation"))
+           end)
+  end
+
+  test "messages submitted during active work are cancellable FollowUps" do
+    %{engine: engine} = start_isolated_engine(agent_delay_ms: 500)
+    room_id = default_room_id(engine)
+    assert {:ok, active_turn_id} = Engine.post_message(room_id, "First", :direct, engine)
+
+    assert Wait.projection(
+             engine,
+             fn projection -> projection.turns[active_turn_id].status == :running end,
+             1_000
+           )
+
+    assert {:ok, follow_up_id} = Engine.post_message(room_id, "Second", :direct, engine)
+    assert Engine.snapshot(engine).turns[follow_up_id].input_kind == :follow_up
+    assert :ok = Engine.cancel_latest_follow_up(room_id, engine)
+
+    follow_up = Engine.snapshot(engine).turns[follow_up_id]
+    assert follow_up.status == :terminal
+    assert follow_up.outcome == :cancelled
+  end
+
   test "adds and persists a primary assistant when restoring a legacy room" do
     path =
       Path.join(
@@ -546,13 +622,10 @@ defmodule ReyCode.Orchestration.EngineTest do
   defp drain_turn(engine, turn_id),
     do: assert(wait_until_terminal_on(engine, turn_id).outcome == :completed)
 
-  defp default_room_id(engine \\ Engine) do
+  defp default_room_id(engine) do
     snapshot = Engine.snapshot(engine)
     Enum.find(snapshot.room_order, &(snapshot.rooms[&1].slug == "reycode"))
   end
-
-  defp wait_until_terminal(turn_id, attempts \\ 300) when is_integer(attempts),
-    do: Wait.terminal_turn(Engine, turn_id, attempts * 10)
 
   defp wait_until_terminal_on(engine, turn_id, timeout \\ 3_000),
     do: Wait.terminal_turn(engine, turn_id, timeout)

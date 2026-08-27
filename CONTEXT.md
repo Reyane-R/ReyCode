@@ -8,6 +8,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Session** — Durable user-visible conversation with one Workspace, agent profiles, Messages, and ordered Turns.
 
+**SessionFork** — Session whose inherited transcript references completed Messages from one parent Session through a recorded durable sequence; later Messages belong only to the fork.
+
 **Room** — Internal orchestration aggregate backing one Session. Never shown in the user interface.
 
 **Operator** — Human supplying ordinary Session input.
@@ -24,15 +26,31 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Message** — Durable communication authored by an Operator or produced by an Invocation.
 
+**DelegationContract** — Frozen optional JSON output schema and workspace-isolation choice for one delegated child Invocation.
+
+**IsolationWorktree** — Temporary detached git worktree owned by one delegated child and either patch-applied on successful validation or removed without application.
+
 **Turn** — One durable orchestration request initiated by an Operator message.
+
+**FollowUp** — Operator Turn queued behind existing Session work and cancellable before it starts.
+
+**Steering** — Bounded durable Operator correction attached to one active Invocation and consumed at the next provider-round boundary.
 
 **TurnStatus** — Lifecycle position of a Turn: queued, running, or terminal.
 
 **TurnOutcome** — Result of a terminal Turn: completed, partial, failed, cancelled, or reworked.
 
+**ContextBoundary** — Durable Session sequence through which earlier Messages are replaced by one ContextSummary in future provider requests; Events and transcript history remain unchanged.
+
+**ContextSummary** — Bounded extractive conversation value recorded at a ContextBoundary.
+
 ## Provider execution
 
 **Invocation** — One durable provider execution for a Participant or Squad Seat within a Turn.
+
+**ProjectInstructions** — Bounded workspace instruction content frozen into an Invocation with its source paths and digest.
+
+**BackgroundProcess** — Named bounded host process owned by ProcessHub, with supervised lifecycle and bounded retained output.
 
 **InvocationWorker** — Supervised process executing one Invocation.
 
@@ -56,6 +74,18 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Failure** — Internal typed description of a failure category, message, retryability, and optional cause.
 
+**GitReview** — Bounded Projection of repository status, diff checks, and prioritized whitespace findings before approved Git mutation.
+
+**DebugSession** — Supervised DAP conversation with one debugger process for inspection and controlled execution.
+
+**EvaluationKernel** — Supervised persistent Python or JavaScript process retaining one bounded namespace for approved code evaluation.
+
+**ProjectMemory** — Append-only SQLite facts and lessons scoped to one Workspace.
+
+**Advisor** — Opt-in Task Participant used for explicit advisory review; its output is a Recommendation, not an authoritative Resolution.
+
+**AgentHub** — TUI projection and control surface for delegated child Invocations.
+
 ## Provider discovery
 
 **ProviderRegistry** — Static definitions of supported provider identities and adapters.
@@ -67,6 +97,19 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **ProviderRuntime** — Frozen invocation-time adapter capability and focused policy.
 
 ## Squad workflow
+
+**GitReview** — Bounded repository status, diff, conflict, and prioritized finding projection.
+
+**DebugSession** — Supervised Debug Adapter Protocol conversation with one debugger process.
+
+**EvaluationKernel** — Supervised persistent Python or JavaScript process retaining one bounded namespace.
+
+**ProjectMemory** — Append-only SQLite facts and lessons scoped to one Workspace.
+
+**Advisor** — Opt-in Task Participant whose output is a Recommendation, not an authoritative Resolution.
+
+**AgentHub** — TUI projection and control surface for delegated child Invocations.
+
 
 **Role** — Stable squad responsibility definition.
 
@@ -117,7 +160,12 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - An ordinary Turn invokes only the Session's Primary Participant.
 - A Delegation invokes exactly one Task Participant.
 - An Invocation belongs to one Turn and one Participant or Seat.
+- A Steering belongs to one active Invocation and is recorded into exactly one ProviderRound when consumed.
+- A DelegationContract belongs to exactly one delegated child Invocation; its IsolationWorktree, when present, has the same owner.
 - An Invocation owns ordered ProviderRounds and ToolRuns.
+- A Session has at most one current ContextBoundary; later boundaries supersede it for provider-context reconstruction without deleting Events.
+- A SessionFork has exactly one parent Session and one immutable fork sequence.
+- A BackgroundProcess is owned by ProcessHub and does not outlive it.
 - A ToolRun realizes exactly one ToolCall.
 - A squad Turn owns exactly one SquadRun.
 - A SquadRun has one current Phase and PhaseIndex.

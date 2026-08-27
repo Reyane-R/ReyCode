@@ -24,6 +24,46 @@ defmodule ReyCode.Orchestration.EventEntries do
     }
   end
 
+  @doc "Builds the durable context-compaction boundary for one Room."
+  @spec context_compacted(Room.t(), non_neg_integer(), String.t(), map()) :: event_entry()
+  def context_compacted(room, through_sequence, summary, metrics) do
+    event(
+      :context_compacted,
+      %{
+        "room_id" => room.id,
+        "through_sequence" => through_sequence,
+        "summary" => summary,
+        "source_message_count" => metrics.source_message_count,
+        "source_bytes" => metrics.source_bytes,
+        "summary_bytes" => byte_size(summary),
+        "generator" => "extractive-v1"
+      },
+      :room,
+      room.id,
+      room.id,
+      room.id
+    )
+  end
+
+  @doc "Builds the durable parent link and inherited transcript for a forked Session."
+  @spec session_forked(String.t(), Room.t(), non_neg_integer(), [String.t()]) ::
+          event_entry()
+  def session_forked(room_id, parent, through_sequence, inherited_message_ids) do
+    event(
+      :session_forked,
+      %{
+        "room_id" => room_id,
+        "parent_room_id" => parent.id,
+        "through_sequence" => through_sequence,
+        "inherited_message_ids" => inherited_message_ids
+      },
+      :room,
+      room_id,
+      room_id,
+      room_id
+    )
+  end
+
   @doc "Builds the event that adds one durable room participant."
   @spec participant_added(
           String.t(),
@@ -81,9 +121,19 @@ defmodule ReyCode.Orchestration.EventEntries do
           String.t(),
           String.t(),
           non_neg_integer(),
+          atom(),
           String.t() | nil
         ) :: [event_entry()]
-  def queue_turn(room_id, body, mode, turn_id, message_id, context_sequence, participant_id) do
+  def queue_turn(
+        room_id,
+        body,
+        mode,
+        turn_id,
+        message_id,
+        context_sequence,
+        input_kind,
+        participant_id
+      ) do
     [
       event(
         :message_posted,
@@ -107,6 +157,7 @@ defmodule ReyCode.Orchestration.EventEntries do
           "user_message_id" => message_id,
           "mode" => Atom.to_string(mode),
           "context_through_sequence" => context_sequence,
+          "input_kind" => Atom.to_string(input_kind),
           "participant_id" => participant_id
         },
         :turn,
@@ -242,6 +293,23 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  @doc "Builds one durable Operator steering request for an active Invocation."
+  @spec invocation_steering_requested(Invocation.t(), String.t(), String.t()) :: event_entry()
+  def invocation_steering_requested(invocation, steering_id, body) do
+    invocation_event(
+      :invocation_steering_requested,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "steering_id" => steering_id,
+        "body" => body
+      },
+      invocation
+    )
+  end
+
   @doc "Builds the durable event for a validated provider frame."
   @spec provider_frame(Invocation.t(), Frame.t()) :: event_entry()
   def provider_frame(invocation, frame) do
@@ -311,7 +379,8 @@ defmodule ReyCode.Orchestration.EventEntries do
         "round_index" => round_index,
         "text" => round_data["text"],
         "tool_calls" => round_data["tool_calls"],
-        "usage" => round_data["usage"]
+        "usage" => round_data["usage"],
+        "steering" => Map.get(round_data, "steering", [])
       },
       invocation
     )
@@ -333,6 +402,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "tool" => run.tool,
         "arguments" => run.arguments,
         "workspace" => run.workspace,
+        "workspace_roots" => run.workspace_roots,
         "authorization" => Atom.to_string(run.authorization)
       },
       invocation
@@ -723,7 +793,14 @@ defmodule ReyCode.Orchestration.EventEntries do
         "dependencies" => Map.get(spec, :dependencies, []),
         "label" => spec.label,
         "system_prompt" => spec.system_prompt,
-        "attempt" => Map.get(spec, :attempt, 1)
+        "project_instructions" => Map.get(spec, :project_instructions, ""),
+        "project_instruction_digest" => Map.get(spec, :project_instruction_digest),
+        "project_instruction_sources" => Map.get(spec, :project_instruction_sources, []),
+        "attempt" => Map.get(spec, :attempt, 1),
+        "output_schema" => Map.get(spec, :output_schema),
+        "workspace" => Map.get(spec, :workspace) || Map.get(room, :workspace) || "",
+        "workspace_roots" => Map.get(spec, :workspace_roots, []),
+        "isolation" => Map.get(spec, :isolation)
       }
       |> Map.merge(delegation_origin(spec)),
       %Invocation{

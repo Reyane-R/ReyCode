@@ -28,6 +28,29 @@ defmodule ReyCode.TUI.Delegation do
     end
   end
 
+  @doc "Opens task entry for one revalidated task Participant."
+  @spec open_for(map(), String.t()) :: map()
+  def open_for(term, participant_id) do
+    case Enum.find(task_participants(term), &(&1.id == participant_id)) do
+      nil ->
+        SlashPalette.close(term, "The selected task agent is no longer available")
+
+      participant ->
+        term
+        |> Component.assign(
+          modal: :delegation,
+          slash: nil,
+          delegation: %{
+            initial()
+            | step: :task,
+              participant_id: participant.id
+          },
+          notice: nil
+        )
+        |> View.focus("delegated-task")
+    end
+  end
+
   @spec focus(map()) :: map()
   def focus(%{assigns: %{delegation: %{step: :task}}} = term),
     do: View.focus(term, "delegated-task")

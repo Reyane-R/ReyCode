@@ -78,6 +78,31 @@ defmodule ReyCode.TUI.Settings do
     Component.assign(term, modal: :settings, settings: settings, notice: nil)
   end
 
+  @doc "Opens model confirmation for one revalidated provider/model."
+  @spec open_at(map(), atom(), String.t()) :: map()
+  def open_at(term, provider, model) do
+    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
+    primary = Enum.find(room.participants, &(&1.kind == :primary))
+    provider_entry = Map.get(term.assigns.providers, provider)
+
+    if (primary && provider_entry && provider_entry.status == :configured) and
+         model in provider_entry.models do
+      settings = %{
+        initial(term.assigns.selected_room_id)
+        | step: :models,
+          participant_ids: [primary.id],
+          provider: provider,
+          index: Enum.find_index(provider_entry.models, &(&1 == model)) || 0
+      }
+
+      Component.assign(term, modal: :settings, slash: nil, settings: settings, notice: nil)
+    else
+      term
+      |> open()
+      |> Component.assign(notice: "The selected model is no longer available")
+    end
+  end
+
   @doc "Moves the selected option by an offset, wrapping at either end."
   @spec move(map(), integer()) :: map()
   def move(term, offset) do

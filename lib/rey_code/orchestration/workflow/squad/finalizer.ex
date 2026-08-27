@@ -80,7 +80,21 @@ defmodule ReyCode.Orchestration.Workflow.Squad.Finalizer do
       dependencies: invocation.dependencies,
       attempt: invocation.attempt + 1,
       label: invocation.label,
-      system_prompt: invocation.system_prompt
+      system_prompt: invocation.system_prompt,
+      project_instructions: instruction_content(invocation),
+      project_instruction_digest: instruction_digest(invocation),
+      project_instruction_sources: instruction_sources(invocation)
     }
+  end
+
+  defp instruction_content(invocation), do: instruction_field(invocation, :content, "")
+  defp instruction_digest(invocation), do: instruction_field(invocation, :digest, nil)
+  defp instruction_sources(invocation), do: instruction_field(invocation, :sources, [])
+
+  defp instruction_field(invocation, field, default) do
+    case Map.get(invocation, :project_instructions) do
+      nil -> default
+      capture -> Map.get(capture, field, default)
+    end
   end
 end

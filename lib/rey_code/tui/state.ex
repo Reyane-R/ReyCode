@@ -60,6 +60,7 @@ defmodule ReyCode.TUI.State do
         model_picker: ModelPicker.initial(),
         session_picker: SessionPicker.initial(),
         settings: Settings.initial(),
+        workspace_preview_path: nil,
         animation_clock: clock,
         animation_now_ms: now_ms,
         animation_style: Keyword.get(opts, :animation_style, Spinner.style()),
@@ -113,8 +114,8 @@ defmodule ReyCode.TUI.State do
       message_width: message_width,
       timeline_id: timeline_id(room.id),
       recent_session_rows: recent_session_rows(assigns),
-      slash_rows: slash_rows(assigns.slash, height),
-      slash_style: SlashPalette.style(width, height, assigns.slash),
+      slash_rows: slash_rows(assigns, height),
+      slash_style: SlashPalette.style(width, height, assigns),
       tool_review_options: ToolReview.options()
     )
   end
@@ -213,16 +214,14 @@ defmodule ReyCode.TUI.State do
 
   defp format_tokens(value), do: Integer.to_string(value)
 
-  defp slash_rows(nil, _height), do: []
-
-  defp slash_rows(slash, height) do
-    Enum.map(SlashPalette.rows(slash, height), fn {command, index} ->
+  defp slash_rows(assigns, height) do
+    Enum.map(SlashPalette.rows(assigns, height), fn {candidate, index} ->
       %{
-        command: command.command,
-        description: command.description,
-        option_class: SlashPalette.option_class(index, slash.index),
-        command_class: SlashPalette.command_class(index, slash.index),
-        description_class: SlashPalette.description_class(index, slash.index)
+        command: candidate.label,
+        description: candidate.detail,
+        option_class: SlashPalette.option_class(index, assigns.slash.index),
+        command_class: SlashPalette.command_class(index, assigns.slash.index),
+        description_class: SlashPalette.description_class(index, assigns.slash.index)
       }
     end)
   end

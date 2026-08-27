@@ -9,7 +9,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
   end
 
   test "matches/1 ranks exact, prefix, substring, then subsequence" do
-    assert Enum.map(SlashPalette.matches("/mo"), & &1.command) == ["/model"]
+    assert Enum.map(SlashPalette.matches("/mo"), & &1.command) == ["/model", "/models"]
     assert Enum.map(SlashPalette.matches("/tl"), & &1.command) == ["/tools"]
     assert Enum.map(SlashPalette.matches("/res"), & &1.command) == ["/resume"]
 
@@ -62,7 +62,15 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     result = SlashPalette.open(term(draft: "keep me"))
 
     assert result.assigns.modal == :slash
-    assert result.assigns.slash == %{query: "/", index: 0, restore_draft: "keep me"}
+
+    assert result.assigns.slash == %{
+             query: "/",
+             cursor: 1,
+             index: 0,
+             accepted_id: nil,
+             restore_draft: "keep me"
+           }
+
     assert result.assigns.drafts["room-1"] == "/"
     assert result.focused == "prompt"
   end
@@ -74,11 +82,15 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert SlashPalette.move(term, 1).assigns.slash.index == 1
   end
 
-  test "complete/1 uses the first matching command" do
-    result = term(query: "/ag") |> SlashPalette.complete()
+  test "complete/1 accepts the highlighted candidate without executing it" do
+    result =
+      term(query: "/ag")
+      |> put_in([Access.key(:assigns), :slash, :index], 1)
+      |> SlashPalette.complete()
 
-    assert result.assigns.slash.query == "/agent"
-    assert result.assigns.drafts["room-1"] == "/agent"
+    assert result.assigns.slash.query == "/agents"
+    assert result.assigns.slash.accepted_id == "command:/agents"
+    assert result.assigns.drafts["room-1"] == "/agents"
   end
 
   test "cancel/1 restores the original draft" do
@@ -108,7 +120,13 @@ defmodule ReyCode.TUI.SlashPaletteTest do
         selected_room_id: "room-1",
         drafts: %{"room-1" => draft},
         modal: :slash,
-        slash: %{query: query, index: 0, restore_draft: restore_draft},
+        slash: %{
+          query: query,
+          cursor: String.length(query),
+          index: 0,
+          accepted_id: nil,
+          restore_draft: restore_draft
+        },
         notice: nil
       }
     }

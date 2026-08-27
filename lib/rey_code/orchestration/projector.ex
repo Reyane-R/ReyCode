@@ -7,10 +7,12 @@ defmodule ReyCode.Orchestration.Projector do
   import Kernel, except: [apply: 2]
 
   alias ReyCode.{Event, Failure}
+  alias ReyCode.ProjectInstructions.Capture
 
   alias ReyCode.Orchestration.{
     Author,
     Invocation,
+    InvocationExecution,
     Message,
     Mode,
     Participant,
@@ -18,6 +20,7 @@ defmodule ReyCode.Orchestration.Projector do
     ProviderRound,
     Room,
     SquadRun,
+    Steering,
     ToolAsk,
     ToolRun,
     Turn
@@ -67,6 +70,30 @@ defmodule ReyCode.Orchestration.Projector do
         rooms: Map.put(state.rooms, room.id, room),
         room_order: state.room_order ++ [room.id]
     }
+  end
+
+  def apply(%Event{type: :session_forked, data: data} = event, state) do
+    update_room(state, data["room_id"], fn room ->
+      %{
+        room
+        | parent_room_id: data["parent_room_id"],
+          forked_from_sequence: data["through_sequence"],
+          message_order: data["inherited_message_ids"]
+      }
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :context_compacted, data: data} = event, state) do
+    update_room(state, data["room_id"], fn room ->
+      %{
+        room
+        | context_boundary_sequence: data["through_sequence"],
+          context_summary: data["summary"],
+          context_compacted_at: event.recorded_at
+      }
+    end)
+    |> put_sequence(event.sequence)
   end
 
   def apply(%Event{type: :participant_added, data: data} = event, state) do
@@ -137,6 +164,7 @@ defmodule ReyCode.Orchestration.Projector do
       id: data["turn_id"],
       room_id: data["room_id"],
       user_message_id: data["user_message_id"],
+      input_kind: input_kind(data["input_kind"]),
       mode: mode(data["mode"]),
       participant_id: data["participant_id"],
       status: :queued,
@@ -172,48 +200,8 @@ defmodule ReyCode.Orchestration.Projector do
         do: seat(data["participant"]),
         else: participant(data["participant"])
 
-    message = %Message{
-      id: data["message_id"],
-      room_id: data["room_id"],
-      turn_id: data["turn_id"],
-      invocation_id: data["invocation_id"],
-      author: Author.from_participant(participant),
-      role: :assistant,
-      status: :queued,
-      body: "",
-      created_at: event.recorded_at,
-      created_sequence: event.sequence,
-      error: nil
-    }
-
-    invocation = %Invocation{
-      id: data["invocation_id"],
-      room_id: data["room_id"],
-      turn_id: data["turn_id"],
-      message_id: data["message_id"],
-      participant: participant,
-      phase_index: data["stage"],
-      phase: data["phase"] || data["label"],
-      cycle: data["cycle"] || 0,
-      logical_work_id: data["logical_work_id"] || data["invocation_id"],
-      dependencies: data["dependencies"] || [],
-      label: data["label"],
-      system_prompt: data["system_prompt"],
-      status: :queued,
-      attempt: data["attempt"] || 1,
-      usage: nil,
-      tool_events: [],
-      rounds: [],
-      tool_runs: %{},
-      tool_run_order: [],
-      pending_tool_review: nil,
-      completion_metadata: nil,
-      last_frame_sequence: 0,
-      error: nil,
-      delegation_depth: data["delegation_depth"] || 0,
-      delegated_from_invocation_id: data["delegated_from_invocation_id"],
-      delegated_from_tool_run_id: data["delegated_from_tool_run_id"]
-    }
+    message = opened_message(data, event, participant)
+    invocation = opened_invocation(data, participant)
 
     state
     |> put_message(message)
@@ -228,6 +216,20 @@ defmodule ReyCode.Orchestration.Projector do
     state
     |> update_invocation(data["invocation_id"], &%{&1 | status: :running})
     |> update_message(data["message_id"], &%{&1 | status: :streaming})
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :invocation_steering_requested, data: data} = event, state) do
+    steering = %Steering{
+      id: data["steering_id"],
+      body: data["body"],
+      requested_sequence: event.sequence
+    }
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      %{invocation | pending_steering: invocation.pending_steering ++ [steering]}
+    end)
     |> put_sequence(event.sequence)
   end
 
@@ -270,19 +272,26 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :provider_round_recorded, data: data} = event, state) do
+    steering = Enum.map(data["steering"] || [], &Steering.from_map/1)
+
     round =
       ProviderRound.from_map(%{
         index: data["round_index"],
         text: data["text"],
         tool_calls: data["tool_calls"],
+        steering: steering,
         usage: data["usage"]
       })
+
+    consumed_ids = MapSet.new(steering, & &1.id)
 
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
       %{
         invocation
         | rounds: invocation.rounds ++ [round],
+          pending_steering:
+            Enum.reject(invocation.pending_steering, &MapSet.member?(consumed_ids, &1.id)),
           usage: data["usage"] || invocation.usage
       }
     end)
@@ -297,6 +306,7 @@ defmodule ReyCode.Orchestration.Projector do
       tool: data["tool"],
       arguments: data["arguments"],
       workspace: data["workspace"],
+      workspace_roots: data["workspace_roots"] || [],
       authorization: authorization(data["authorization"]),
       status: requested_status(data["authorization"]),
       resolution: nil,
@@ -661,6 +671,67 @@ defmodule ReyCode.Orchestration.Projector do
     end
   end
 
+  defp opened_message(data, event, participant) do
+    %Message{
+      id: data["message_id"],
+      room_id: data["room_id"],
+      turn_id: data["turn_id"],
+      invocation_id: data["invocation_id"],
+      author: Author.from_participant(participant),
+      role: :assistant,
+      status: :queued,
+      body: "",
+      created_at: event.recorded_at,
+      created_sequence: event.sequence,
+      error: nil
+    }
+  end
+
+  defp opened_invocation(data, participant) do
+    %Invocation{
+      id: data["invocation_id"],
+      room_id: data["room_id"],
+      turn_id: data["turn_id"],
+      message_id: data["message_id"],
+      participant: participant,
+      phase_index: data["stage"],
+      phase: value_or(data["phase"], data["label"]),
+      cycle: value_or(data["cycle"], 0),
+      logical_work_id: value_or(data["logical_work_id"], data["invocation_id"]),
+      dependencies: value_or(data["dependencies"], []),
+      label: data["label"],
+      system_prompt: data["system_prompt"],
+      project_instructions: %Capture{
+        content: value_or(data["project_instructions"], ""),
+        digest: data["project_instruction_digest"],
+        sources: value_or(data["project_instruction_sources"], [])
+      },
+      execution_context: %InvocationExecution{
+        output_schema: data["output_schema"],
+        workspace: data["workspace"],
+        workspace_roots: value_or(data["workspace_roots"], []),
+        isolation: data["isolation"]
+      },
+      status: :queued,
+      attempt: value_or(data["attempt"], 1),
+      usage: nil,
+      tool_events: [],
+      rounds: [],
+      tool_runs: %{},
+      tool_run_order: [],
+      pending_tool_review: nil,
+      completion_metadata: nil,
+      last_frame_sequence: 0,
+      error: nil,
+      delegation_depth: value_or(data["delegation_depth"], 0),
+      delegated_from_invocation_id: data["delegated_from_invocation_id"],
+      delegated_from_tool_run_id: data["delegated_from_tool_run_id"]
+    }
+  end
+
+  defp value_or(nil, default), do: default
+  defp value_or(value, _default), do: value
+
   defp put_message(state, message) do
     update_room(state, message.room_id, fn room ->
       %{room | message_order: [message.id | room.message_order]}
@@ -860,6 +931,11 @@ defmodule ReyCode.Orchestration.Projector do
 
   defp provider(value) when is_binary(value) or is_atom(value),
     do: Registry.normalize_provider_id(value)
+
+  defp input_kind(nil), do: :operator
+  defp input_kind("operator"), do: :operator
+  defp input_kind("follow_up"), do: :follow_up
+  defp input_kind(value) when value in [:operator, :follow_up], do: value
 
   defp outcome("completed"), do: :completed
   defp outcome("partial"), do: :partial

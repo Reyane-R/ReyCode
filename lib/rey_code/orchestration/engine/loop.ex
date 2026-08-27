@@ -5,6 +5,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
   alias ReyCode.Orchestration.{
     Delegation,
+    DelegationWorktree,
     EventEntries,
     InvocationRequest,
     ToolRun,
@@ -21,6 +22,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   }
 
   alias ReyCode.Provider.Response
+  alias ReyCode.Security.Workspace
   alias ReyCode.ToolRegistry
 
   @delegation_tool Delegation.tool_name()
@@ -214,8 +216,9 @@ defmodule ReyCode.Orchestration.Engine.Loop do
          :ok <- round_contiguous?(invocation, round_index) do
       entry = EventEntries.provider_round(invocation, round_index, response_wire)
       state = Persistence.append_and_apply!(state, [entry])
+      next_invocation = state.projection.invocations[invocation.id]
 
-      if response.tool_calls == [] do
+      if response.tool_calls == [] and next_invocation.pending_steering == [] do
         {:reply, {:ok, :final}, state}
       else
         {:reply, {:ok, :continue}, state}
@@ -250,65 +253,71 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp claim_new_run(state, invocation, call) do
+    {workspace, workspace_roots} = invocation_workspace(state, invocation)
+
     run = %ToolRun{
       id: Identity.new_id("toolrun"),
       tool_call_id: call.id,
       round_index: length(invocation.rounds) - 1,
       tool: call.tool,
       arguments: call.arguments,
-      workspace: Path.expand(state.projection.rooms[invocation.room_id].workspace)
+      workspace: Path.expand(workspace),
+      workspace_roots: workspace_roots
     }
 
-    authorization =
-      if ToolRegistry.requires_approval?(call.tool) do
-        :ask
-      else
-        if call.tool in ToolRegistry.tool_names(), do: :allow, else: :denied
-      end
-
+    authorization = tool_authorization(call)
     run = %{run | authorization: authorization}
-
-    entries =
-      case authorization do
-        :denied ->
-          [
-            EventEntries.tool_run_requested(invocation, run),
-            EventEntries.tool_run_failed(invocation, run, %{
-              "ok" => false,
-              "error" => "unknown_tool"
-            })
-          ]
-
-        _other ->
-          [EventEntries.tool_run_requested(invocation, run)]
-      end
-
+    entries = tool_run_request_entries(invocation, run, authorization)
     next = Persistence.append_and_apply!(state, entries)
     run = next.projection.invocations[invocation.id].tool_runs[run.id]
-
-    next =
-      if authorization == :ask,
-        do: Lifecycle.advance_turn(next, invocation.turn_id),
-        else: next
-
-    action = if authorization == :denied, do: :denied, else: authorization_action(authorization)
-    {:reply, {:ok, {action, run}}, next}
+    next = maybe_release_for_approval(next, invocation, authorization)
+    {:reply, {:ok, {authorization_action(authorization), run}}, next}
   end
 
   defp authorization_action(:allow), do: :execute
   defp authorization_action(:ask), do: :await
+  defp authorization_action(:denied), do: :denied
+
+  defp tool_authorization(call) do
+    cond do
+      ToolRegistry.requires_approval?(call) -> :ask
+      call.tool in ToolRegistry.tool_names() -> :allow
+      true -> :denied
+    end
+  end
+
+  defp tool_run_request_entries(invocation, run, :denied) do
+    [
+      EventEntries.tool_run_requested(invocation, run),
+      EventEntries.tool_run_failed(invocation, run, %{
+        "ok" => false,
+        "error" => "unknown_tool"
+      })
+    ]
+  end
+
+  defp tool_run_request_entries(invocation, run, _authorization),
+    do: [EventEntries.tool_run_requested(invocation, run)]
+
+  defp maybe_release_for_approval(state, invocation, :ask),
+    do: Lifecycle.advance_turn(state, invocation.turn_id)
+
+  defp maybe_release_for_approval(state, _invocation, _authorization), do: state
 
   # spawn_task is claimed here and never reaches ToolRegistry.execute: the run
   # stays :running while the child invocation executes, and the parent worker
   # stops with zero further provider rounds until the child terminates.
   defp claim_delegation(state, invocation, call) do
+    {workspace, workspace_roots} = invocation_workspace(state, invocation)
+
     run = %ToolRun{
       id: Identity.new_id("toolrun"),
       tool_call_id: call.id,
       round_index: length(invocation.rounds) - 1,
       tool: call.tool,
       arguments: call.arguments,
-      workspace: Path.expand(state.projection.rooms[invocation.room_id].workspace),
+      workspace: Path.expand(workspace),
+      workspace_roots: workspace_roots,
       authorization: :allow
     }
 
@@ -318,8 +327,8 @@ defmodule ReyCode.Orchestration.Engine.Loop do
            state.projection,
            delegation_bounds(state)
          ) do
-      {:ok, participant} ->
-        open_child_delegation(state, invocation, run, participant)
+      {:ok, plan} ->
+        open_child_delegation(state, invocation, run, plan)
 
       {:error, reason} ->
         entries = [
@@ -336,40 +345,98 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     end
   end
 
-  defp open_child_delegation(state, invocation, run, participant) do
+  defp open_child_delegation(state, invocation, run, plan) do
     room = state.projection.rooms[invocation.room_id]
     turn = state.projection.turns[invocation.turn_id]
     child_id = Identity.new_id("inv")
     child_message_id = Identity.new_id("msg")
     depth = invocation.delegation_depth + 1
-    brief = run.arguments["brief"]
 
-    child_spec = %{
-      participant_id: participant.id,
-      phase_index: 0,
-      label: "delegated task",
-      system_prompt: Delegation.child_system_prompt(participant, brief),
-      delegated_from_invocation_id: invocation.id,
-      delegated_from_tool_run_id: run.id,
-      delegation_depth: depth
-    }
+    case delegation_workspace(invocation, room, plan, child_id) do
+      {:ok, workspace} ->
+        child_spec = %{
+          participant_id: plan.participant.id,
+          phase_index: 0,
+          label: "delegated task",
+          system_prompt: Delegation.child_system_prompt(plan),
+          output_schema: plan.output_schema,
+          workspace: workspace.path,
+          workspace_roots: workspace.roots,
+          isolation: workspace.isolation,
+          delegated_from_invocation_id: invocation.id,
+          delegated_from_tool_run_id: run.id,
+          delegation_depth: depth
+        }
 
-    entries =
-      [
-        EventEntries.tool_run_requested(invocation, run),
-        EventEntries.tool_run_started(invocation, %{run | status: :ready})
-      ] ++
-        EventEntries.open_invocations(room, turn, [child_spec], [{child_id, child_message_id}]) ++
-        [EventEntries.delegation_opened(invocation, run, child_id, child_message_id, depth)]
+        entries =
+          [
+            EventEntries.tool_run_requested(invocation, run),
+            EventEntries.tool_run_started(invocation, %{run | status: :ready})
+          ] ++
+            EventEntries.open_invocations(room, turn, [child_spec], [{child_id, child_message_id}]) ++
+            [EventEntries.delegation_opened(invocation, run, child_id, child_message_id, depth)]
 
-    next =
-      state
-      |> Persistence.append_and_apply!(entries)
-      |> Admission.enqueue(child_id)
-      |> Lifecycle.pump_admission()
+        next =
+          state
+          |> Persistence.append_and_apply!(entries)
+          |> Admission.enqueue(child_id)
+          |> Lifecycle.pump_admission()
 
-    pending = next.projection.invocations[invocation.id].tool_runs[run.id]
-    {:reply, {:ok, {:delegate, pending}}, next}
+        pending = next.projection.invocations[invocation.id].tool_runs[run.id]
+        {:reply, {:ok, {:delegate, pending}}, next}
+
+      {:error, reason} ->
+        reject_delegation(state, invocation, run, reason)
+    end
+  end
+
+  defp delegation_workspace(invocation, room, %{isolate?: false}, _child_id) do
+    context = invocation.execution_context
+    path = context.workspace || room.workspace
+
+    roots =
+      if context.workspace_roots == [], do: [Path.expand(path)], else: context.workspace_roots
+
+    {:ok,
+     %{
+       path: path,
+       roots: roots,
+       isolation: nil
+     }}
+  end
+
+  defp delegation_workspace(invocation, room, %{isolate?: true}, child_id) do
+    source = invocation.execution_context.workspace || room.workspace
+
+    case DelegationWorktree.create(source, child_id) do
+      {:ok, isolation} ->
+        {:ok,
+         %{
+           path: isolation.workspace,
+           roots: [isolation.workspace],
+           isolation: %{
+             "workspace" => isolation.workspace,
+             "source_workspace" => isolation.source_workspace
+           }
+         }}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp reject_delegation(state, invocation, run, reason) do
+    entries = [
+      EventEntries.tool_run_requested(invocation, %{run | authorization: :denied}),
+      EventEntries.tool_run_failed(invocation, run, %{
+        "ok" => false,
+        "error" => inspect(reason)
+      })
+    ]
+
+    next = Persistence.append_and_apply!(state, entries)
+    denied = next.projection.invocations[invocation.id].tool_runs[run.id]
+    {:reply, {:ok, {:denied, denied}}, next}
   end
 
   defp delegation_bounds(state) do
@@ -379,6 +446,18 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       max_children: orchestration.delegation_max_children,
       brief_max_bytes: orchestration.delegation_brief_max_bytes
     }
+  end
+
+  defp invocation_workspace(state, invocation) do
+    context = invocation.execution_context
+    workspace = context.workspace || state.projection.rooms[invocation.room_id].workspace
+
+    roots =
+      if context.workspace_roots == [],
+        do: Workspace.roots(state.config.workspace),
+        else: context.workspace_roots
+
+    {workspace, roots}
   end
 
   defp fetch_invocation(state, invocation_id) do

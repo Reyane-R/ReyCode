@@ -1,16 +1,18 @@
 defmodule ReyCode.Orchestration.ProviderRound do
   @moduledoc "One normalized provider response retained by an Invocation."
 
+  alias ReyCode.Orchestration.Steering
   alias ReyCode.Provider.ToolCall
 
-  @fields [:index, :text, :tool_calls, :usage]
+  @fields [:index, :text, :tool_calls, :steering, :usage]
 
-  defstruct index: 0, text: "", tool_calls: [], usage: nil
+  defstruct index: 0, text: "", tool_calls: [], steering: [], usage: nil
 
   @type t :: %__MODULE__{
           index: non_neg_integer(),
           text: String.t(),
           tool_calls: [ToolCall.t()],
+          steering: [Steering.t()],
           usage: map() | nil
         }
 
@@ -19,7 +21,12 @@ defmodule ReyCode.Orchestration.ProviderRound do
 
   def from_map(round) when is_map(round) do
     round = struct!(__MODULE__, Map.take(round, @fields))
-    %{round | tool_calls: Enum.map(round.tool_calls || [], &normalize_call/1)}
+
+    %{
+      round
+      | tool_calls: Enum.map(round.tool_calls || [], &normalize_call/1),
+        steering: Enum.map(round.steering || [], &Steering.from_map/1)
+    }
   end
 
   defp normalize_call(%ToolCall{} = call), do: call

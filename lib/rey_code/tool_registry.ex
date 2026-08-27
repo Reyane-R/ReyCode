@@ -11,7 +11,16 @@ defmodule ReyCode.ToolRegistry do
   """
 
   alias ReyCode.Security.Workspace
-  alias ReyCode.Tool.{Request, Result}
+
+  alias ReyCode.Tool.{
+    BackgroundProcess,
+    Debug,
+    Git,
+    LSP,
+    Memory,
+    Request,
+    Result
+  }
 
   @tools %{
     "read" => ReyCode.Tool.Read,
@@ -20,7 +29,15 @@ defmodule ReyCode.ToolRegistry do
     "bash" => ReyCode.Tool.Bash,
     "grep" => ReyCode.Tool.Grep,
     "glob" => ReyCode.Tool.Glob,
-    "list" => ReyCode.Tool.List
+    "list" => ReyCode.Tool.List,
+    "lsp" => ReyCode.Tool.LSP,
+    "git" => ReyCode.Tool.Git,
+    "process" => ReyCode.Tool.BackgroundProcess,
+    "debug" => ReyCode.Tool.Debug,
+    "eval" => ReyCode.Tool.Eval,
+    "memory" => ReyCode.Tool.Memory,
+    "web_search" => ReyCode.Tool.WebSearch,
+    "read_url" => ReyCode.Tool.DocumentRead
   }
 
   @ask_tools MapSet.new(["bash", "write"])
@@ -43,7 +60,7 @@ defmodule ReyCode.ToolRegistry do
 
     case Map.fetch(@tools, name) do
       {:ok, _module} ->
-        if MapSet.member?(@ask_tools, name) do
+        if requires_approval?(request) do
           {:ask, request}
         else
           {:ok, execute(request, policy)}
@@ -66,6 +83,10 @@ defmodule ReyCode.ToolRegistry do
     end
   end
 
+  defp with_policy_roots(%Request{roots: roots} = request, _policy)
+       when is_list(roots) and roots != [],
+       do: request
+
   defp with_policy_roots(request, policy),
     do: %{request | roots: Workspace.roots(policy.workspace)}
 
@@ -76,11 +97,68 @@ defmodule ReyCode.ToolRegistry do
   defp tool_policy(config, "glob"), do: config.tools.glob
   defp tool_policy(config, "list"), do: config.tools.list
   defp tool_policy(config, "grep"), do: config.tools.grep
+  defp tool_policy(config, "lsp"), do: config.tools.lsp
+  defp tool_policy(config, "process"), do: config.tools.process
+  defp tool_policy(config, "git"), do: config.tools.bash
+  defp tool_policy(config, "debug"), do: config.tools.debugger
+  defp tool_policy(config, "eval"), do: config.tools.evaluation
+  defp tool_policy(config, "web_search"), do: config.tools.research
+  defp tool_policy(config, "read_url"), do: config.tools.research
+  defp tool_policy(config, "memory"), do: config.tools.evaluation
 
-  @doc "Whether a tool name requires owner approval before execution."
-  @spec requires_approval?(Request.t() | String.t() | atom()) :: boolean()
-  def requires_approval?(%Request{tool: tool}), do: requires_approval?(tool)
+  def requires_approval?(%Request{tool: tool, arguments: arguments}),
+    do: approval_required?(tool, arguments)
+
+  def requires_approval?(%{tool: tool, arguments: arguments}),
+    do: approval_required?(tool, arguments)
+
   def requires_approval?(tool), do: MapSet.member?(@ask_tools, to_string(tool))
+
+  defp approval_required?(tool, arguments) do
+    MapSet.member?(@ask_tools, to_string(tool)) or
+      lsp_mutation?(tool, arguments) or process_mutation?(tool, arguments) or
+      git_mutation?(tool, arguments) or debug_mutation?(tool, arguments) or
+      eval_mutation?(tool, arguments) or memory_mutation?(tool, arguments)
+  end
+
+  defp lsp_mutation?(tool, arguments) when tool in [:lsp, "lsp"] and is_map(arguments) do
+    action = Map.get(arguments, "action", Map.get(arguments, :action))
+    LSP.mutating_action?(action)
+  end
+
+  defp lsp_mutation?(_tool, _arguments), do: false
+
+  defp process_mutation?(tool, arguments)
+       when tool in [:process, "process"] and is_map(arguments) do
+    action = Map.get(arguments, "action", Map.get(arguments, :action))
+    BackgroundProcess.mutating_action?(action)
+  end
+
+  defp process_mutation?(_tool, _arguments), do: false
+
+  defp git_mutation?(tool, arguments) when tool in [:git, "git"] and is_map(arguments) do
+    action = Map.get(arguments, "action", Map.get(arguments, :action))
+    Git.mutating_action?(action)
+  end
+
+  defp git_mutation?(_tool, _arguments), do: false
+
+  defp debug_mutation?(tool, arguments) when tool in [:debug, "debug"] and is_map(arguments) do
+    action = Map.get(arguments, "action", Map.get(arguments, :action))
+    Debug.mutating_action?(action)
+  end
+
+  defp debug_mutation?(_tool, _arguments), do: false
+
+  defp eval_mutation?(tool, _arguments) when tool in [:eval, "eval"], do: true
+  defp eval_mutation?(_tool, _arguments), do: false
+
+  defp memory_mutation?(tool, arguments) when tool in [:memory, "memory"] and is_map(arguments) do
+    action = Map.get(arguments, "action", Map.get(arguments, :action))
+    Memory.mutating_action?(action)
+  end
+
+  defp memory_mutation?(_tool, _arguments), do: false
 
   @orchestration_tools MapSet.new(["spawn_task"])
 

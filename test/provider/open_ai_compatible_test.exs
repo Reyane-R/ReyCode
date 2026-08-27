@@ -680,7 +680,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert Map.has_key?(second, "tools")
     end
 
-    test "advertises the orchestration spawn_task tool on the wire" do
+    test "advertises orchestration and hash-anchored edit schemas on the wire" do
       FakeTransport.set_stream_script([{:chunks, @success_stream}])
 
       assert {:ok, %Response{}} =
@@ -702,6 +702,15 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert spawn_task["type"] == "function"
       assert spawn_task["function"]["parameters"]["properties"]["agent"]
       assert spawn_task["function"]["parameters"]["properties"]["brief"]
+
+      edit = Enum.find(tools, &(&1["function"]["name"] == "edit"))
+      edit_parameters = edit["function"]["parameters"]
+
+      assert edit_parameters["required"] == ["path", "source_hash", "patches"]
+      assert edit_parameters["additionalProperties"] == false
+
+      assert edit_parameters["properties"]["patches"]["items"]["required"] ==
+               ["old_string", "new_string"]
     end
 
     test "remembers the downgraded shape for the next round" do

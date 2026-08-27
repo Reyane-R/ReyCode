@@ -57,8 +57,42 @@ defmodule ReyCode.ToolRegistryTest do
     assert ToolRegistry.requires_approval?("write")
   end
 
-  test "tool_names/0 lists the seven supported tools" do
+  test "only mutating LSP requests require approval" do
+    refute ToolRegistry.requires_approval?(
+             request("lsp", %{action: "references", file: "lib/a.ex", line: 1})
+           )
+
+    assert ToolRegistry.requires_approval?(
+             request("lsp", %{action: "rename", file: "lib/a.ex", line: 1, new_name: "next"})
+           )
+  end
+
+  test "process state changes require approval while inspection remains read-only" do
+    refute ToolRegistry.requires_approval?(request("process", %{action: "logs", name: "web"}))
+
+    assert ToolRegistry.requires_approval?(
+             request("process", %{action: "start", name: "web", command: ["echo", "ok"]})
+           )
+  end
+
+  test "tool_names/0 lists the fifteen supported tools" do
     assert Enum.sort(ToolRegistry.tool_names()) ==
-             Enum.sort(["read", "write", "edit", "bash", "grep", "glob", "list"])
+             Enum.sort([
+               "read",
+               "write",
+               "edit",
+               "bash",
+               "grep",
+               "glob",
+               "list",
+               "lsp",
+               "process",
+               "git",
+               "debug",
+               "eval",
+               "memory",
+               "web_search",
+               "read_url"
+             ])
   end
 end

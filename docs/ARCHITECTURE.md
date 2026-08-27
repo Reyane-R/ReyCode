@@ -202,7 +202,7 @@ irreducible skeleton — everything else is a detail:
 
 | File | Why it matters | Time to read |
 |---|---|---|
-| `lib/rey_code/application.ex` | How the program boots. All 7 processes, in order. | 2 min |
+| `lib/rey_code/application.ex` | How the program boots. All 11 processes, in order. | 2 min |
 | `lib/rey_code/orchestration/engine.ex` | The central GenServer. Every command enters here. | 5 min |
 | `lib/rey_code/orchestration/projector.ex` | How events become state. This is the truth. | 10 min |
 | `lib/rey_code/agent_loop.ex` | The durable AI conversation loop. The heart of the program. | 5 min |
@@ -238,7 +238,7 @@ what happens, in order:
 3. **Create the data directory.** The SQLite database directory is created if
    it doesn't exist.
 
-4. **Start the supervision tree.** Seven processes are started in order. If an
+4. **Start the supervision tree.** Eleven processes are started in order. If an
    earlier one fails, all later ones are stopped (`rest_for_one` strategy):
 
    ```
@@ -247,6 +247,10 @@ what happens, in order:
    EventStore            The SQLite database process
    ProviderTaskSupervisor  Runs short-lived discovery tasks
    Provider.Catalog      Discovers what AI models are available
+   DebuggerHub            Owns bounded DAP debugger sessions
+   EvalHub                Owns persistent Python/JavaScript kernels
+   Memory.Store           Owns append-only SQLite project memory
+   ProcessHub            Owns bounded named background processes and retained logs
    Orchestration.Supervisor
      ├── DynamicSupervisor  Spawns temporary Agent worker processes
      └── Engine            The brain: rooms, turns, scheduling

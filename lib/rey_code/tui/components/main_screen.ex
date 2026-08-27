@@ -67,6 +67,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box class="pt-1 font-bold">Quick start</box>
       <box>/  commands</box>
       <box>/agent  create a task agent with its own model</box>
+      <box>/advise  run an explicit Advisor review</box>
+      <box>/hub  inspect delegated child Invocations</box>
       <box>@file  attach a file to your message</box>
       <box class="pt-1 font-bold">Task agents</box>
       <box :if={task_participants(@room) == []} class="text-muted">

@@ -34,7 +34,8 @@ defmodule ReyCode.Provider.Request do
     :logical_work_id,
     agent_delay_ms: nil,
     simulator_opts: nil,
-    dependencies: []
+    dependencies: [],
+    steering: []
   ]
 
   @type participant :: Participant.t()
@@ -56,6 +57,7 @@ defmodule ReyCode.Provider.Request do
           logical_work_id: String.t() | nil,
           agent_delay_ms: non_neg_integer() | nil,
           simulator_opts: keyword() | nil,
-          dependencies: [String.t()]
+          dependencies: [String.t()],
+          steering: [map()]
         }
 end

@@ -33,7 +33,16 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                [aggregate_type: :room, aggregate_id: "room-1", room_id: "room-1"]
              }
 
-    assert EventEntries.queue_turn("room-1", "Ship it", :debate, "turn-1", "msg-1", 7, nil) == [
+    assert EventEntries.queue_turn(
+             "room-1",
+             "Ship it",
+             :debate,
+             "turn-1",
+             "msg-1",
+             7,
+             :operator,
+             nil
+           ) == [
              {
                :message_posted,
                %{
@@ -58,6 +67,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "user_message_id" => "msg-1",
                  "mode" => "debate",
                  "context_through_sequence" => 7,
+                 "input_kind" => "operator",
                  "participant_id" => nil
                },
                @turn_metadata
@@ -362,6 +372,13 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "dependencies" => [],
                  "label" => "independent response",
                  "system_prompt" => "Respond independently",
+                 "project_instructions" => "",
+                 "project_instruction_digest" => nil,
+                 "project_instruction_sources" => [],
+                 "output_schema" => nil,
+                 "workspace" => "",
+                 "workspace_roots" => [],
+                 "isolation" => nil,
                  "attempt" => 1
                },
                invocation_metadata("inv-1")

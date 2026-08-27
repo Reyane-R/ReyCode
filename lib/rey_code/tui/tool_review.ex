@@ -180,6 +180,60 @@ defmodule ReyCode.TUI.ToolReview do
     ]
   end
 
+  defp details(%{tool: "lsp", arguments: arguments}, _config) do
+    [
+      {"LSP ACTION", argument(arguments, "action", "(none)")},
+      {"FILE", argument(arguments, "file", "(none)")},
+      {"NEW NAME", argument(arguments, "new_name", "(none)")},
+      {"SCOPE", "language-server workspace edits inside trusted roots"}
+    ]
+  end
+
+  defp details(%{tool: "process", arguments: arguments}, _config) do
+    [
+      {"PROCESS ACTION", argument(arguments, "action", "(none)")},
+      {"NAME", argument(arguments, "name", "(none)")},
+      {"COMMAND", process_command(arguments)},
+      {"SCOPE", "supervised host process with bounded output and resource limits"}
+    ]
+  end
+
+  defp details(%{tool: "git", arguments: arguments}, _config) do
+    [
+      {"GIT ACTION", argument(arguments, "action", "(none)")},
+      {"PATH", argument(arguments, "path", "(workspace)")},
+      {"MESSAGE", argument(arguments, "message", "(none)")},
+      {"SCOPE", "repository state or staged commit inside the Workspace"}
+    ]
+  end
+
+  defp details(%{tool: "debug", arguments: arguments}, _config) do
+    [
+      {"DEBUG ACTION", argument(arguments, "action", "(none)")},
+      {"SESSION", argument(arguments, "name", "(none)")},
+      {"PROGRAM", argument(arguments, "program", "(none)")},
+      {"SCOPE", "supervised Debug Adapter Protocol session"}
+    ]
+  end
+
+  defp details(%{tool: "eval", arguments: arguments}, _config) do
+    [
+      {"EVAL ACTION", argument(arguments, "action", "(none)")},
+      {"KERNEL", argument(arguments, "name", "(none)")},
+      {"LANGUAGE", argument(arguments, "language", "(none)")},
+      {"CODE SIZE", "#{byte_size(argument(arguments, "code", ""))} bytes"}
+    ]
+  end
+
+  defp details(%{tool: "memory", arguments: arguments}, _config) do
+    [
+      {"MEMORY ACTION", argument(arguments, "action", "(none)")},
+      {"KEY", argument(arguments, "key", "(none)")},
+      {"VALUE SIZE", "#{byte_size(argument(arguments, "value", ""))} bytes"},
+      {"SCOPE", "append-only project memory"}
+    ]
+  end
+
   defp details(%{tool: tool, arguments: arguments}, _config) do
     [{"ARGUMENTS", compact_arguments(tool, arguments)}]
   end
@@ -213,6 +267,13 @@ defmodule ReyCode.TUI.ToolReview do
   end
 
   defp compact_arguments(_tool, _arguments), do: "(none)"
+
+  defp process_command(arguments) do
+    case Map.get(arguments, "command", Map.get(arguments, :command)) do
+      command when is_list(command) -> command |> Enum.join(" ") |> truncate(200)
+      _other -> "(none)"
+    end
+  end
 
   defp preview(content) do
     content
