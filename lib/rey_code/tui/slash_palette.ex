@@ -166,9 +166,11 @@ defmodule ReyCode.TUI.SlashPalette do
   def option_class(index, index), do: "inline w-full px-1 bg-primary text-bg"
   def option_class(_index, _selected), do: "inline w-full px-1 bg-panel"
 
-  @doc "Returns the style class for a palette command name."
-  def command_class(index, index), do: "w-14 text-bg"
-  def command_class(_index, _selected), do: "w-14 text-warning"
+  @doc "Returns the style class for a palette candidate label."
+  def command_class(:command, index, index), do: "w-14 text-bg"
+  def command_class(_kind, index, index), do: "pr-1 text-bg"
+  def command_class(:command, _index, _selected), do: "w-14 text-warning"
+  def command_class(_kind, _index, _selected), do: "pr-1 text-warning"
 
   @doc "Returns the style class for a palette command description."
   def description_class(index, index), do: "text-bg"
