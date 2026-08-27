@@ -129,6 +129,27 @@ defmodule ReyCode.TUITest do
     assert primary.provider == :simulator
   end
 
+  test "truncates long model rows in a narrow terminal" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({50, 20}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    model = "omp/deepseek/deepseek-v4-flash-with-a-very-long-provider-identifier"
+
+    assert {:noreply, _focused} =
+             push_providers(session, %{
+               omp: %{id: :omp, name: "OMP", status: :configured, models: [model]}
+             })
+
+    type(session, "/model")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    screen = session |> Breeze.Test.render!() |> plain()
+
+    assert screen =~ "Assistant model"
+    assert screen =~ "OMP ·"
+    refute screen =~ model
+  end
+
   test "/model rejects when no provider is configured" do
     %{engine: tui_engine_2} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_2)
