@@ -11,6 +11,7 @@ defmodule ReyCode.TUI.Completion do
 
   @default_max_candidates 50
   @default_scan_timeout_ms 50
+  @unranked_palette_priority 1_000_000
 
   defmodule Candidate do
     @moduledoc false
@@ -164,7 +165,8 @@ defmodule ReyCode.TUI.Completion do
         suffix: if(Map.has_key?(command, :argument), do: " ", else: ""),
         dynamic_id: nil,
         value: command.command,
-        payload: command
+        payload: command,
+        palette_priority: Map.get(command, :palette_priority)
       }
     end)
   end
@@ -315,7 +317,14 @@ defmodule ReyCode.TUI.Completion do
     entries
     |> Enum.map(&{&1, fuzzy_rank(&1.label, query)})
     |> Enum.reject(fn {_entry, result} -> is_nil(result) end)
-    |> Enum.sort_by(fn {entry, result} -> {result, String.downcase(entry.label), entry.id} end)
+    |> Enum.sort_by(fn {entry, result} ->
+      {
+        result,
+        Map.get(entry, :palette_priority) || @unranked_palette_priority,
+        String.downcase(entry.label),
+        entry.id
+      }
+    end)
     |> Enum.map(&elem(&1, 0))
   end
 

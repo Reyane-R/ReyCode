@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.AgentHub do
   use Breeze.Component
 
   alias Breeze.{Component, View}
-  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.{Engine, Projection}
   alias ReyCode.TUI.SlashPalette
 
   @spec initial() :: map()
@@ -67,16 +67,10 @@ defmodule ReyCode.TUI.AgentHub do
   @doc "Returns child Invocation rows in durable turn order."
   @spec children(map()) :: [map()]
   def children(term) do
-    projection = term.assigns.projection
-    room = projection.rooms[term.assigns.selected_room_id]
-
-    room
-    |> then(fn room -> if room, do: room.message_order, else: [] end)
-    |> Enum.map(&projection.messages[&1])
-    |> Enum.filter(&(&1 && &1.invocation_id))
-    |> Enum.map(&projection.invocations[&1.invocation_id])
-    |> Enum.filter(&(&1 && &1.delegated_from_invocation_id != nil))
-    |> Enum.uniq_by(& &1.id)
+    Projection.delegated_invocations(
+      term.assigns.projection,
+      term.assigns.selected_room_id
+    )
   end
 
   defp selected_child(term), do: Enum.at(children(term), term.assigns.agent_hub.index)

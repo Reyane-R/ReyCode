@@ -54,6 +54,23 @@ defmodule ReyCode.Orchestration.Projection do
     end)
   end
 
+  @doc "Returns delegated child Invocations represented in one Session's message order."
+  @spec delegated_invocations(t(), String.t()) :: [Invocation.t()]
+  def delegated_invocations(projection, room_id) do
+    case Map.get(projection.rooms, room_id) do
+      nil ->
+        []
+
+      room ->
+        room.message_order
+        |> Enum.map(&projection.messages[&1])
+        |> Enum.filter(&(&1 && &1.invocation_id))
+        |> Enum.map(&projection.invocations[&1.invocation_id])
+        |> Enum.filter(&(&1 && &1.delegated_from_invocation_id != nil))
+        |> Enum.uniq_by(& &1.id)
+    end
+  end
+
   @impl Access
   def fetch(projection, key), do: Map.fetch(projection, key)
 
