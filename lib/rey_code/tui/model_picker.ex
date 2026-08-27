@@ -70,6 +70,26 @@ defmodule ReyCode.TUI.ModelPicker do
     end
   end
 
+  @doc "Immediately selects one revalidated provider/model for the Primary Assistant."
+  @spec select(map(), atom(), String.t()) :: {:noreply, map()}
+  def select(term, provider, model) do
+    assigns = term.assigns
+
+    entry =
+      Enum.find(entries(assigns.providers), fn entry ->
+        entry.provider == provider and entry.model == model
+      end)
+
+    with %{} = selected <- entry,
+         %{} = room <- assigns.projection.rooms[assigns.selected_room_id],
+         %{} = primary <- primary_participant(room) do
+      configure(term, selected, provider, model, selected.label, primary)
+    else
+      _other ->
+        {:noreply, Component.assign(term, notice: "The selected model is no longer available")}
+    end
+  end
+
   defp configure(term, _entry, provider, model, label, primary) do
     case Engine.configure_participants(
            term.assigns.selected_room_id,

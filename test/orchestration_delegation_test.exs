@@ -605,13 +605,47 @@ defmodule ReyCode.Orchestration.DelegationTest do
           tool_run_order: ["denied"]
         )
 
-      assert {:ok, %Participant{name: "Luna"}} =
+      assert {:ok, %Delegation.Plan{participant: %Participant{name: "Luna"}}} =
                Delegation.authorize(
                  invocation,
                  %{"agent" => "Luna", "brief" => "task"},
                  projection,
                  %{max_children: 1, brief_max_bytes: 100}
                )
+    end
+
+    test "freezes structured output and isolation options in a delegation Plan" do
+      {invocation, projection} = policy_fixture(:direct)
+
+      schema = %{
+        "type" => "object",
+        "required" => ["summary"],
+        "properties" => %{"summary" => %{"type" => "string"}}
+      }
+
+      assert {:ok,
+              %Delegation.Plan{
+                output_schema: ^schema,
+                isolate?: true,
+                brief: "task"
+              }} =
+               Delegation.authorize(
+                 invocation,
+                 %{
+                   "agent" => "Luna",
+                   "brief" => "task",
+                   "output_schema" => schema,
+                   "isolate" => true
+                 },
+                 projection,
+                 %{max_children: 1, brief_max_bytes: 100}
+               )
+
+      assert {:ok, %{"summary" => "done"}} =
+               Delegation.validate_output(~s({\"summary\":\"done\"}), schema)
+
+      assert {:error, :delegation_output_missing_required} =
+               Delegation.validate_output("{}", schema)
     end
 
     test "report truncation preserves UTF-8 and the byte cap" do

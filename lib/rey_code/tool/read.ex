@@ -13,6 +13,7 @@ defmodule ReyCode.Tool.Read do
   """
   @behaviour ReyCode.Tool
 
+  alias ReyCode.Hashing
   alias ReyCode.RuntimeConfig.Tools.Read, as: ReadPolicy
   alias ReyCode.Tool.{Request, Result, Support}
 
@@ -25,9 +26,11 @@ defmodule ReyCode.Tool.Read do
 
     with {:ok, canonical} <- Support.require_path(arguments, :path, request),
          {:ok, offset} <- window(arguments, :offset, 1, 1, :invalid_offset),
-         {:ok, limit} <- window(arguments, :limit, limits.max_lines, 0, :invalid_limit) do
-      open_window(canonical, offset, limit, limits.max_bytes)
+         {:ok, limit} <- window(arguments, :limit, limits.max_lines, 0, :invalid_limit),
+         %Result{ok: true} = result <- open_window(canonical, offset, limit, limits.max_bytes) do
+      attach_source_hash(canonical, result, limits.max_bytes)
     else
+      %Result{} = result -> result
       {:error, reason} -> Result.error(reason)
     end
   end
@@ -223,6 +226,27 @@ defmodule ReyCode.Tool.Read do
       }
     )
   end
+
+  defp attach_source_hash(canonical, result, max_bytes) do
+    with {:ok, stat} <- File.stat(canonical),
+         {:ok, source_hash} <- bounded_source_hash(canonical, stat.size, max_bytes) do
+      %{
+        result
+        | metadata:
+            result.metadata
+            |> Map.put("source_bytes", stat.size)
+            |> Map.put("source_hash", source_hash)
+      }
+    else
+      {:error, reason} -> Result.error({:source_hash_failed, reason})
+    end
+  end
+
+  defp bounded_source_hash(_canonical, source_bytes, max_bytes) when source_bytes > max_bytes,
+    do: {:ok, nil}
+
+  defp bounded_source_hash(canonical, _source_bytes, _max_bytes),
+    do: Hashing.file_sha256_hex(canonical)
 
   defp limits(policy) do
     %{max_bytes: policy.max_bytes, max_lines: policy.max_lines}

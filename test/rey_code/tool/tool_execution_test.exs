@@ -24,6 +24,14 @@ defmodule ReyCode.ToolExecutionTest do
     ToolRegistry.execute(request(tool, arguments), policy)
   end
 
+  defp edit_args(path, patches) do
+    %{
+      path: path,
+      source_hash: path |> File.read!() |> ReyCode.Hashing.sha256_hex(),
+      patches: patches
+    }
+  end
+
   defp escape_root(tag),
     do:
       Path.join(
@@ -55,7 +63,18 @@ defmodule ReyCode.ToolExecutionTest do
                run("read", %{path: path, offset: 3, limit: 2})
 
       assert output == "line 3\nline 4\n"
-      assert metadata == %{"offset" => 3, "lines" => 2, "bytes" => byte_size(output)}
+
+      assert %{
+               "offset" => 3,
+               "lines" => 2,
+               "bytes" => returned_bytes,
+               "source_bytes" => source_bytes,
+               "source_hash" => source_hash
+             } = metadata
+
+      assert returned_bytes == byte_size(output)
+      assert source_bytes == File.stat!(path).size
+      assert source_hash == path |> File.read!() |> ReyCode.Hashing.sha256_hex()
     end
 
     test "does not flag truncation when the window reaches end of file" do
@@ -347,14 +366,27 @@ defmodule ReyCode.ToolExecutionTest do
   end
 
   describe "edit" do
-    test "replaces a unique occurrence" do
+    test "applies multiple unique replacements atomically against a source hash" do
       path = Path.join(@workspace, "t.txt")
       File.write!(path, "aaa bbb ccc")
 
-      assert %Result{ok: true, metadata: %{"occurrences" => 1}} =
-               run("edit", %{path: path, old_string: "bbb", new_string: "ZZZ"})
+      patches = [
+        %{old_string: "aaa", new_string: "AAA"},
+        %{old_string: "ccc", new_string: "CCC"}
+      ]
 
-      assert File.read!(path) == "aaa ZZZ ccc"
+      assert %Result{
+               ok: true,
+               metadata: %{
+                 "patches" => 2,
+                 "source_hash" => source_hash,
+                 "result_hash" => result_hash
+               }
+             } = run("edit", edit_args(path, patches))
+
+      assert File.read!(path) == "AAA bbb CCC"
+      assert source_hash == ReyCode.Hashing.sha256_hex("aaa bbb ccc")
+      assert result_hash == ReyCode.Hashing.sha256_hex("AAA bbb CCC")
     end
 
     test "rejects a numeric new_string instead of deleting the match" do
@@ -362,9 +394,19 @@ defmodule ReyCode.ToolExecutionTest do
       File.write!(path, "keep alpha keep")
 
       assert %Result{ok: false, error: {:invalid_argument, :new_string}} =
-               run("edit", %{path: path, old_string: "alpha", new_string: 7})
+               run("edit", edit_args(path, [%{old_string: "alpha", new_string: 7}]))
 
       assert File.read!(path) == "keep alpha keep"
+    end
+
+    test "rejects a stale source hash without writing" do
+      path = Path.join(@workspace, "stale.txt")
+      File.write!(path, "before")
+      arguments = edit_args(path, [%{old_string: "before", new_string: "after"}])
+      File.write!(path, "changed elsewhere")
+
+      assert %Result{ok: false, error: :stale_source_hash} = run("edit", arguments)
+      assert File.read!(path) == "changed elsewhere"
     end
 
     test "rejects ambiguous matches without writing" do
@@ -372,17 +414,17 @@ defmodule ReyCode.ToolExecutionTest do
       File.write!(path, "aaa bbb aaa")
 
       assert %Result{ok: false, error: :ambiguous_match} =
-               run("edit", %{path: path, old_string: "aaa", new_string: "ZZZ"})
+               run("edit", edit_args(path, [%{old_string: "aaa", new_string: "ZZZ"}]))
 
       assert File.read!(path) == "aaa bbb aaa"
     end
 
-    test "reports a missing old_string" do
+    test "reports a missing patch anchor" do
       path = Path.join(@workspace, "t.txt")
       File.write!(path, "aaa")
 
       assert %Result{ok: false, error: :old_string_not_found} =
-               run("edit", %{path: path, old_string: "nope", new_string: "x"})
+               run("edit", edit_args(path, [%{old_string: "nope", new_string: "x"}]))
     end
   end
 

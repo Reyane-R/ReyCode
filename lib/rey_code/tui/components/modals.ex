@@ -11,6 +11,7 @@ defmodule ReyCode.TUI.Components.Modals do
   use Breeze.Component
 
   alias ReyCode.TUI.{
+    AgentHub,
     AgentProfile,
     Cancellation,
     Delegation,
@@ -26,6 +27,7 @@ defmodule ReyCode.TUI.Components.Modals do
   alias ReyCode.TUI.Components.SettingsModal
 
   @registry %{
+    agent_hub: AgentHub,
     agent_profile: AgentProfile,
     delegation: Delegation,
     model_picker: ModelPicker,
@@ -54,6 +56,7 @@ defmodule ReyCode.TUI.Components.Modals do
     dispatch(Map.get(term || %{}, :modal), Map.put(assigns, :term, term))
   end
 
+  defp dispatch(:agent_hub, assigns), do: AgentHub.modal(assigns)
   defp dispatch(:agent_profile, assigns), do: AgentProfile.modal(assigns)
   defp dispatch(:delegation, assigns), do: Delegation.modal(assigns)
   defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)
@@ -64,6 +67,5 @@ defmodule ReyCode.TUI.Components.Modals do
   defp dispatch(:tool_review, assigns), do: ToolReview.modal(assigns)
   defp dispatch(:help, assigns), do: Help.modal(assigns)
   defp dispatch(_modal, assigns), do: empty(assigns)
-
   defp empty(assigns), do: ~H""
 end

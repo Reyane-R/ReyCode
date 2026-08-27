@@ -463,6 +463,7 @@ defmodule ReyCode.TUI.Activity do
   defp active_tool_label("edit"), do: "Editing"
   defp active_tool_label("write"), do: "Writing"
   defp active_tool_label("spawn_task"), do: "Delegating"
+  defp active_tool_label("process"), do: "Supervising"
   defp active_tool_label(_name), do: "Working"
 
   defp terminal_tool_label("read"), do: "Read"
@@ -472,6 +473,7 @@ defmodule ReyCode.TUI.Activity do
   defp terminal_tool_label("edit"), do: "Edited"
   defp terminal_tool_label("write"), do: "Wrote"
   defp terminal_tool_label("spawn_task"), do: "Delegated"
+  defp terminal_tool_label("process"), do: "Managed"
   defp terminal_tool_label(name), do: humanize(name)
 
   defp tool_target(name, arguments, workspace, target_graphemes) do
@@ -482,6 +484,9 @@ defmodule ReyCode.TUI.Activity do
 
         "grep" ->
           argument(arguments, "pattern")
+
+        "process" ->
+          argument(arguments, "name") || argument(arguments, "action")
 
         "bash" ->
           argument(arguments, "command")

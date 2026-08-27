@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Engine.Turns do
   @moduledoc "Handles user-facing turn commands for the Engine."
 
-  alias ReyCode.Orchestration.Engine.{Admission, Lifecycle, Persistence}
+  alias ReyCode.Orchestration.Engine.{Admission, Identity, Lifecycle, Persistence}
   alias ReyCode.Orchestration.{EventEntries, Mode, Squad, Validation}
   alias ReyCode.Provider.Catalog
 
@@ -17,6 +17,50 @@ defmodule ReyCode.Orchestration.Engine.Turns do
   @spec delegate_task(map(), term(), term(), term()) :: response()
   def delegate_task(state, room_id, participant_id, raw_body) do
     queue(state, room_id, raw_body, :delegate, participant_id)
+  end
+
+  @doc "Queues one bounded correction for the next provider-round boundary."
+  @spec steer(map(), term(), term()) :: response()
+  def steer(state, turn_id, raw_body) do
+    turn = state.projection.turns[turn_id]
+
+    with %{} <- turn,
+         true <- turn.status == :running,
+         {:ok, body} <- Validation.message(raw_body),
+         :ok <- steering_size(body, state.config.orchestration.steering_max_bytes),
+         {:ok, invocation} <- steering_invocation(turn, state),
+         :ok <-
+           steering_capacity(
+             invocation,
+             state.config.orchestration.steering_max_pending
+           ) do
+      steering_id = Identity.new_id("steering")
+      entry = EventEntries.invocation_steering_requested(invocation, steering_id, body)
+      next = Persistence.append_and_apply!(state, [entry])
+      {:reply, :ok, next}
+    else
+      nil -> {:reply, {:error, :turn_not_found}, state}
+      false -> {:reply, {:error, :turn_not_running}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  @doc "Cancels the newest queued follow-up Turn in one Room."
+  @spec cancel_latest_follow_up(map(), term()) :: response()
+  def cancel_latest_follow_up(state, room_id) do
+    room = state.projection.rooms[room_id]
+
+    if room do
+      turn =
+        room.queued_turn_ids
+        |> Enum.reverse()
+        |> Enum.map(&state.projection.turns[&1])
+        |> Enum.find(&(&1.input_kind == :follow_up and &1.status == :queued))
+
+      cancel_follow_up(state, turn)
+    else
+      {:reply, {:error, :room_not_found}, state}
+    end
   end
 
   defp queue(state, room_id, raw_body, mode, participant_id) do
@@ -37,6 +81,38 @@ defmodule ReyCode.Orchestration.Engine.Turns do
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
+    end
+  end
+
+  defp steering_size(body, max_bytes) do
+    if byte_size(body) <= max_bytes, do: :ok, else: {:error, :steering_too_large}
+  end
+
+  defp steering_invocation(turn, state) do
+    candidates =
+      turn.invocation_order
+      |> Enum.map(&state.projection.invocations[&1])
+      |> Enum.filter(&(&1.status in [:queued, :running, :waiting_tool_approval]))
+
+    case candidates do
+      [invocation] -> {:ok, invocation}
+      [] -> {:error, :steering_unavailable}
+      _multiple -> {:error, :steering_ambiguous}
+    end
+  end
+
+  defp steering_capacity(invocation, max_pending) do
+    if length(invocation.pending_steering) < max_pending,
+      do: :ok,
+      else: {:error, :steering_queue_full}
+  end
+
+  defp cancel_follow_up(state, nil), do: {:reply, {:error, :no_queued_follow_up}, state}
+
+  defp cancel_follow_up(state, turn) do
+    case Lifecycle.cancel_turn(state, turn.id, "Queued follow-up cancelled by Operator") do
+      {:ok, next} -> {:reply, :ok, next}
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 

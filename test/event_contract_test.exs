@@ -146,6 +146,11 @@ defmodule ReyCode.EventContractTest do
 
       assert %Event{type: :assistant_message_opened} =
                Event.decode_value!(wire_event(:assistant_message_opened, sparse_invocation))
+
+      sparse_completion = Map.delete(valid_data(:invocation_completed), "metadata")
+
+      assert %Event{type: :invocation_completed} =
+               Event.decode_value!(wire_event(:invocation_completed, sparse_completion))
     end
 
     test "unknown extra fields do not break decoding of older events" do
@@ -194,6 +199,25 @@ defmodule ReyCode.EventContractTest do
           "kind" => "primary"
         }
       ]
+    }
+
+  defp valid_data(:context_compacted),
+    do: %{
+      "room_id" => "room-1",
+      "through_sequence" => 4,
+      "summary" => "Earlier context",
+      "source_message_count" => 2,
+      "source_bytes" => 8_000,
+      "summary_bytes" => 15,
+      "generator" => "extractive-v1"
+    }
+
+  defp valid_data(:session_forked),
+    do: %{
+      "room_id" => "room-fork",
+      "parent_room_id" => "room-1",
+      "through_sequence" => 4,
+      "inherited_message_ids" => ["msg-1"]
     }
 
   defp valid_data(:participant_added),
@@ -267,6 +291,16 @@ defmodule ReyCode.EventContractTest do
       "message_id" => "msg-2",
       "turn_id" => "turn-1",
       "room_id" => "room-1"
+    }
+
+  defp valid_data(:invocation_steering_requested),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "steering_id" => "steering-1",
+      "body" => "Use the smaller approach"
     }
 
   defp valid_data(:provider_frame_recorded),

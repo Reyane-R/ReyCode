@@ -44,8 +44,8 @@ defmodule ReyCode.Event do
         }
 
   @types ~w(
-    room_created participant_added participant_configured message_posted turn_queued turn_started assistant_message_opened
-    invocation_started provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
+    room_created session_forked context_compacted participant_added participant_configured message_posted turn_queued turn_started assistant_message_opened
+    invocation_started invocation_steering_requested provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
     turn_completed snapshot_recorded squad_configured squad_stage_entered squad_decision_recorded
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
     gate_review_requested gate_resolved squad_budget_extended tool_ask_requested tool_ask_resolved
@@ -90,6 +90,7 @@ defmodule ReyCode.Event do
   @authorizations ~w(allow ask denied)
   @release_authorities ~w(human leader)
   @participant_kinds ~w(primary task legacy)
+  @input_kinds ~w(operator follow_up)
   @retry_kinds ~w(provider_retry rework)
 
   @frame_kinds ~w(
@@ -118,6 +119,27 @@ defmodule ReyCode.Event do
         "title" => :text,
         "workspace" => :text,
         "participants" => :participant_list
+      },
+      optional: %{}
+    },
+    context_compacted: %{
+      required: %{
+        "room_id" => :id,
+        "through_sequence" => :non_negative_integer,
+        "summary" => :text,
+        "source_message_count" => :non_negative_integer,
+        "source_bytes" => :non_negative_integer,
+        "summary_bytes" => :non_negative_integer,
+        "generator" => :id
+      },
+      optional: %{}
+    },
+    session_forked: %{
+      required: %{
+        "room_id" => :id,
+        "parent_room_id" => :id,
+        "through_sequence" => :non_negative_integer,
+        "inherited_message_ids" => :text_list
       },
       optional: %{}
     },
@@ -159,8 +181,10 @@ defmodule ReyCode.Event do
         "mode" => {:one_of, @durable_modes},
         "context_through_sequence" => :non_negative_integer
       },
-      # participant_id postdates early schema-v2 turns; legacy events omit it.
-      optional: %{"participant_id" => :nullable_text}
+      optional: %{
+        "participant_id" => :nullable_text,
+        "input_kind" => {:one_of, @input_kinds}
+      }
     },
     turn_started: %{required: @turn_room_identity, optional: %{}},
     assistant_message_opened: %{
@@ -181,12 +205,28 @@ defmodule ReyCode.Event do
         "dependencies" => :text_list,
         "attempt" => :positive_integer,
         "delegated_from_invocation_id" => :id,
+        "project_instructions" => :text,
+        "project_instruction_digest" => :nullable_text,
+        "project_instruction_sources" => :text_list,
+        "output_schema" => :nullable_wire_map,
+        "workspace" => :text,
+        "workspace_roots" => :text_list,
+        "isolation" => :nullable_wire_map,
         "delegated_from_tool_run_id" => :id,
         "delegation_depth" => :non_negative_integer
       }
     },
     invocation_started: %{
       required: Map.merge(@invocation_identity, @turn_room_identity),
+      optional: %{}
+    },
+    invocation_steering_requested: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "steering_id" => :id,
+          "body" => :text
+        }),
       optional: %{}
     },
     provider_frame_recorded: %{
@@ -200,9 +240,8 @@ defmodule ReyCode.Event do
       optional: %{}
     },
     invocation_completed: %{
-      required:
-        Map.merge(@invocation_identity, @turn_room_identity) |> Map.put("metadata", :wire_map),
-      optional: %{}
+      required: Map.merge(@invocation_identity, @turn_room_identity),
+      optional: %{"metadata" => :wire_map}
     },
     invocation_failed: %{
       required:
@@ -328,7 +367,7 @@ defmodule ReyCode.Event do
           "tool_calls" => :map_list,
           "usage" => :nullable_wire_map
         }),
-      optional: %{}
+      optional: %{"steering" => :map_list}
     },
     tool_run_requested: %{
       required:
@@ -342,7 +381,7 @@ defmodule ReyCode.Event do
           "workspace" => :text,
           "authorization" => {:one_of, @authorizations}
         }),
-      optional: %{}
+      optional: %{"workspace_roots" => :text_list}
     },
     tool_run_approval_resolved: %{
       required:

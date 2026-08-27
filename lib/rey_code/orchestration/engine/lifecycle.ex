@@ -1,9 +1,18 @@
 defmodule ReyCode.Orchestration.Engine.Lifecycle do
   @moduledoc "Owns turn recovery, scheduling, cancellation, and finalization transitions."
 
-  alias ReyCode.Failure
+  alias ReyCode.{Failure, ProjectInstructions}
 
-  alias ReyCode.Orchestration.{Delegation, EventEntries, Mode, ToolRuns, Validation}
+  alias ReyCode.Orchestration.{
+    ContextCompaction,
+    Delegation,
+    DelegationWorktree,
+    EventEntries,
+    Mode,
+    ToolRuns,
+    Validation
+  }
+
   alias ReyCode.Orchestration.Engine.{Admission, Identity, Options, Persistence}
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
 
@@ -71,6 +80,10 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     turn_id = Identity.new_id("turn")
     message_id = Identity.new_id("msg")
     context_sequence = state.projection.sequence + 1
+    room = state.projection.rooms[room_id]
+
+    input_kind =
+      if room.active_turn_id || room.queued_turn_ids != [], do: :follow_up, else: :operator
 
     entries =
       EventEntries.queue_turn(
@@ -80,6 +93,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
         turn_id,
         message_id,
         context_sequence,
+        input_kind,
         participant_id
       )
 
@@ -295,6 +309,16 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     invocation_entries = build_invocation_entries(room, turn, specs)
     turn_entry = EventEntries.turn_started(turn)
 
+    context_entries =
+      case ContextCompaction.entry(
+             room,
+             state.projection,
+             state.config.orchestration.context_budget_tokens
+           ) do
+        :unchanged -> []
+        {:compact, entry} -> [entry]
+      end
+
     state =
       if turn.mode == :squad do
         squad_config = [
@@ -308,10 +332,11 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
         Persistence.append_and_apply!(
           state,
-          [turn_entry | EventEntries.squad_start(turn, squad_config)] ++ invocation_entries
+          context_entries ++
+            [turn_entry | EventEntries.squad_start(turn, squad_config)] ++ invocation_entries
         )
       else
-        Persistence.append_and_apply!(state, [turn_entry | invocation_entries])
+        Persistence.append_and_apply!(state, context_entries ++ [turn_entry | invocation_entries])
       end
 
     start_invocation_workers(state, invocation_entries)
@@ -385,6 +410,16 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   defp build_invocation_entries(room, turn, specs) do
+    capture = ProjectInstructions.capture(room.workspace)
+
+    specs =
+      Enum.map(specs, fn spec ->
+        spec
+        |> Map.put_new(:project_instructions, capture.content)
+        |> Map.put_new(:project_instruction_digest, capture.digest)
+        |> Map.put_new(:project_instruction_sources, capture.sources)
+      end)
+
     generated_ids =
       Enum.map(specs, fn _spec -> {Identity.new_id("inv"), Identity.new_id("msg")} end)
 
@@ -508,7 +543,10 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   defp resume_parent_delegation(state, %{delegated_from_invocation_id: nil}, _outcome),
     do: state
 
-  defp resume_parent_delegation(state, _child, :cancelled), do: state
+  defp resume_parent_delegation(state, child, :cancelled) do
+    _ = finish_isolation(child, :cleanup)
+    state
+  end
 
   defp resume_parent_delegation(state, child, outcome) do
     parent = state.projection.invocations[child.delegated_from_invocation_id]
@@ -531,30 +569,56 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     end
   end
 
-  defp delegation_report(child, {:completed, _metadata}, projection) do
-    body = projection.messages[child.message_id] && projection.messages[child.message_id].body
-    Delegation.report(true, body, child.usage)
-  end
-
   defp delegation_report(child, {:failed, error}, _projection) do
     wire = Failure.to_wire(error)
     Delegation.report(false, "#{wire["category"]}: #{wire["message"]}", child.usage)
   end
 
   defp delegation_result_entry(parent, run, child, {:completed, _metadata}, projection) do
-    EventEntries.tool_run_completed(
-      parent,
-      run,
-      delegation_report(child, {:completed, nil}, projection)
-    )
+    body = projection.messages[child.message_id] && projection.messages[child.message_id].body
+
+    with {:ok, _structured} <-
+           Delegation.validate_output(body, child.execution_context.output_schema),
+         :ok <- finish_isolation(child, :apply) do
+      EventEntries.tool_run_completed(
+        parent,
+        run,
+        Delegation.report(true, body, child.usage)
+      )
+    else
+      {:error, reason} ->
+        _ = finish_isolation(child, :cleanup)
+
+        EventEntries.tool_run_failed(
+          parent,
+          run,
+          Delegation.report(false, inspect(reason), child.usage)
+        )
+    end
   end
 
   defp delegation_result_entry(parent, run, child, {:failed, error}, projection) do
+    _ = finish_isolation(child, :cleanup)
+
     EventEntries.tool_run_failed(
       parent,
       run,
       delegation_report(child, {:failed, error}, projection)
     )
+  end
+
+  defp finish_isolation(%{execution_context: %{isolation: nil}}, _action), do: :ok
+
+  defp finish_isolation(child, action) do
+    isolation = %{
+      workspace: child.execution_context.isolation["workspace"],
+      source_workspace: child.execution_context.isolation["source_workspace"]
+    }
+
+    case action do
+      :apply -> DelegationWorktree.apply(isolation)
+      :cleanup -> DelegationWorktree.cleanup(isolation)
+    end
   end
 
   # Crash between a child's terminal record and the parent's resume write

@@ -123,7 +123,9 @@ defmodule ReyCode.RuntimeConfig do
         workspace_queue_limit: values.workspace_queue_limit,
         agent_delay_ms: values.agent_delay_ms,
         delegation_max_children: values.delegation_max_children_per_invocation,
-        delegation_brief_max_bytes: values.delegation_brief_max_bytes
+        delegation_brief_max_bytes: values.delegation_brief_max_bytes,
+        steering_max_pending: values.steering_max_pending,
+        steering_max_bytes: values.steering_max_bytes
       },
       providers: %Providers{
         allow_simulator?: values.allow_simulator_provider,
@@ -188,7 +190,10 @@ defmodule ReyCode.RuntimeConfig do
           max_bytes: values.tool_read_max_bytes,
           max_lines: values.tool_read_max_lines
         },
-        edit: %Tools.Edit{max_bytes: values.tool_edit_max_bytes},
+        edit: %Tools.Edit{
+          max_bytes: values.tool_edit_max_bytes,
+          max_patches: values.tool_edit_max_patches
+        },
         write: %Tools.Write{max_bytes: values.tool_write_max_bytes},
         glob: %Tools.Glob{max_results: values.tool_glob_max_results},
         list: %Tools.List{
@@ -200,6 +205,51 @@ defmodule ReyCode.RuntimeConfig do
           max_file_bytes: values.tool_grep_max_file_bytes,
           max_files: values.tool_grep_max_files,
           timeout_ms: values.tool_grep_timeout_ms
+        },
+        lsp: %Tools.LSP{
+          command: values.tool_lsp_command,
+          timeout_ms: values.tool_lsp_timeout_ms,
+          max_output_bytes: values.tool_lsp_max_output_bytes,
+          max_file_bytes: values.tool_lsp_max_file_bytes,
+          max_edits: values.tool_lsp_max_edits,
+          env_allowlist: values.tool_lsp_env_allowlist,
+          cpu_seconds: values.tool_lsp_cpu_seconds,
+          open_files: values.tool_lsp_open_files
+        },
+        process: %Tools.BackgroundProcess{
+          max_processes: values.tool_process_max_processes,
+          max_output_bytes: values.tool_process_max_output_bytes,
+          stop_timeout_ms: values.tool_process_stop_timeout_ms,
+          env_allowlist: values.tool_process_env_allowlist,
+          cpu_seconds: values.tool_process_cpu_seconds,
+          open_files: values.tool_process_open_files
+        },
+        debugger: %Tools.Debugger{
+          command: values.tool_debugger_command,
+          timeout_ms: values.tool_debugger_timeout_ms,
+          max_output_bytes: values.tool_debugger_max_output_bytes,
+          env_allowlist: values.tool_debugger_env_allowlist,
+          cpu_seconds: values.tool_debugger_cpu_seconds,
+          open_files: values.tool_debugger_open_files
+        },
+        evaluation: %Tools.Evaluation{
+          python_command: values.tool_evaluation_python_command,
+          javascript_command: values.tool_evaluation_javascript_command,
+          timeout_ms: values.tool_evaluation_timeout_ms,
+          max_code_bytes: values.tool_evaluation_max_code_bytes,
+          max_output_bytes: values.tool_evaluation_max_output_bytes,
+          max_kernels: values.tool_evaluation_max_kernels,
+          env_allowlist: values.tool_evaluation_env_allowlist,
+          cpu_seconds: values.tool_evaluation_cpu_seconds,
+          open_files: values.tool_evaluation_open_files
+        },
+        research: %Tools.Research{
+          search_endpoint: values.web_search_endpoint,
+          search_key_env: values.web_search_key_env,
+          search_timeout_ms: values.web_search_timeout_ms,
+          max_results: values.web_search_max_results,
+          max_bytes: values.web_search_max_bytes,
+          document_timeout_ms: values.document_read_timeout_ms
         }
       },
       tui: %TUI{reduced_motion?: values.tui_reduced_motion},

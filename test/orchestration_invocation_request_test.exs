@@ -12,6 +12,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
   }
 
   alias ReyCode.Orchestration.Message, as: ProjectionMessage
+  alias ReyCode.ProjectInstructions.Capture
   alias ReyCode.Provider.{Message, Request, ToolCall}
 
   test "builds the complete provider request from durable projection state" do
@@ -29,6 +30,11 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
       room_id: "room-1",
       participant: participant,
       system_prompt: "Build the smallest change",
+      project_instructions: %Capture{
+        content: "Project rules from AGENTS.md",
+        digest: ReyCode.Hashing.sha256_hex("Project rules from AGENTS.md"),
+        sources: ["/workspace/AGENTS.md"]
+      },
       last_frame_sequence: 3,
       attempt: 2,
       label: "revision",
@@ -96,7 +102,10 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
              room_id: "room-1",
              mode: :compare,
              participant: participant,
-             system_prompt: "Build the smallest change",
+             system_prompt:
+               "Build the smallest change\n\n" <>
+                 "Follow these frozen project instructions for this Invocation:\n\n" <>
+                 "Project rules from AGENTS.md",
              messages: [
                Message.new(role: :user, content: "Please revise it", author: %{name: "You"}),
                Message.new(

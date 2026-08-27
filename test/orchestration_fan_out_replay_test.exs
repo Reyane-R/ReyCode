@@ -82,6 +82,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
           turn_id,
           "msg-user-fanout",
           2,
+          :operator,
           nil
         ) ++
         [EventEntries.turn_started(turn)] ++
@@ -242,6 +243,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
         turn.id,
         "msg-user-#{suffix}",
         2,
+        :operator,
         nil
       )
   end

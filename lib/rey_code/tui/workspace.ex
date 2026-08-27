@@ -8,8 +8,25 @@ defmodule ReyCode.TUI.Workspace do
   alias Breeze.{Component, View}
 
   @doc "Opens the current session's workspace path."
-  @spec open(map()) :: map()
-  def open(term), do: Component.assign(term, modal: :workspace, slash: nil, notice: nil)
+  @spec open(map(), String.t() | nil) :: map()
+  def open(term, relative_path \\ nil) do
+    projection = Map.get(term.assigns, :projection)
+    room_id = Map.get(term.assigns, :selected_room_id)
+    room = projection && Map.get(projection.rooms, room_id)
+    workspace = room && Map.get(room, :workspace)
+
+    path =
+      if relative_path && workspace,
+        do: Path.join(workspace, relative_path),
+        else: workspace
+
+    Component.assign(term,
+      modal: :workspace,
+      slash: nil,
+      workspace_preview_path: path,
+      notice: nil
+    )
+  end
 
   @doc "Keeps global focus unchanged while the modal is open."
   @spec focus(map()) :: map()
@@ -44,7 +61,7 @@ defmodule ReyCode.TUI.Workspace do
       </box>
       <box class="pt-3 text-muted">WORKSPACE PATH</box>
       <box class="pt-1 w-full">
-        {wrap_workspace(@term.room.workspace, @term.breeze.terminal.width - 8)}
+        {wrap_workspace(@term.workspace_preview_path, @term.breeze.terminal.width - 8)}
       </box>
       <box class="pt-3 text-muted">Esc close</box>
     </box>

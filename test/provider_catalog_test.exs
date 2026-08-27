@@ -509,7 +509,7 @@ defmodule ReyCode.Provider.CatalogTest do
     end
 
     test "resolve_when_ready replies when the requested provider settles" do
-      {catalog, parent} = start_blocking_opencode_catalog()
+      {catalog, _parent} = start_blocking_opencode_catalog()
 
       assert_receive {:opencode_probe_started, _}, 500
 
@@ -567,7 +567,7 @@ defmodule ReyCode.Provider.CatalogTest do
     end
 
     test "stale probe results never overwrite newer published state" do
-      {catalog, parent} = start_blocking_opencode_catalog(probe_timeout: 50)
+      {catalog, _parent} = start_blocking_opencode_catalog(probe_timeout: 50)
 
       assert_receive {:opencode_probe_started, blocked}, 500
 

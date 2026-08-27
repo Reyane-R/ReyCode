@@ -44,14 +44,14 @@ defmodule ReyCode.TUI.Help do
         <box class="text-muted">Esc/Enter close · Type / for commands.</box>
       </box>
       <box class="pt-2">
+        <box class="font-bold text-primary">Providers now</box>
+        <box :for={provider <- provider_rows(@term)} class="text-muted">  · {provider}</box>
+      </box>
+      <box class="pt-2">
         <box :for={section <- @sections} class="pt-1">
           <box class="font-bold text-primary">{section.title}</box>
           <box :for={item <- section.items} class="text-muted">  · {item}</box>
         </box>
-      </box>
-      <box class="pt-2">
-        <box class="font-bold text-primary">Providers now</box>
-        <box :for={provider <- provider_rows(@term)} class="text-muted">  · {provider}</box>
       </box>
     </box>
     """

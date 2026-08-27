@@ -99,17 +99,31 @@ Creating an agent never runs it. Ordinary conversation never invokes task
 agents. This allows a Release agent, Test agent, and Documentation agent to use
 different models without automatically multiplying token cost.
 
+Each Invocation freezes project instructions before it starts. ReyCode loads
+`AGENTS.md` from at most eight Workspace ancestors, root first. Optional
+project skills live at `.reycode/skills/<name>/SKILL.md`; enable them explicitly
+by listing one safe name per line in `.reycode/skills/enabled`. Sources and
+total bytes are bounded, and the durable Invocation records the combined
+content digest and exact source paths so restart behavior cannot drift.
+
 - `Enter` or `Ctrl+S`: send the current draft
 
 - `/` or `Ctrl+P`: open the command palette (fuzzy: `/res` finds `/resume`)
 - `/help`: open the deterministic capability reference without invoking a provider
 - `/new` or `Ctrl+N`: start a clean Session
 - `/resume`: pick and reopen a previous Session
+- `/fork`: branch the current Session at its latest durable sequence
+- `/rewind <sequence>`: branch the current Session at an earlier durable sequence
+- `/export`: write a deterministic Markdown Session export inside `.reycode/exports`
+- `/advise [brief]`: run an explicit review through the configured Advisor Participant
+- `/hub`: inspect and control delegated child Invocations
 - `/home`: return to the session home
 - `/agent`: create a task agent
 - `/agents`: change an agent's provider/model
 - `/model`: switch the Assistant model in one step
 - `/task`: delegate one task to one task agent
+- `/steer <correction>`: queue a correction for the active Invocation's next provider-round boundary
+- `/unqueue`: cancel the newest queued follow-up before it starts
 
 │
 - `!cmd`: run a shell command in the workspace; output lands in the transcript
@@ -142,11 +156,34 @@ glyph and one-second elapsed-time refresh instead of frame animation.
 
 Token usage is summed from durable provider usage records against the
 configured `context_budget_tokens` budget
-(`REYCODE_CONTEXT_BUDGET_TOKENS`).
+(`REYCODE_CONTEXT_BUDGET_TOKENS`). Before an over-budget Turn starts, ReyCode
+records a bounded extractive ContextSummary and a durable ContextBoundary.
+Future provider requests use that summary plus later Messages; the complete
+transcript and Events remain available for replay and rendering.
 
-In the command palette, arrow keys move the selection, Tab completes it, Enter
-runs it, and Escape returns to the draft. `/cancel` stops the current task and
-`/tools` reviews a pending tool approval.
+Submitting an ordinary message while the Session already has active or queued
+work records a durable FollowUp Turn. `/unqueue` cancels only the newest queued
+FollowUp; it never cancels executing work. `/steer <correction>` records bounded
+Steering on the one active Invocation. The exact pending Steering IDs are
+included in the next provider request and moved into that ProviderRound only
+when its response is durably recorded; steering that arrives during a stream
+therefore forces another round instead of being lost.
+
+In the command palette, arrow keys move the selection, Tab accepts the
+highlighted completion without executing it, Shift+Tab moves backward, Enter
+runs it, and Escape returns to the draft. Commands complete current task
+Participants, provider/models, Sessions, and immediate workspace directories.
+Dynamic arguments are revalidated when submitted. `/cancel` stops the current
+task and `/tools` reviews a pending tool approval.
+
+Developer environment tools include structured Git status/diff/review/commit and
+conflict-resolution operations, DAP debugger sessions, persistent Python and
+JavaScript evaluation kernels, web search, rich URL/PDF/HTML/JSON reading,
+project memory, and an opt-in Advisor review. Git commits, conflict resolution,
+debugger execution, evaluation, and memory mutation require owner approval.
+`/hub` opens the live delegated-child control surface; `C` cancels the selected
+child. `/advise` queues an explicit review through the Task Participant named
+`Advisor` and never enables background review implicitly.
 
 On macOS, event data is stored transactionally in
 `~/Library/Application Support/ReyCode/rey_code.sqlite3`. On first launch, a
@@ -156,12 +193,14 @@ with a `.pre-sqlite-backup` rollback copy.
 ## Architecture
 
 ```text
+
 ReyCode.Application                     rest-for-one dependency supervision
 |-- ReyCode.AgentRegistry                unique process registry for Agent workers
 |-- ReyCode.EventRegistry                duplicate process registry for subscriptions
 |-- ReyCode.EventStore                   transactional SQLite event store
 |-- ReyCode.ProviderTaskSupervisor       bounded discovery task supervisor
 |-- ReyCode.Provider.Catalog             transient provider discovery and runtime resolution
+|-- ReyCode.ProcessHub                   supervised bounded background processes
 |-- ReyCode.Orchestration.Supervisor     engine/worker restart boundary
 |   |-- DynamicSupervisor                monitored temporary Agent workers
 |   `-- ReyCode.Orchestration.Engine     room commands, FIFO scheduling, admission control
@@ -405,24 +444,65 @@ the legacy `:provider_managed_tools` capability.
 
 ### Tool security model
 
-Providers can only request workspace tools — `read`, `write`, `edit`, `bash`,
-`grep`, `glob`, and `list`. ReyCode executes them itself, one durable tool run
-at a time, inside the trusted workspace roots configured via
-`REYCODE_WORKSPACE_ROOTS`; paths outside the roots fail closed. Read-only and
-edit tools run without prompting after containment checks; `bash` and `write`
-always wait for explicit owner approval. Every adapter runs under focused
-resource caps — wall-clock timeouts, bounded output sizes, environment
-allowlists, CPU-second and open-file limits — declared per tool in
-configuration. Unknown tools are denied. See [Tool approval](#tool-approval)
-for the approval surface.
+Providers can request workspace and developer-environment tools — `read`,
+`write`, `edit`, `bash`, `grep`, `glob`, `list`, `lsp`, `process`, `git`, `debug`,
+`eval`, `memory`, `web_search`, and `read_url`. ReyCode executes them inside
+trusted Workspace roots where applicable. Read-only inspection runs after
+containment checks. Bash, write, Git mutations, debugger control, evaluation,
+and memory mutations require owner approval. Unknown tools fail closed. See
+[Tool approval](#tool-approval) for the approval surface.
+
+For editable files within the read byte limit, `read` returns a lowercase
+SHA-256 `source_hash`. `edit` requires that hash and one or more unique
+replacement patches. It validates every patch against the same snapshot,
+rejects stale/ambiguous/overlapping anchors, and commits the complete batch
+with one atomic rename. Successful results include both source and result hashes.
+
+Configure a stdio language server with a comma-separated executable/argument
+list such as `REYCODE_TOOL_LSP_COMMAND=/path/to/language-server,--stdio`.
+The `lsp` tool supports diagnostics, definition, references, hover, symbols,
+implementation, code actions, and rename. Every call is bounded and
+workspace-contained; rename validates the returned WorkspaceEdit before
+applying it.
+
+The `process` tool owns bounded named background processes. `start`, `stop`,
+and `restart` require approval; `list`, `logs`, and bounded readiness `wait`
+only inspect Hub state. Processes retain only the newest configured output
+bytes and are terminated when the supervised Hub stops.
+
+`git` provides bounded status, diff, branch, conflict, review, staged-commit,
+and conflict-resolution operations. `debug` drives a configured DAP adapter for
+breakpoints, threads, stack frames, scopes, variables, evaluation, stepping,
+and controlled execution. `eval` keeps one bounded Python or JavaScript
+namespace alive between approved calls.
+
+`web_search` uses an explicitly configured JSON search endpoint. `read_url`
+normalizes bounded HTML, JSON, text, and PDF responses when `pdftotext` is
+installed. `memory` stores append-only project facts and lessons in SQLite;
+`recall` and `reflect` inspect them without mutation.
 
 ## Tool approval
 
 Providers can only request workspace tools — `read`, `write`, `edit`, `bash`,
-`grep`, `glob`, and `list`. ReyCode executes them itself, one durable tool run
-at a time, inside the trusted workspace roots. `read`, `grep`, `glob`, `list`,
-and `edit` run without prompting; `bash` and `write` always wait for owner
-approval first. Unknown tools fail closed.
+`grep`, `glob`, `list`, `lsp`, `process`, `git`, `debug`, `eval`, `memory`,
+`web_search`, and `read_url`. Read-only inspection runs after containment
+checks. Bash, write, Git mutations, debugger control, evaluation, and memory
+mutations require owner approval. Unknown tools fail closed.
+
+Configure the additional tools with these environment variables:
+
+```sh
+REYCODE_TOOL_DEBUGGER_COMMAND=/usr/bin/lldb-dap
+REYCODE_TOOL_EVALUATION_PYTHON_COMMAND=python3
+REYCODE_TOOL_EVALUATION_JAVASCRIPT_COMMAND=node
+REYCODE_WEB_SEARCH_ENDPOINT=https://api.search.brave.com/res/v1/web/search
+REYCODE_WEB_SEARCH_KEY_ENV=BRAVE_API_KEY
+```
+
+Git inspection is read-only; commits and conflict resolutions are approval
+gated. Debugger, evaluation, and memory mutation calls are also approval-gated.
+Web search requires an explicitly configured endpoint and key environment
+variable; credentials are read at invocation time and never persisted.
 
 When a tool needs approval, a banner appears above the current transcript:
 
@@ -432,7 +512,9 @@ Run `/tools` (or click the banner's command) to open the review modal. For
 `bash` it shows the exact command, working directory, the names of every
 environment variable that will be passed through, and a reminder that Bash is
 explicit host execution rather than a sandbox. For `write` it shows the target
-path, content size, and a bounded preview. Approve with `A`, deny with `D`.
+path, content size, and a bounded preview. For LSP `rename` it shows the action,
+file, new name, and workspace-edit scope. Process mutations show the action,
+name, argv, and supervised host scope. Approve with `A`, deny with `D`.
 
 Decisions are addressed to a specific durable tool run ID, so a stale modal can
 never approve a different request than the one displayed. Waiting approvals
@@ -463,6 +545,14 @@ closed — unknown names and primary participants are rejected without
 spawning. Delegation itself is auto-allowed; everything the child executes
 still passes the normal tool approval model above. Suspension, restart
 recovery (child first, exactly once per side), and cancellation are durable.
+
+`spawn_task` also accepts an optional `output_schema` and `isolate` flag.
+Structured children are instructed to return only JSON; the frozen schema is
+validated before the parent ToolRun can complete. `isolate: true` requires a
+clean git-root Workspace, runs the child in a detached temporary worktree, and
+applies the complete bounded binary patch to the source Workspace only after a
+successful schema-valid child result. Failed, cancelled, stale, or conflicting
+children remove the worktree without applying it.
 
 ## Diagnostics
 
@@ -503,6 +593,18 @@ existing database unless `--replace` is explicit:
 ```sh
 mix rey_code.store restore ~/Backups/rey_code.sqlite3 --replace
 ```
+
+## Session export
+
+Export the latest Session, or select one by exact ID, ID prefix, or title:
+
+```sh
+mix rey_code.export --format markdown --output session.md
+mix rey_code.export --session session-abc --format html --output session.html
+```
+
+Exports are deterministic Projection reads. They append no Events and include
+the inherited transcript and parent sequence for SessionForks.
 
 ## macOS release
 

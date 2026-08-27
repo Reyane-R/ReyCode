@@ -154,6 +154,9 @@ defmodule ReyCode.TUI do
   defp mention_notice(token, _reason), do: "Cannot attach #{token}: unreadable"
 
   defp send_message(term, draft) do
+    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
+    follow_up? = room.active_turn_id != nil or room.queued_turn_ids != []
+
     case Engine.post_message(
            term.assigns.selected_room_id,
            draft,
@@ -162,7 +165,8 @@ defmodule ReyCode.TUI do
          ) do
       {:ok, _turn_id} ->
         drafts = Map.put(term.assigns.drafts, term.assigns.selected_room_id, "")
-        {:noreply, assign(term, drafts: drafts, notice: nil, home: false)}
+        notice = if follow_up?, do: "Follow-up queued", else: nil
+        {:noreply, assign(term, drafts: drafts, notice: notice, home: false)}
 
       {:error, {:participants_unconfigured, _participant_ids}} ->
         {:noreply, assign(term, notice: "Configure the Assistant model with /agents")}

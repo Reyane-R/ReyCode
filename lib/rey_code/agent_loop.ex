@@ -103,7 +103,7 @@ defmodule ReyCode.AgentLoop do
            state.engine,
            state.invocation_id,
            request.round_index,
-           Response.to_wire(response)
+           response |> Response.to_wire() |> Map.put("steering", request.steering)
          ) do
       {:ok, :final} ->
         :ok =
@@ -132,6 +132,7 @@ defmodule ReyCode.AgentLoop do
         tool: run.tool,
         arguments: run.arguments,
         workspace: run.workspace,
+        roots: run.workspace_roots,
         request_id: run.id
       )
 

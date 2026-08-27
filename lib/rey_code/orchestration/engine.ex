@@ -72,6 +72,13 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:create_session, source_room_id, title})
   end
 
+  @doc "Forks a Session at one immutable Projection sequence."
+  @spec fork_session(term(), term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, atom()}
+  def fork_session(source_room_id, through_sequence, server \\ __MODULE__) do
+    GenServer.call(server, {:fork_session, source_room_id, through_sequence})
+  end
+
   @doc "Runs one owner-typed shell command and records its transcript message."
   @spec run_owner_command(term(), term(), GenServer.server()) :: :ok | {:error, atom()}
   def run_owner_command(room_id, command, server \\ __MODULE__) do
@@ -90,6 +97,18 @@ defmodule ReyCode.Orchestration.Engine do
           {:ok, String.t()} | {:error, term()}
   def post_message(room_id, body, mode, server \\ __MODULE__) do
     GenServer.call(server, {:post_message, room_id, body, mode})
+  end
+
+  @doc "Queues one Operator correction for the next provider-round boundary."
+  @spec steer_turn(term(), term(), GenServer.server()) :: :ok | {:error, atom()}
+  def steer_turn(turn_id, body, server \\ __MODULE__) do
+    GenServer.call(server, {:steer_turn, turn_id, body})
+  end
+
+  @doc "Cancels the newest queued follow-up in one Session."
+  @spec cancel_latest_follow_up(term(), GenServer.server()) :: :ok | {:error, atom()}
+  def cancel_latest_follow_up(room_id, server \\ __MODULE__) do
+    GenServer.call(server, {:cancel_latest_follow_up, room_id})
   end
 
   @doc "Queues one explicit task for one task participant."
@@ -213,6 +232,9 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:create_session, source_room_id, title}, _from, state),
     do: Rooms.create_session(state, source_room_id, title)
 
+  def handle_call({:fork_session, source_room_id, through_sequence}, _from, state),
+    do: Rooms.fork_session(state, source_room_id, through_sequence)
+
   def handle_call({:run_owner_command, room_id, command}, _from, state),
     do: OwnerCommand.run(state, room_id, command)
 
@@ -221,6 +243,12 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:post_message, room_id, raw_body, mode}, _from, state),
     do: Turns.post_message(state, room_id, raw_body, mode)
+
+  def handle_call({:steer_turn, turn_id, raw_body}, _from, state),
+    do: Turns.steer(state, turn_id, raw_body)
+
+  def handle_call({:cancel_latest_follow_up, room_id}, _from, state),
+    do: Turns.cancel_latest_follow_up(state, room_id)
 
   def handle_call({:delegate_task, room_id, participant_id, task}, _from, state),
     do: Turns.delegate_task(state, room_id, participant_id, task)

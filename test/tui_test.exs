@@ -40,7 +40,7 @@ defmodule ReyCode.TUITest do
   end
 
   test "/new starts another clean durable session" do
-    %{engine: engine, room_id: session_id} = start_isolated_stack([])
+    %{engine: engine} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
@@ -68,7 +68,7 @@ defmodule ReyCode.TUITest do
   end
 
   test "! runs an owner shell command into a new session transcript" do
-    %{engine: engine, room_id: session_id} = start_isolated_stack([])
+    %{engine: engine} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
@@ -103,7 +103,7 @@ defmodule ReyCode.TUITest do
   end
 
   test "/model switches the Assistant model from the catalog in one step" do
-    %{engine: engine, room_id: session_id} = start_isolated_stack([])
+    %{engine: engine} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
@@ -372,7 +372,6 @@ defmodule ReyCode.TUITest do
     session = start_session({120, 32}, engine: tui_engine_10)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
-    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
     push_projection(session, long_response_projection(session))
 
     type(session, "/resume")
@@ -876,7 +875,7 @@ defmodule ReyCode.TUITest do
     end
   end
 
-  defp start_session(size, opts \\ []) do
+  defp start_session(size, opts) do
     Breeze.Test.start!(ReyCode.TUI,
       size: size,
       theme: ReyCode.Theme.default(),

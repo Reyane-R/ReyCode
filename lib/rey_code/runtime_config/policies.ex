@@ -9,7 +9,9 @@ defmodule ReyCode.RuntimeConfig.Orchestration do
     :workspace_queue_limit,
     :agent_delay_ms,
     :delegation_max_children,
-    :delegation_brief_max_bytes
+    :delegation_brief_max_bytes,
+    :steering_max_pending,
+    :steering_max_bytes
   ]
 
   defstruct @enforce_keys
@@ -24,7 +26,9 @@ defmodule ReyCode.RuntimeConfig.Orchestration do
           global_queue_limit: queue_limit(),
           agent_delay_ms: non_neg_integer(),
           delegation_max_children: pos_integer(),
-          delegation_brief_max_bytes: pos_integer()
+          delegation_brief_max_bytes: pos_integer(),
+          steering_max_pending: pos_integer(),
+          steering_max_bytes: pos_integer()
         }
 end
 
@@ -200,12 +204,12 @@ defmodule ReyCode.RuntimeConfig.Tools.Read do
 end
 
 defmodule ReyCode.RuntimeConfig.Tools.Edit do
-  @moduledoc "Edit tool byte limit."
+  @moduledoc "Hash-anchored atomic edit limits."
 
-  @enforce_keys [:max_bytes]
+  @enforce_keys [:max_bytes, :max_patches]
   defstruct @enforce_keys
 
-  @type t :: %__MODULE__{max_bytes: pos_integer()}
+  @type t :: %__MODULE__{max_bytes: pos_integer(), max_patches: pos_integer()}
 end
 
 defmodule ReyCode.RuntimeConfig.Tools.Write do
@@ -249,12 +253,163 @@ defmodule ReyCode.RuntimeConfig.Tools.Grep do
         }
 end
 
+defmodule ReyCode.RuntimeConfig.Tools.LSP do
+  @moduledoc "Language-server command, resource, and result limits."
+
+  @enforce_keys [
+    :command,
+    :timeout_ms,
+    :max_output_bytes,
+    :max_file_bytes,
+    :max_edits,
+    :env_allowlist,
+    :cpu_seconds,
+    :open_files
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          command: [String.t()],
+          timeout_ms: pos_integer(),
+          max_output_bytes: pos_integer(),
+          max_file_bytes: pos_integer(),
+          max_edits: pos_integer(),
+          env_allowlist: [String.t()],
+          cpu_seconds: pos_integer(),
+          open_files: pos_integer()
+        }
+end
+
+defmodule ReyCode.RuntimeConfig.Tools.BackgroundProcess do
+  @moduledoc "Supervised background-process admission and resource limits."
+
+  @enforce_keys [
+    :max_processes,
+    :max_output_bytes,
+    :stop_timeout_ms,
+    :env_allowlist,
+    :cpu_seconds,
+    :open_files
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          max_processes: pos_integer(),
+          max_output_bytes: pos_integer(),
+          stop_timeout_ms: pos_integer(),
+          env_allowlist: [String.t()],
+          cpu_seconds: pos_integer(),
+          open_files: pos_integer()
+        }
+end
+
+defmodule ReyCode.RuntimeConfig.Tools.Debugger do
+  @moduledoc "Debug Adapter Protocol command and request limits."
+
+  @enforce_keys [
+    :command,
+    :timeout_ms,
+    :max_output_bytes,
+    :env_allowlist,
+    :cpu_seconds,
+    :open_files
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          command: [String.t()],
+          timeout_ms: pos_integer(),
+          max_output_bytes: pos_integer(),
+          env_allowlist: [String.t()],
+          cpu_seconds: pos_integer(),
+          open_files: pos_integer()
+        }
+end
+
+defmodule ReyCode.RuntimeConfig.Tools.Research do
+  @moduledoc "Bounded web search and document-fetch policy."
+
+  @enforce_keys [
+    :search_endpoint,
+    :search_key_env,
+    :search_timeout_ms,
+    :max_results,
+    :max_bytes,
+    :document_timeout_ms
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          search_endpoint: String.t() | nil,
+          search_key_env: String.t() | nil,
+          search_timeout_ms: pos_integer(),
+          max_results: pos_integer(),
+          max_bytes: pos_integer(),
+          document_timeout_ms: pos_integer()
+        }
+end
+
+defmodule ReyCode.RuntimeConfig.Tools.Evaluation do
+  @moduledoc "Persistent evaluation kernel limits and runtime commands."
+
+  @enforce_keys [
+    :python_command,
+    :javascript_command,
+    :timeout_ms,
+    :max_code_bytes,
+    :max_output_bytes,
+    :max_kernels,
+    :env_allowlist,
+    :cpu_seconds,
+    :open_files
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          python_command: [String.t()],
+          javascript_command: [String.t()],
+          timeout_ms: pos_integer(),
+          max_code_bytes: pos_integer(),
+          max_output_bytes: pos_integer(),
+          max_kernels: pos_integer(),
+          env_allowlist: [String.t()],
+          cpu_seconds: pos_integer(),
+          open_files: pos_integer()
+        }
+end
+
 defmodule ReyCode.RuntimeConfig.Tools do
   @moduledoc "Focused policies for each executable tool."
 
-  alias ReyCode.RuntimeConfig.Tools.{Bash, Edit, Glob, Grep, List, Read, Write}
+  alias ReyCode.RuntimeConfig.Tools.{
+    BackgroundProcess,
+    Bash,
+    Debugger,
+    Edit,
+    Evaluation,
+    Glob,
+    Grep,
+    List,
+    LSP,
+    Read,
+    Research,
+    Write
+  }
 
-  @enforce_keys [:bash, :read, :edit, :write, :glob, :list, :grep]
+  @enforce_keys [
+    :bash,
+    :read,
+    :edit,
+    :write,
+    :glob,
+    :list,
+    :grep,
+    :lsp,
+    :process,
+    :debugger,
+    :evaluation,
+    :research
+  ]
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
@@ -264,7 +419,12 @@ defmodule ReyCode.RuntimeConfig.Tools do
           write: Write.t(),
           glob: Glob.t(),
           list: List.t(),
-          grep: Grep.t()
+          grep: Grep.t(),
+          lsp: LSP.t(),
+          process: BackgroundProcess.t(),
+          debugger: Debugger.t(),
+          evaluation: Evaluation.t(),
+          research: Research.t()
         }
 end
 
