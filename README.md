@@ -108,7 +108,7 @@ content digest and exact source paths so restart behavior cannot drift.
 
 - `Enter` or `Ctrl+S`: send the current draft
 
-- `/` or `Ctrl+P`: open the command palette (fuzzy: `/res` finds `/resume`)
+- `/` or `Ctrl+P`: open a compact command palette; typing searches the full registry
 - `/help`: open the deterministic capability reference without invoking a provider
 - `/new` or `Ctrl+N`: start a clean Session
 - `/resume`: pick and reopen a previous Session
@@ -120,6 +120,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/home`: return to the session home
 - `/agent`: create a task agent
 - `/agents`: change an agent's provider/model
+- `/connect`: open provider configuration without model completion
 - `/model`: switch the Assistant model in one step
 - `/task`: delegate one task to one task agent
 - `/steer <correction>`: queue a correction for the active Invocation's next provider-round boundary
@@ -169,12 +170,13 @@ included in the next provider request and moved into that ProviderRound only
 when its response is durably recorded; steering that arrives during a stream
 therefore forces another round instead of being lost.
 
-In the command palette, arrow keys move the selection, Tab accepts the
-highlighted completion without executing it, Shift+Tab moves backward, Enter
-runs it, and Escape returns to the draft. Commands complete current task
-Participants, provider/models, Sessions, and immediate workspace directories.
-Dynamic arguments are revalidated when submitted. `/cancel` stops the current
-task and `/tools` reviews a pending tool approval.
+In the command palette, `/` shows common commands plus controls relevant to
+current work; typing searches the full registry. Arrow keys move the selection,
+Tab accepts the highlighted completion without executing it, Shift+Tab moves
+backward, Enter runs it, and Escape returns to the draft. Commands complete
+current task Participants, provider/models, Sessions, and immediate workspace
+directories. Dynamic arguments are revalidated when submitted. `/cancel` stops
+the current task and `/tools` reviews a pending tool approval.
 
 Developer environment tools include structured Git status/diff/review/commit and
 conflict-resolution operations, DAP debugger sessions, persistent Python and
@@ -334,8 +336,8 @@ read-only tasks.
 ## OpenCode and OMP
 
 OpenCode and OMP are CLI providers behind the `ReyCode.Provider` behaviour.
-Press `Ctrl+G` or submit `/connect` or `/models` to configure one agent or
-every agent in the current Session. ReyCode reports whether each CLI is
+Press `Ctrl+G` or submit `/connect` or `/agents` to configure one agent or every
+agent in the current Session. ReyCode reports whether each CLI is
 installed, checking, configured, or missing rather than treating process
 presence as an online state.
 

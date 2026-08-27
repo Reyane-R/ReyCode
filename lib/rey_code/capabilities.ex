@@ -11,12 +11,7 @@ defmodule ReyCode.Capabilities do
     %{command: "/agent", description: "Create a task Participant", action: :agent_profile},
     %{command: "/agents", description: "Configure Participant models", action: :settings},
     %{command: "/cancel", description: "Cancel the current task", action: :cancel},
-    %{
-      command: "/connect",
-      description: "Connect a provider",
-      action: :settings,
-      argument: :model
-    },
+    %{command: "/connect", description: "Configure providers", action: :settings},
     %{command: "/export", description: "Export the current Session", action: :export},
     %{command: "/fork", description: "Fork the current Session", action: :fork},
     %{command: "/help", description: "Explain what ReyCode can do", action: :help},
@@ -30,12 +25,6 @@ defmodule ReyCode.Capabilities do
       command: "/model",
       description: "Switch the Assistant model",
       action: :model_picker,
-      argument: :model
-    },
-    %{
-      command: "/models",
-      description: "Configure Participant models",
-      action: :settings,
       argument: :model
     },
     %{command: "/new", description: "Start a clean session", action: :new_session},

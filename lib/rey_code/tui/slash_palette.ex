@@ -6,6 +6,7 @@ defmodule ReyCode.TUI.SlashPalette do
 
   alias Breeze.{Component, View}
   alias ReyCode.Capabilities
+  alias ReyCode.Orchestration.Projection
   alias ReyCode.TUI.State
 
   alias ReyCode.TUI.{
@@ -26,6 +27,17 @@ defmodule ReyCode.TUI.SlashPalette do
   }
 
   @commands Capabilities.commands()
+  @commands_by_name Map.new(@commands, &{&1.command, &1})
+  @default_command_names [
+    "/task",
+    "/agent",
+    "/agents",
+    "/model",
+    "/connect",
+    "/new",
+    "/resume",
+    "/help"
+  ]
   @max_visible_row_count 12
   @reserved_composer_row_count 8
   @palette_border_row_count 1
@@ -113,7 +125,7 @@ defmodule ReyCode.TUI.SlashPalette do
   @doc "Returns static command matches for capability and pure ranking tests."
   @spec matches(String.t()) :: [map()]
   def matches(query) do
-    Completion.new(draft: query, commands: @commands)
+    Completion.new(draft: query, commands: commands_for(%{}, query))
     |> Completion.candidates()
     |> Enum.map(& &1.payload)
   end
@@ -159,8 +171,8 @@ defmodule ReyCode.TUI.SlashPalette do
       position: :fixed,
       left: 0,
       bottom: 6,
-      width: terminal_width,
       height: height(slash, terminal_height) + @palette_border_row_count,
+      width: terminal_width,
       layer: 40
     }
   end
@@ -367,12 +379,55 @@ defmodule ReyCode.TUI.SlashPalette do
     Completion.new(
       draft: draft,
       cursor: cursor,
-      commands: @commands,
+      commands: commands_for(assigns, draft),
       participants: participants,
       providers: Map.get(assigns, :providers, %{}),
       sessions: sessions,
       workspace: workspace
     )
+  end
+
+  defp commands_for(assigns, "/") do
+    assigns
+    |> contextual_command_names()
+    |> Kernel.++(@default_command_names)
+    |> Enum.uniq()
+    |> Enum.with_index()
+    |> Enum.map(fn {name, priority} ->
+      @commands_by_name
+      |> Map.fetch!(name)
+      |> Map.put(:palette_priority, priority)
+    end)
+  end
+
+  defp commands_for(_assigns, _draft), do: @commands
+
+  defp contextual_command_names(%{projection: projection, selected_room_id: room_id}) do
+    case Map.get(projection.rooms, room_id) do
+      nil ->
+        []
+
+      room ->
+        [
+          if(Projection.pending_tool_invocation(projection, room.active_turn_id), do: "/tools"),
+          if(room.active_turn_id, do: "/steer"),
+          if(room.active_turn_id, do: "/cancel"),
+          if(queued_follow_up?(projection, room), do: "/unqueue"),
+          if(Projection.delegated_invocations(projection, room_id) != [], do: "/hub")
+        ]
+        |> Enum.reject(&is_nil/1)
+    end
+  end
+
+  defp contextual_command_names(_assigns), do: []
+
+  defp queued_follow_up?(projection, room) do
+    Enum.any?(room.queued_turn_ids, fn turn_id ->
+      case Map.get(projection.turns, turn_id) do
+        %{input_kind: :follow_up, status: :queued} -> true
+        _other -> false
+      end
+    end)
   end
 
   defp slash_query(nil), do: ""

@@ -197,17 +197,18 @@ defmodule ReyCode.TUITest do
 
     type(session, "/")
     palette_screen = Breeze.Test.render!(session)
-    assert palette_screen =~ "/advise"
-    assert palette_screen =~ "/model"
+    assert palette_screen =~ "/task"
+    assert palette_screen =~ "/help"
     refute palette_screen =~ "/workspace"
+    refute palette_screen =~ "/advise"
 
-    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowUp")
-    scrolled_screen = Breeze.Test.render!(session)
-    assert scrolled_screen =~ "/workspace"
-    refute scrolled_screen =~ "/advise"
+    type(session, "workspace")
+    searched_screen = Breeze.Test.render!(session)
+    assert searched_screen =~ "/workspace"
+    refute searched_screen =~ "/task"
   end
 
-  test "/connect keeps long model candidates on one row in a wide terminal" do
+  test "/model keeps long model candidates on one row in a wide terminal" do
     %{engine: engine} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
@@ -223,11 +224,25 @@ defmodule ReyCode.TUITest do
 
     assert {:noreply, _focused} = push_providers(session, providers)
 
-    type(session, "/connect")
+    type(session, "/model")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Tab")
     screen = session |> Breeze.Test.render!() |> plain()
 
     assert screen =~ "omp/openai-codex/gpt-5.4-mini"
+  end
+
+  test "/connect opens provider settings without model completion" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    type(session, "/connect")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+
+    metadata = Breeze.Test.metadata(session)
+    assert metadata.assigns.modal == :settings
+    assert metadata.assigns.settings.step == :participants
+    assert Breeze.Test.render!(session) =~ "Configure agents"
   end
 
   test "creates a task agent before selecting its provider and model" do
@@ -989,6 +1004,7 @@ defmodule ReyCode.TUITest do
       attempt: 1,
       usage: %{"prompt_tokens" => 12_000, "completion_tokens" => 400},
       pending_tool_review: nil,
+      delegated_from_invocation_id: nil,
       tool_runs: %{
         "run-1" => %{
           tool: :read,
