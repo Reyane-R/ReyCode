@@ -1,7 +1,7 @@
 defmodule ReyCode.TUI.SettingsTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.TUI.Settings
+  alias ReyCode.TUI.{ModelPicker, Settings}
 
   test "initial/1 starts at participant selection for the requested room" do
     assert Settings.initial("room-1") == %{
@@ -61,6 +61,16 @@ defmodule ReyCode.TUI.SettingsTest do
     settings = %{Settings.initial() | provider: :opencode, query: "CLAUDE"}
 
     assert Settings.models(providers(), settings) == ["anthropic/claude"]
+  end
+
+  test "display_label keeps long model names on one terminal line" do
+    label = "OMP · omp/deepseek/deepseek-v4-flash"
+    display = ModelPicker.display_label(label, 18)
+
+    assert String.length(display) == 18
+    assert String.valid?(display)
+    refute String.contains?(display, "\n")
+    assert ModelPicker.display_label(label, 1) == "O"
   end
 
   test "back/1 closes the first step and restores prompt focus" do

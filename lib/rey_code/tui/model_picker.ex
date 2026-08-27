@@ -133,28 +133,45 @@ defmodule ReyCode.TUI.ModelPicker do
 
   attr :term, :map, required: true
 
-  @doc "Renders the Assistant model list."
   def modal(assigns) do
     assigns = Component.assign(assigns, selected: assigns_index(Map.get(assigns, :term, assigns)))
 
     ~H"""
-    <box class="w-screen h-screen bg px-4 pt-3">
+    <box class="w-screen h-screen bg px-4 pt-2 overflow-hidden">
       <box class="w-full border-b border-muted pb-1">
         <box class="font-bold text-primary">Assistant model</box>
         <box class="text-muted">One selection updates the Primary Assistant immediately.</box>
       </box>
-      <box class="pt-3 w-full">
+      <box class="pt-3 w-full overflow-hidden">
         <box
           :for={{entry, index} <- Enum.with_index(entries(@term.providers))}
           class={row_class(index, @selected)}
         >
-          {marker(index, @selected)} {entry.label}
+          {marker(index, @selected)} {display_label(entry.label, @term.breeze.terminal.width - 4)}
         </box>
       </box>
       <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
       <box class="pt-2 text-muted">Arrow keys or j/k move   Enter select   Esc cancel</box>
     </box>
     """
+  end
+
+  @doc "Truncates a model row to one terminal line without splitting UTF-8."
+  @spec display_label(String.t(), integer()) :: String.t()
+  def display_label(label, width) when width <= 1, do: String.slice(label, 0, 1)
+
+  def display_label(label, width) do
+    graphemes = String.graphemes(label)
+
+    if length(graphemes) <= width do
+      label
+    else
+      left = max(div(width - 1, 2), 0)
+      right = max(width - 1 - left, 0)
+
+      (Enum.slice(graphemes, 0, left) ++ ["…"] ++ Enum.slice(graphemes, -right, right))
+      |> IO.iodata_to_binary()
+    end
   end
 
   defp assigns_index(term) do

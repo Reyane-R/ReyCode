@@ -53,7 +53,7 @@ defmodule ReyCode.TUI.Components.SettingsModal do
     )}
           class={row_class(index, @term.settings.index)}
         >
-          {marker(index, @term.settings.index)} {model}
+          {marker(index, @term.settings.index)} {ReyCode.TUI.ModelPicker.display_label(model, @term.breeze.terminal.width - 4)}
         </box>
       </box>
       <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
