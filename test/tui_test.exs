@@ -197,8 +197,14 @@ defmodule ReyCode.TUITest do
 
     type(session, "/")
     palette_screen = Breeze.Test.render!(session)
-    assert palette_screen =~ "/agents"
-    assert palette_screen =~ "/new"
+    assert palette_screen =~ "/advise"
+    assert palette_screen =~ "/model"
+    refute palette_screen =~ "/workspace"
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowUp")
+    scrolled_screen = Breeze.Test.render!(session)
+    assert scrolled_screen =~ "/workspace"
+    refute scrolled_screen =~ "/advise"
   end
 
   test "/connect keeps long model candidates on one row in a wide terminal" do
