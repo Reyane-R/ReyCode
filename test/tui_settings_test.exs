@@ -63,6 +63,15 @@ defmodule ReyCode.TUI.SettingsTest do
     assert Settings.models(providers(), settings) == ["anthropic/claude"]
   end
 
+  test "display_label keeps long model names on one terminal line" do
+    label = "OMP · omp/deepseek/deepseek-v4-flash"
+    display = ReyCode.TUI.ModelPicker.display_label(label, 18)
+
+    assert String.length(display) == 18
+    assert String.valid?(display)
+    refute String.contains?(display, "\n")
+  end
+
   test "back/1 closes the first step and restores prompt focus" do
     result = Settings.back(term())
 
