@@ -13,6 +13,7 @@ defmodule ReyCode.RuntimeConfig do
   """
 
   alias ReyCode.RuntimeConfig.{
+    Artifacts,
     Logging,
     OMP,
     OpenAICompatible,
@@ -37,6 +38,7 @@ defmodule ReyCode.RuntimeConfig do
     :squad,
     :persistence,
     :tools,
+    :artifacts,
     :tui,
     :workspace,
     :logging
@@ -52,6 +54,7 @@ defmodule ReyCode.RuntimeConfig do
           squad: Squad.t(),
           persistence: Persistence.t(),
           tools: Tools.t(),
+          artifacts: Artifacts.t(),
           tui: TUI.t(),
           workspace: Workspace.t(),
           logging: Logging.t()
@@ -251,6 +254,13 @@ defmodule ReyCode.RuntimeConfig do
           max_bytes: values.web_search_max_bytes,
           document_timeout_ms: values.document_read_timeout_ms
         }
+      },
+      artifacts: %Artifacts{
+        root: values.artifact_root,
+        spool_threshold_bytes: values.artifact_spool_threshold_bytes,
+        preview_bytes: values.artifact_preview_bytes,
+        max_artifact_bytes: values.artifact_max_bytes,
+        max_artifact_count: values.artifact_max_count
       },
       tui: %TUI{reduced_motion?: values.tui_reduced_motion},
       workspace: %Workspace{roots: values.workspace_roots},

@@ -17,6 +17,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
 
   @worker_stop_timeout_ms 5_000
+  @type response :: {:reply, term(), map()}
 
   def interrupt_started_runs(state, invocation) do
     invocation
@@ -524,32 +525,131 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
   def budget_extension_entries(_turn, _decision), do: []
 
+  @doc "Applies or discards one pending isolated delegation patch and resumes finalization."
+  @spec resolve_merge(map(), String.t(), atom() | String.t()) :: response()
+  def resolve_merge(state, child_id, raw_decision) do
+    child = state.projection.invocations[child_id]
+    review = child && child.pending_tool_review
+    parent = child && state.projection.invocations[child.delegated_from_invocation_id]
+    run = parent && Map.get(parent.tool_runs, child.delegated_from_tool_run_id)
+
+    with %{} <- child,
+         %{tool: "merge"} <- review,
+         %{} <- parent,
+         %{} <- run,
+         {:ok, decision} <- merge_decision(raw_decision),
+         isolation when is_map(isolation) <- child.execution_context.isolation,
+         :ok <- resolve_isolation(isolation, decision) do
+      entry = EventEntries.delegation_merge_resolved(child, run, decision)
+      next = Persistence.append_and_apply!(state, [entry])
+      if decision == :apply, do: DelegationWorktree.cleanup(isolation)
+      next = finalize_invocation(next, child.id, {:completed, %{"merge" => decision}})
+      {:reply, :ok, next}
+    else
+      nil -> {:reply, {:error, :merge_review_not_found}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+      _other -> {:reply, {:error, :invalid_merge_review}, state}
+    end
+  end
+
   def finalize_invocation(state, invocation_id, outcome, prepend \\ []) do
     state = release_execution(state, invocation_id)
     invocation = state.projection.invocations[invocation_id]
 
-    next =
-      if invocation == nil or invocation.status in [:completed, :failed, :cancelled] do
-        state
-      else
-        turn = state.projection.turns[invocation.turn_id]
-        message = state.projection.messages[invocation.message_id]
-        outcome = detached_outcome(turn, invocation, message, outcome)
-
-        opts = [
-          human_release_review?:
-            invocation.phase == "release_gate" and human_release_review?(turn)
-        ]
-
-        turn.mode
-        |> WorkflowDispatcher.for_mode()
-        |> then(& &1.finalize(invocation, message, outcome, opts))
-        |> apply_finalization(state, invocation, prepend)
+    if invocation == nil or invocation.status in [:completed, :failed, :cancelled] do
+      state
+    else
+      case maybe_request_merge(state, invocation, outcome, prepend) do
+        {:wait, next} -> pump_admission(next)
+        {:continue, next_outcome} -> finish_invocation(state, invocation, next_outcome, prepend)
       end
+    end
+  end
 
-    next = pump_admission(next)
+  defp finish_invocation(state, invocation, outcome, prepend) do
+    turn = state.projection.turns[invocation.turn_id]
+    message = state.projection.messages[invocation.message_id]
+    outcome = detached_outcome(turn, invocation, message, outcome)
+
+    opts = [
+      human_release_review?: invocation.phase == "release_gate" and human_release_review?(turn)
+    ]
+
+    next =
+      turn.mode
+      |> WorkflowDispatcher.for_mode()
+      |> then(& &1.finalize(invocation, message, outcome, opts))
+      |> apply_finalization(state, invocation, prepend)
+      |> pump_admission()
+
     resume_parent_delegation(next, invocation, outcome)
   end
+
+  defp maybe_request_merge(state, child, {:completed, _metadata} = outcome, prepend) do
+    isolation = child.execution_context.isolation
+
+    cond do
+      child.delegated_from_invocation_id == nil or isolation == nil ->
+        {:continue, outcome}
+
+      child.execution_context.merge_decision != nil ->
+        {:continue, outcome}
+
+      true ->
+        request_merge_review(state, child, outcome, prepend)
+    end
+  end
+
+  defp maybe_request_merge(_state, _child, outcome, _prepend), do: {:continue, outcome}
+
+  defp request_merge_review(state, child, outcome, prepend) do
+    parent = state.projection.invocations[child.delegated_from_invocation_id]
+    run = parent && Map.get(parent.tool_runs, child.delegated_from_tool_run_id)
+    body = state.projection.messages[child.message_id].body
+
+    with %{} <- parent,
+         %{} <- run,
+         {:ok, _structured} <-
+           Delegation.validate_output(body, child.execution_context.output_schema),
+         {:ok, diff} <- merge_preview(child) do
+      if diff == "" do
+        {:continue, outcome}
+      else
+        entry = EventEntries.delegation_merge_requested(child, parent, run, diff)
+        {:wait, Persistence.append_and_apply!(state, prepend ++ [entry])}
+      end
+    else
+      {:error, reason} ->
+        _ = finish_isolation(child, :cleanup)
+
+        {:continue,
+         {:failed,
+          Failure.new(:delegation_contract_failed, "Merge review failed: #{inspect(reason)}")}}
+
+      _other ->
+        {:continue, outcome}
+    end
+  end
+
+  defp merge_preview(child) do
+    isolation = %{
+      workspace: child.execution_context.isolation["workspace"],
+      source_workspace: child.execution_context.isolation["source_workspace"]
+    }
+
+    DelegationWorktree.preview(isolation)
+  end
+
+  defp merge_decision(decision) when decision in [:approve, "approve", :apply, "apply"],
+    do: {:ok, :apply}
+
+  defp merge_decision(decision) when decision in [:deny, "deny", :discard, "discard"],
+    do: {:ok, :discard}
+
+  defp merge_decision(_decision), do: {:error, :invalid_merge_decision}
+
+  defp resolve_isolation(isolation, :apply), do: DelegationWorktree.apply_keep(isolation)
+  defp resolve_isolation(isolation, :discard), do: DelegationWorktree.cleanup(isolation)
 
   defp detached_outcome(%{detached?: false}, _invocation, _message, outcome), do: outcome
 
@@ -700,6 +800,10 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
       delegation_report(child, {:failed, error}, projection)
     )
   end
+
+  defp finish_isolation(%{execution_context: %{merge_decision: decision}}, _action)
+       when decision in [:apply, :discard],
+       do: :ok
 
   defp finish_isolation(%{execution_context: %{isolation: nil}}, _action), do: :ok
 

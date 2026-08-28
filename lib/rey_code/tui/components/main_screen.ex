@@ -22,6 +22,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :message_width, :integer, required: true
   attr :draft, :string, required: true
   attr :notice, :any, required: true
+  attr :budget_notice, :any, required: true
+  attr :token_label_class, :string, required: true
 
   attr :terminal_width, :integer, required: true
   attr :terminal_height, :integer, required: true
@@ -37,7 +39,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
           activity={@activity}
           activity_frame={@activity_frame}
           git_branch={@git_branch}
+          question_label={@question_label}
           token_label={@token_label}
+          token_label_class={@token_label_class}
           terminal_width={@terminal_width}
         />
         <.timeline
@@ -47,7 +51,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           message_width={@message_width}
           activity_frame={@activity_frame}
         />
-        <.composer draft={@draft} notice={@notice}/>
+        <.composer draft={@draft} notice={@notice} budget_notice={@budget_notice}/>
         <.slash_palette modal={@modal} slash_rows={@slash_rows} slash_style={@slash_style}/>
       </box>
     </box>
@@ -90,7 +94,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :activity, :map, required: true
   attr :activity_frame, :string, required: true
   attr :git_branch, :any, required: true
+  attr :question_label, :string, required: true
   attr :token_label, :string, required: true
+  attr :token_label_class, :string, required: true
   attr :terminal_width, :integer, required: true
 
   defp session_header(assigns) do
@@ -99,7 +105,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box class="inline w-full">
         <box class="font-bold">ReyCode</box>
         <box class="text-muted">{header_context(@session, @terminal_width, @git_branch)}</box>
-        <box class="text-muted">{@token_label}</box>
+        <box :if={@question_label != ""} class="pl-2 text-warning">{@question_label}</box>
+        <box class={@token_label_class}>{@token_label}</box>
         <box class={session_status_class(@activity.header)}>
           {Activity.text(@activity.header, @activity_frame)}
         </box>
@@ -110,6 +117,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   attr :draft, :string, required: true
   attr :notice, :any, required: true
+  attr :budget_notice, :any, required: true
 
   defp composer(assigns) do
     ~H"""
@@ -124,6 +132,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
         class="w-full h-2 border focus:border-primary bg-surface"
       />
       <box :if={not is_nil(@notice)} class="text-error">{@notice}</box>
+      <box :if={not is_nil(@budget_notice)} class="text-warning">{@budget_notice}</box>
     </box>
     """
   end

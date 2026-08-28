@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.AgentHub do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, Projection}
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{MergeReview, SlashPalette}
 
   @spec initial() :: map()
   def initial, do: %{index: 0}
@@ -57,6 +57,19 @@ defmodule ReyCode.TUI.AgentHub do
     end
   end
 
+  def handle_input(key, term) when key in ["m", "M"] do
+    case selected_child(term) do
+      %{pending_tool_review: %{tool: "merge"}} = child ->
+        {:noreply, MergeReview.open(term, child)}
+
+      nil ->
+        {:noreply, term}
+
+      _child ->
+        {:noreply, Component.assign(term, notice: "Selected child has no patch awaiting review")}
+    end
+  end
+
   def handle_input("Escape", term), do: {:noreply, close(term)}
   def handle_input("Enter", term), do: {:noreply, term}
   def handle_input(_key, term), do: {:noreply, term}
@@ -99,19 +112,27 @@ defmodule ReyCode.TUI.AgentHub do
         </box>
       </box>
       <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
-      <box class="pt-2 text-muted">Arrow keys or j/k move   C cancel child   Esc close</box>
+      <box class="pt-2 text-muted">
+        Arrow keys or j/k move   M review patch   C cancel child   Esc close
+      </box>
     </box>
     """
   end
 
   defp peer_label(child) do
+    merge =
+      if match?(%{pending_tool_review: %{tool: "merge"}}, child),
+        do: " · awaits merge",
+        else: ""
+
     messages =
       case Map.get(child, :coordination) do
         %{peer_messages: messages} -> messages
         _legacy -> Map.get(child, :peer_messages, [])
       end
 
-    if messages == [], do: "", else: " · #{length(messages)} peer messages"
+    peer = if messages == [], do: "", else: " · #{length(messages)} peer messages"
+    merge <> peer
   end
 
   defp row_class(index, index), do: "w-full px-1 bg-panel font-bold text-primary"

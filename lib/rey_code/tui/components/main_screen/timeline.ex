@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   alias ReyCode.Failure
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.Activity
+  alias ReyCode.TUI.{Activity, MermaidASCII}
 
   @max_visible_notes 3
 
@@ -62,6 +62,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   defp render_message(message, width) do
     message.body
+    |> MermaidASCII.expand()
     |> Breeze.Markdown.render(width)
     |> split_lines()
   end

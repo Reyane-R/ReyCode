@@ -23,6 +23,7 @@ defmodule ReyCode.ToolRegistry do
   }
 
   @tools %{
+    "artifact_read" => ReyCode.Tool.ArtifactRead,
     "read" => ReyCode.Tool.Read,
     "write" => ReyCode.Tool.Write,
     "edit" => ReyCode.Tool.Edit,
@@ -91,6 +92,7 @@ defmodule ReyCode.ToolRegistry do
     do: %{request | roots: Workspace.roots(policy.workspace)}
 
   defp tool_policy(config, "bash"), do: config.tools.bash
+  defp tool_policy(config, "artifact_read"), do: config.artifacts
   defp tool_policy(config, "read"), do: config.tools.read
   defp tool_policy(config, "edit"), do: config.tools.edit
   defp tool_policy(config, "write"), do: config.tools.write

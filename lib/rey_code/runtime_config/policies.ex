@@ -446,6 +446,27 @@ defmodule ReyCode.RuntimeConfig.Workspace do
   @type t :: %__MODULE__{roots: [String.t()] | nil}
 end
 
+defmodule ReyCode.RuntimeConfig.Artifacts do
+  @moduledoc "Bounded durable tool-output artifact policy."
+
+  @enforce_keys [
+    :root,
+    :spool_threshold_bytes,
+    :preview_bytes,
+    :max_artifact_bytes,
+    :max_artifact_count
+  ]
+  defstruct @enforce_keys
+
+  @type t :: %__MODULE__{
+          root: String.t(),
+          spool_threshold_bytes: pos_integer(),
+          preview_bytes: pos_integer(),
+          max_artifact_bytes: pos_integer(),
+          max_artifact_count: pos_integer()
+        }
+end
+
 defmodule ReyCode.RuntimeConfig.Logging do
   @moduledoc "File logging policy."
 

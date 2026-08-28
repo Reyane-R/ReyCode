@@ -450,6 +450,45 @@ defmodule ReyCode.Orchestration.Projector do
     |> put_sequence(event.sequence)
   end
 
+  def apply(%Event{type: :delegation_merge_requested, data: data} = event, state) do
+    review = %ToolAsk{
+      request_id: data["tool_run_id"],
+      tool: "merge",
+      arguments: %{
+        "parent_invocation_id" => data["parent_invocation_id"],
+        "child_invocation_id" => data["invocation_id"],
+        "diff" => data["diff"],
+        "workspace" => data["workspace"],
+        "source_workspace" => data["source_workspace"]
+      },
+      workspace: data["source_workspace"],
+      requested_at: event.recorded_at
+    }
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      %{invocation | status: :waiting_tool_approval, pending_tool_review: review}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :delegation_merge_resolved, data: data} = event, state) do
+    decision = merge_decision(data["decision"])
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      execution_context = %{invocation.execution_context | merge_decision: decision}
+
+      %{
+        invocation
+        | status: :queued,
+          pending_tool_review: nil,
+          execution_context: execution_context
+      }
+    end)
+    |> put_sequence(event.sequence)
+  end
+
   def apply(%Event{type: :peer_message_sent, data: data} = event, state) do
     message = %PeerMessage{
       id: data["peer_message_id"],
@@ -482,10 +521,13 @@ defmodule ReyCode.Orchestration.Projector do
           %{
             id: option["id"],
             label: option["label"],
-            description: option["description"] || ""
+            description: option["description"] || "",
+            preview: option["preview"] || ""
           }
         end),
       recommended_id: data["recommended_id"],
+      multi?: data["multi"] == true,
+      allow_other?: data["allow_other"] == true,
       asked_at: event.recorded_at
     }
 
@@ -987,6 +1029,9 @@ defmodule ReyCode.Orchestration.Projector do
       {:error, :invalid_failure} -> raise ArgumentError, "invalid durable failure"
     end
   end
+
+  defp merge_decision("apply"), do: :apply
+  defp merge_decision("discard"), do: :discard
 
   defp apply_invocation_frame(invocation, "usage", data) do
     %{invocation | usage: data["usage"]}

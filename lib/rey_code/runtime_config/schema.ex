@@ -16,6 +16,12 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:workspace_queue_limit, fn -> 20 end, :queue_limit},
       # Terminal presentation policy
       {:tui_reduced_motion, fn -> false end, :boolean},
+      # Tool-output artifact policy
+      {:artifact_root, fn -> Path.join(ReyCode.Paths.data_home(), "artifacts") end, :string},
+      {:artifact_spool_threshold_bytes, fn -> 16_384 end, {:integer, 1}},
+      {:artifact_preview_bytes, fn -> 4_096 end, {:integer, 1}},
+      {:artifact_max_bytes, fn -> 2_000_000 end, {:integer, 1}},
+      {:artifact_max_count, fn -> 128 end, {:integer, 1}},
       # Provider policy
       {:agent_delay_ms, fn -> 0 end, {:integer, 0}},
       {:allow_simulator_provider, fn -> false end, :boolean},

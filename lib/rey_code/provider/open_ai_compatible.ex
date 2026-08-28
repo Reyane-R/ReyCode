@@ -316,6 +316,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
     "Send one bounded durable message to an exact-name active peer in the same DelegationWave."
   end
 
+  defp wire_tool_description("artifact_read") do
+    "Read one bounded byte window from a spooled artifact:// ID using offset and limit."
+  end
+
   defp wire_tool_description("ask_operator") do
     "Pause this Invocation for one bounded multiple-choice OperatorQuestion. " <>
       "Use only when materially different options require human judgment."
@@ -392,6 +396,17 @@ defmodule ReyCode.Provider.OpenAICompatible do
     )
   end
 
+  defp tool_schema("artifact_read") do
+    object_schema(
+      %{
+        "artifact_id" => %{"type" => "string"},
+        "offset" => %{"type" => "integer", "minimum" => 0},
+        "limit" => %{"type" => "integer", "minimum" => 1}
+      },
+      ["artifact_id"]
+    )
+  end
+
   defp tool_schema("ask_operator") do
     object_schema(
       %{
@@ -404,7 +419,11 @@ defmodule ReyCode.Provider.OpenAICompatible do
             object_schema(
               %{
                 "label" => %{"type" => "string"},
-                "description" => %{"type" => "string"}
+                "description" => %{"type" => "string"},
+                "preview" => %{
+                  "type" => "string",
+                  "description" => "Optional bounded diff or file snippet shown only in the TUI"
+                }
               },
               ["label"]
             )
@@ -414,6 +433,14 @@ defmodule ReyCode.Provider.OpenAICompatible do
           "minimum" => 0,
           "maximum" => 4,
           "description" => "Optional zero-based recommended option"
+        },
+        "multi" => %{
+          "type" => "boolean",
+          "description" => "Allow several option IDs in one answer"
+        },
+        "allow_other" => %{
+          "type" => "boolean",
+          "description" => "Offer one bounded free-text Other answer"
         }
       },
       ["question", "options"]

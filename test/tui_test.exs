@@ -1,21 +1,24 @@
 defmodule ReyCode.TUITest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.{EventStore, RuntimeConfig}
+  alias ReyCode.{ArtifactStore, EventStore, RuntimeConfig}
 
   alias ReyCode.Orchestration.{
     Engine,
     Invocation,
     InvocationCoordination,
+    InvocationExecution,
     Message,
     OperatorQuestion,
     Participant,
     PeerMessage,
+    ToolAsk,
     Turn,
     WorkPlan
   }
 
   alias ReyCode.Test.Wait
+  alias ReyCode.Tool.Result
   alias ReyCode.TUI.{AnimationClock, State}
 
   test "starts clean and creates a fresh durable session for the first message" do
@@ -420,7 +423,7 @@ defmodule ReyCode.TUITest do
   test "exposes only session-level global shortcuts" do
     keys = Enum.map(ReyCode.TUI.global_keybindings(), &elem(&1, 0))
 
-    assert keys == ["Tab", "^N", "^P", "^S", "^G", "^T", "^Q"]
+    assert keys == ["Tab", "^N", "^P", "^S", "^A", "^G", "^T", "^Q"]
     refute Enum.any?(keys, &(&1 in ["^O", "^R"]))
   end
 
@@ -454,7 +457,33 @@ defmodule ReyCode.TUITest do
 
     assert screen =~ "Tool ·"
     assert screen =~ "Read · <outside workspace>"
+
     assert screen =~ "✓"
+  end
+
+  test "renders Mermaid message fences as bounded ASCII in the timeline" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    diagram = """
+    ```mermaid
+    flowchart TD
+      A[Inspect] --> B[Implement]
+    ```
+    """
+
+    projection =
+      session
+      |> long_response_projection()
+      |> put_in([:messages, "msg-layout-assistant", :body], diagram)
+
+    push_projection(session, projection)
+    open_first_session(session)
+    screen = session |> Breeze.Test.render!() |> plain()
+
+    assert screen =~ "Diagram · flowchart"
+    assert screen =~ "Inspect ──▶ Implement"
   end
 
   test "renders agent activity notes dimmed under the message with collapse" do
@@ -573,6 +602,28 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Writing · README.md"
     assert screen =~ "Delegating · Luna"
     assert Enum.all?(String.split(screen, "\n"), &(String.length(&1) <= 72))
+  end
+
+  test "warns in the header and composer after eighty percent of an invocation budget" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection =
+      session
+      |> long_response_projection()
+      |> put_in(
+        [:invocations, "inv-layout", :execution_context],
+        %InvocationExecution{model_tier: :standard, token_budget_tokens: 15_000}
+      )
+      |> put_in([:invocations, "inv-layout", :usage], %{"total_tokens" => 12_400})
+
+    push_projection(session, projection)
+    open_first_session(session)
+    screen = session |> Breeze.Test.render!() |> plain()
+
+    assert screen =~ "Ⅱ standard 12.4k/15k"
+    assert screen =~ "Assistant has used 83% of its standard token budget"
   end
 
   test "approval and queued presentation stay static and event-invariant across stale ticks" do
@@ -883,6 +934,28 @@ defmodule ReyCode.TUITest do
     screen = Breeze.Test.render!(session)
     assert screen =~ "Agent Hub"
     assert screen =~ "Luna · running · integration task · 2 peer messages"
+
+    review = %ToolAsk{
+      request_id: "merge-review",
+      tool: "merge",
+      arguments: %{"diff" => "@@ -1 +1 @@\n-before\n+after"},
+      workspace: "/tmp/worktree",
+      requested_at: "2026-08-27T00:00:00Z"
+    }
+
+    merge_projection =
+      put_in(projection, [:invocations, child.id], %{
+        child
+        | status: :waiting_tool_approval,
+          pending_tool_review: review
+      })
+
+    push_projection(session, merge_projection)
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "M")
+    merge_screen = Breeze.Test.render!(session)
+    assert merge_screen =~ "Worktree checkpoint · Luna"
+    assert merge_screen =~ "A Apply patch"
+    assert merge_screen =~ "+after"
   end
 
   test "Tier Two modals render waiting questions, WorkPlans, and model tiers" do
@@ -900,10 +973,17 @@ defmodule ReyCode.TUITest do
       tool_run_id: "run-question",
       question: "Which implementation path?",
       options: [
-        %{id: "option-0", label: "Safe", description: "Preserve compatibility"},
-        %{id: "option-1", label: "Fast", description: "Prefer speed"}
+        %{
+          id: "option-0",
+          label: "Safe",
+          description: "Preserve compatibility",
+          preview: "@@ -1 +1 @@\n-old\n+new"
+        },
+        %{id: "option-1", label: "Fast", description: "Prefer speed", preview: ""}
       ],
       recommended_id: "option-0",
+      multi?: true,
+      allow_other?: true,
       asked_at: "2026-08-27T00:00:00Z"
     }
 
@@ -961,12 +1041,13 @@ defmodule ReyCode.TUITest do
 
     push_projection(session, projection)
 
-    type(session, "/answer")
-    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, ctrl("a"))
     question_screen = Breeze.Test.render!(session)
     assert question_screen =~ "Operator question"
     assert question_screen =~ "Which implementation path?"
     assert question_screen =~ "Safe · recommended"
+    assert question_screen =~ "@@ -1 +1 @@"
+    assert question_screen =~ "Other · type a bounded answer"
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
 
     type(session, "/plan")
@@ -1023,6 +1104,53 @@ defmodule ReyCode.TUITest do
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
     screen = Breeze.Test.render!(session)
     refute screen =~ "ReyCode commands"
+  end
+
+  test "opens retained tool artifacts and pages their bounded content" do
+    root = Path.join(System.tmp_dir!(), "tui-artifacts-#{System.unique_integer([:positive])}")
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    config =
+      configured_runtime(
+        artifact_root: root,
+        artifact_spool_threshold_bytes: 32,
+        artifact_preview_bytes: 32,
+        artifact_max_bytes: 1_024,
+        artifact_max_count: 4
+      )
+
+    spooled =
+      ArtifactStore.spool(
+        Result.ok(String.duplicate("retained output\n", 20)),
+        config.artifacts,
+        "inv-artifact",
+        "run-artifact"
+      )
+
+    artifact_id = spooled.metadata["artifact_id"]
+
+    %{engine: engine} =
+      start_isolated_stack(
+        artifact_root: root,
+        artifact_spool_threshold_bytes: 32,
+        artifact_preview_bytes: 32,
+        artifact_max_bytes: 1_024,
+        artifact_max_count: 4
+      )
+
+    session = start_session({120, 32}, engine: engine, config: config)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    type(session, "/artifacts")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    list_screen = Breeze.Test.render!(session)
+    assert list_screen =~ "Bounded ToolRun output spool"
+    assert list_screen =~ artifact_id
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    detail_screen = Breeze.Test.render!(session)
+    assert detail_screen =~ "artifact://#{artifact_id}"
+    assert detail_screen =~ "retained output"
   end
 
   test "opens the deterministic capability help modal" do
@@ -1122,7 +1250,7 @@ defmodule ReyCode.TUITest do
       size: size,
       theme: ReyCode.Theme.default(),
       global_keybindings: ReyCode.TUI.global_keybindings(),
-      start_opts: Keyword.take(opts, [:engine])
+      start_opts: Keyword.take(opts, [:engine, :config])
     )
   end
 

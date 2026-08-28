@@ -617,6 +617,46 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
+  @doc "Builds the owner merge-review request for one isolated delegated child."
+  @spec delegation_merge_requested(Invocation.t(), Invocation.t(), ToolRun.t(), String.t()) ::
+          event_entry()
+  def delegation_merge_requested(child, parent, run, diff) do
+    isolation = child.execution_context.isolation
+
+    invocation_event(
+      :delegation_merge_requested,
+      %{
+        "invocation_id" => child.id,
+        "message_id" => child.message_id,
+        "turn_id" => child.turn_id,
+        "room_id" => child.session_id,
+        "parent_invocation_id" => parent.id,
+        "tool_run_id" => run.id,
+        "diff" => diff,
+        "workspace" => isolation["workspace"],
+        "source_workspace" => isolation["source_workspace"]
+      },
+      child
+    )
+  end
+
+  @doc "Builds the durable owner decision for one isolated delegated child."
+  @spec delegation_merge_resolved(Invocation.t(), ToolRun.t(), atom()) :: event_entry()
+  def delegation_merge_resolved(child, run, decision) do
+    invocation_event(
+      :delegation_merge_resolved,
+      %{
+        "invocation_id" => child.id,
+        "message_id" => child.message_id,
+        "turn_id" => child.turn_id,
+        "room_id" => child.session_id,
+        "tool_run_id" => run.id,
+        "decision" => Atom.to_string(decision)
+      },
+      child
+    )
+  end
+
   @doc "Builds one durable PeerMessage delivery event."
   @spec peer_message_sent(
           Invocation.t(),
@@ -658,13 +698,15 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
-  @doc "Builds the event recording the Operator's selected question option."
+  @doc "Builds the event recording one validated Operator answer."
   @spec operator_question_answered(
           Invocation.t(),
           OperatorQuestion.t(),
           map()
         ) :: event_entry()
-  def operator_question_answered(invocation, question, option) do
+  def operator_question_answered(invocation, question, answer) do
+    {selected_id, selected_label} = legacy_selection(question, answer)
+
     invocation_event(
       :operator_question_answered,
       %{
@@ -674,8 +716,11 @@ defmodule ReyCode.Orchestration.EventEntries do
         "room_id" => invocation.session_id,
         "question_id" => question.id,
         "tool_run_id" => question.tool_run_id,
-        "selected_id" => option.id,
-        "selected_label" => option.label
+        "selected_id" => selected_id,
+        "selected_label" => selected_label,
+        "selected_ids" => answer.option_ids,
+        "selected_labels" => answer.labels,
+        "other" => answer.other
       },
       invocation
     )
@@ -1028,6 +1073,12 @@ defmodule ReyCode.Orchestration.EventEntries do
       "model_tier" => Atom.to_string(Map.get(participant, :model_tier, :default)),
       "kind" => wire_kind(Map.get(participant, :kind))
     }
+  end
+
+  defp legacy_selection(_question, %{option_ids: [], other: other}), do: {"other", other}
+
+  defp legacy_selection(_question, answer) do
+    {List.first(answer.option_ids), Enum.join(answer.labels, ", ")}
   end
 
   defp wire_provider(provider) when is_atom(provider), do: Atom.to_string(provider)

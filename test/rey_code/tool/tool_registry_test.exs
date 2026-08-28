@@ -75,9 +75,10 @@ defmodule ReyCode.ToolRegistryTest do
            )
   end
 
-  test "tool_names/0 lists the fifteen supported tools" do
+  test "tool_names/0 lists the sixteen supported tools" do
     assert Enum.sort(ToolRegistry.tool_names()) ==
              Enum.sort([
+               "artifact_read",
                "read",
                "write",
                "edit",

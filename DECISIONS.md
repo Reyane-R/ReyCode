@@ -22,6 +22,36 @@ not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
 
+### D33 — Advanced terminal depth stays bounded and owner-controlled (Executed — 2026-08-28)
+
+Five advanced surfaces extend the existing Invocation and ToolRun seams without
+creating a second orchestration model:
+
+- A successful isolated child with a non-empty patch records a merge ToolAsk
+  and pauses before source mutation. The Owner resolves Apply or Discard from
+  AgentHub; both paths are idempotent and durable, and only Apply patch-checks
+  the source Workspace.
+- OperatorQuestion supports ordered multi-selection, bounded Other text,
+  display-only option previews, and a header/direct-key attention surface.
+  These fields extend the existing question events; they do not grant tool
+  authority.
+- Large successful ToolRun output moves to a bounded ToolArtifact spool.
+  Transcript/provider results retain a preview and opaque `artifact://`
+  identifier; Operators use `/artifacts` and providers use `artifact_read` for
+  bounded byte windows. Artifact files are retention scaffolding, not
+  event-sourced business state.
+- The frozen Invocation TokenBudget appears in the header and emits a soft TUI
+  warning at 80 percent. The existing hard admission boundary remains the only
+  lifecycle effect.
+- Mermaid fences are converted into bounded ASCII flowchart or sequence
+  diagrams immediately before terminal Markdown rendering. Unknown syntax
+  falls back to bounded source text; rendering appends no Events.
+
+All five surfaces reuse the single-writer Engine, Projection, existing
+Invocation ownership, and explicit byte/count limits. No browser renderer,
+unbounded output buffer, automatic isolated-patch application, or parallel
+state model is introduced.
+
 ### D32 — Session is the sole conversation aggregate (Executed — 2026-08-28)
 
 The 1:1 Room/Session split no longer earns a second domain concept. `Session`

@@ -9,10 +9,16 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
                %{
                  "question" => "Which release path?",
                  "options" => [
-                   %{"label" => "Safe", "description" => "Run every gate"},
+                   %{
+                     "label" => "Safe",
+                     "description" => "Run every gate",
+                     "preview" => "@@ -1 +1 @@"
+                   },
                    %{"label" => "Fast"}
                  ],
-                 "recommended" => 0
+                 "recommended" => 0,
+                 "multi" => true,
+                 "allow_other" => true
                },
                "question-1",
                "run-1",
@@ -21,6 +27,18 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
 
     assert Enum.map(question.options, & &1.id) == ["option-0", "option-1"]
     assert question.recommended_id == "option-0"
+    assert question.multi?
+    assert question.allow_other?
+    assert hd(question.options).preview == "@@ -1 +1 @@"
+
+    assert {:ok, answer} =
+             OperatorQuestions.resolve(question, %{
+               option_ids: ["option-0", "option-1"],
+               other: "Keep a rollback"
+             })
+
+    assert answer.labels == ["Safe", "Fast"]
+    assert answer.other == "Keep a rollback"
 
     assert {:error, :invalid_question_arguments} =
              OperatorQuestions.build(

@@ -63,7 +63,8 @@ defmodule ReyCode.Orchestration.Projection do
     projection.invocations
     |> Map.values()
     |> Enum.find(fn invocation ->
-      invocation.turn_id == turn_id and not is_nil(invocation.pending_tool_review)
+      review = invocation.pending_tool_review
+      invocation.turn_id == turn_id and not is_nil(review) and Map.get(review, :tool) != "merge"
     end)
   end
 

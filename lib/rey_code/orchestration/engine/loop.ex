@@ -37,9 +37,9 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
   @type response :: {:reply, term(), map()}
 
-  @doc "Records one exact option selection and resumes the waiting Invocation."
-  @spec answer_question(map(), String.t(), String.t(), String.t()) :: response()
-  def answer_question(state, invocation_id, question_id, option_id) do
+  @doc "Records one validated single/multi/Other answer and resumes the waiting Invocation."
+  @spec answer_question(map(), String.t(), String.t(), term()) :: response()
+  def answer_question(state, invocation_id, question_id, selection) do
     invocation = state.projection.invocations[invocation_id]
     question = invocation && invocation.coordination.pending_question
 
@@ -47,16 +47,18 @@ defmodule ReyCode.Orchestration.Engine.Loop do
          %{} <- question,
          true <- invocation.status == :waiting_operator,
          true <- question.id == question_id,
-         %{} = option <- Enum.find(question.options, &(&1.id == option_id)),
+         {:ok, answer} <- OperatorQuestions.resolve(question, selection),
          %ToolRun{status: :running} = run <- Map.get(invocation.tool_runs, question.tool_run_id) do
+      output = Jason.encode!(%{"selected" => answer.labels, "other" => answer.other})
+
       result = %{
-        "output" => option.label,
+        "output" => output,
         "truncated" => false,
-        "metadata" => %{"option_id" => option.id}
+        "metadata" => %{"option_ids" => answer.option_ids}
       }
 
       entries = [
-        EventEntries.operator_question_answered(invocation, question, option),
+        EventEntries.operator_question_answered(invocation, question, answer),
         EventEntries.tool_run_completed(invocation, run, result)
       ]
 
@@ -70,6 +72,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     else
       nil -> {:reply, {:error, :question_not_found}, state}
       false -> {:reply, {:error, :stale_question}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
       _other -> {:reply, {:error, :invalid_question_selection}, state}
     end
   end

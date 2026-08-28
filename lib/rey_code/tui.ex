@@ -15,7 +15,7 @@ defmodule ReyCode.TUI do
 
   alias ReyCode.TUI.Mentions
 
-  alias ReyCode.TUI.{Render, Settings, SlashPalette, State}
+  alias ReyCode.TUI.{OperatorQuestion, Render, Settings, SlashPalette, State}
 
   # Mentions lives in lib/rey_code/tui/mentions.ex, which the parallel
   # compiler may not have finished when this view is compiled. Resolution
@@ -31,6 +31,7 @@ defmodule ReyCode.TUI do
       {"^N", "New session", &new_session/2},
       {"^P", "Commands", &open_command_palette/2},
       {"^S", "Send", &submit/2},
+      {"^A", "Answer question", &open_operator_question/2},
       {"^G", "Configure agents", &open_provider_settings/2},
       {"^T", "Theme", &__MODULE__.cycle_theme/2},
       {"^Q", "Quit", &quit/2}
@@ -70,6 +71,12 @@ defmodule ReyCode.TUI do
   def open_provider_settings(_event, term) do
     {:noreply, Settings.open(term)}
   end
+
+  def open_operator_question(_event, %{assigns: %{modal: modal}} = term)
+      when not is_nil(modal),
+      do: {:noreply, term}
+
+  def open_operator_question(_event, term), do: {:noreply, OperatorQuestion.open(term)}
 
   def new_session(_event, %{assigns: %{modal: modal}} = term) when not is_nil(modal),
     do: {:noreply, term}

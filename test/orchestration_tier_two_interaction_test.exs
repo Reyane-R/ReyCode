@@ -109,7 +109,14 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     end
 
     defp finish_after_answer(test_pid, request, emit) do
-      selected = request |> latest_tool_content() |> Jason.decode!() |> Map.fetch!("output")
+      answer =
+        request
+        |> latest_tool_content()
+        |> Jason.decode!()
+        |> Map.fetch!("output")
+        |> Jason.decode!()
+
+      selected = answer |> Map.fetch!("selected") |> hd()
       send(test_pid, {:selected_option, selected})
       :ok = emit.(Frame.text_delta(request.resume_from + 1, "finished with #{selected}"))
       {:ok, Response.new(text: "finished with #{selected}", usage: %{"total_tokens" => 100})}

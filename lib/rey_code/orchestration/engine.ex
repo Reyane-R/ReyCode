@@ -119,11 +119,18 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:delegate_task, session_id, participant_id, task})
   end
 
-  @doc "Records one OperatorQuestion option selection."
-  @spec answer_question(String.t(), String.t(), String.t(), GenServer.server()) ::
+  @doc "Records one OperatorQuestion answer selection."
+  @spec answer_question(String.t(), String.t(), term(), GenServer.server()) ::
           :ok | {:error, atom()}
-  def answer_question(invocation_id, question_id, option_id, server \\ __MODULE__) do
-    GenServer.call(server, {:answer_question, invocation_id, question_id, option_id})
+  def answer_question(invocation_id, question_id, selection, server \\ __MODULE__) do
+    GenServer.call(server, {:answer_question, invocation_id, question_id, selection})
+  end
+
+  @doc "Applies or discards one pending isolated delegation patch."
+  @spec resolve_merge(String.t(), atom() | String.t(), GenServer.server()) ::
+          :ok | {:error, atom()}
+  def resolve_merge(child_invocation_id, decision, server \\ __MODULE__) do
+    GenServer.call(server, {:resolve_merge, child_invocation_id, decision}, :infinity)
   end
 
   @doc "Cancels an unfinished turn and its outstanding provider invocations."
@@ -286,6 +293,9 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:resolve_tool_run, invocation_id, run_id, raw_decision}, _from, state),
     do: Loop.resolve_tool_run(state, invocation_id, run_id, raw_decision)
+
+  def handle_call({:resolve_merge, child_invocation_id, decision}, _from, state),
+    do: Lifecycle.resolve_merge(state, child_invocation_id, decision)
 
   def handle_call({:configure_squad_roles, session_id, role_ids, provider, model}, _from, state),
     do: Sessions.configure_squad_roles(state, session_id, role_ids, provider, model)
