@@ -79,6 +79,33 @@ mix run --no-halt
 [mise]: https://mise.jdx.dev
 [asdf]: https://asdf-vm.com
 
+## Deploy as `reycode`
+
+Build a self-contained release. It bundles its own Erlang runtime, so the
+resulting binary runs without `mix` or a global Elixir install:
+
+```sh
+MIX_ENV=prod mix release
+```
+
+Put a launcher on your `PATH` (from the repository root):
+
+```sh
+printf '#!/bin/sh\nif [ $# -eq 0 ]; then set -- start; fi\nexec "%s/_build/prod/rel/rey_code/bin/rey_code" "$@"\n' "$(pwd)" \
+  > ~/.local/bin/reycode && chmod +x ~/.local/bin/reycode
+```
+
+Typing `reycode` now opens the terminal UI. A symlink is not enough here: the
+release boot script resolves its own directory, so it must be invoked by a real
+script. `reycode version` prints the release identity; any other arguments pass
+through to the release script (`reycode daemon` runs it in the background).
+
+The SQLite event store is single-writer: one live instance per data directory.
+A second instance against the same store fails closed with `database is
+locked`. Quit the first instance with `Ctrl+Q`, or run a throwaway instance in
+isolation by launching it under a different `$HOME`.
+
+
 ## Run
 
 ```sh
