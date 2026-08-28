@@ -22,6 +22,56 @@ not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
 
+### D31 — Human questions, WorkPlans, and ModelTiers are Invocation seams (Executed — 2026-08-27)
+
+Tier-2 interaction depth enters through three bounded, event-sourced seams:
+
+- `ask_operator` records an OperatorQuestion and pauses only its source
+  Invocation. The question is not a ToolAsk and grants no execution authority.
+  Selecting one of two to five frozen options completes the originating
+  ToolRun and re-arms the Invocation.
+- `update_plan` records the complete validated WorkPlan projection after each
+  transition. A WorkPlan belongs to one Invocation, never schedules provider
+  work, and cannot replace Turn/Invocation lifecycle. Item names are unique;
+  statuses are closed; at most one actionable item is in progress; earliest
+  pending auto-promotion is deterministic.
+- Each Participant has one ModelTier (`smol`, `default`, `slow`). Opening an
+  Invocation freezes the tier and its configured TokenBudget. The tier does
+  not rewrite provider/model identity. Provider-reported usage is summed
+  conservatively; once known usage reaches the budget, the Engine fails the
+  Invocation before another ProviderRound.
+
+All question, plan, tier, and budget data is byte/count bounded. TUI modals are
+Projection consumers; opening, navigating, or cancelling them appends no
+events.
+
+### D30 — Delegation grows through bounded Waves and background Turns (Executed — 2026-08-27)
+
+The depth-1 `spawn_task` seam expands without restoring fixed Squad orchestration:
+
+- `spawn_tasks` opens one bounded DelegationWave atomically. Ordered worker
+  contracts share frozen context and enter normal admission together. An
+  optional IntegrationOwner depends on every worker and starts only after the
+  worker barrier. The parent ToolRun resolves exactly once after the complete
+  Wave.
+- Each child retains its own DelegationContract. JSON schema validation and
+  isolated-worktree application remain fail-closed per child; the Wave report
+  preserves request order and records partial outcomes instead of hiding them.
+- `send_peer` records bounded PeerMessages only between active children of the
+  same Wave. Exact Participant-name addressing and count/byte caps fail closed;
+  delivery enters the target's next ProviderRound context.
+- `spawn_task` accepts `detach: true`. DetachedDelegation creates a separate
+  background Turn, returns its durable Turn/Invocation receipt to the source
+  immediately, and delivers the Task Participant's terminal Message through
+  the ordinary Session transcript. A background Turn never occupies
+  `Room.active_turn_id`; it still owns its Invocation, approvals, cancellation,
+  recovery, Outcome, and usage.
+
+This supersedes D27's fan-out retirement only at the model-directed tool seam;
+static fan-out modes stay retired. Recursive delegation remains depth-denied.
+Every Wave, PeerMessage, and background Turn is event-sourced, bounded, and
+recoverable through the existing single-writer Engine.
+
 ### D29 — OMP interaction depth enters through durable ReyCode seams (Executed — 2026-08-27)
 
 ReyCode adopts the remaining high-leverage OMP patterns without pursuing

@@ -30,7 +30,15 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **IsolationWorktree** — Temporary detached git worktree owned by one delegated child and either patch-applied on successful validation or removed without application.
 
-**Turn** — One durable orchestration request initiated by an Operator message.
+**DelegationWave** — Bounded set of child Invocations opened atomically by one parent ToolRun from frozen shared context and ordered task contracts. Worker children enter admission together; an optional IntegrationOwner starts only after every worker is terminal; an attached parent resumes only after the full Wave is terminal.
+
+**IntegrationOwner** — Task Participant designated in one DelegationWave to receive the worker reports after the worker barrier and produce the Wave's final integration report.
+
+**PeerMessage** — Bounded durable message sent between active child Invocations in the same DelegationWave and included in the target's next ProviderRound context.
+
+**DetachedDelegation** — Background Turn initiated by an Invocation and addressed to one Task Participant. The source Invocation receives a durable receipt immediately; the background Turn does not occupy the Session's active Turn slot, and its terminal Task Participant Message is delivered into the Session transcript.
+
+**Turn** — One durable orchestration request initiated by an Operator message or by a DetachedDelegation from an Invocation.
 
 **FollowUp** — Operator Turn queued behind existing Session work and cancellable before it starts.
 
@@ -63,6 +71,18 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **ToolRun** — Durable authorization and execution lifecycle for one ToolCall.
 
 **ToolAsk** — Pending owner decision recorded when a ToolRun execution needs approval, addressed by request id.
+
+**OperatorQuestion** — Bounded durable question raised by an Invocation for the Operator, with two to five frozen options and at most one recommended option. It pauses only that Invocation until the Operator selects one option.
+
+**WorkPlan** — Durable phased progress projection owned by one Invocation. Items have exactly one lifecycle status; after each update, at most one actionable item is in progress and the earliest pending item auto-promotes when none is running.
+
+**PlanPhase** — Ordered named grouping inside a WorkPlan.
+
+**PlanItem** — Uniquely named bounded unit of work inside one PlanPhase. Its status is pending, in progress, blocked, completed, or dropped.
+
+**ModelTier** — Participant model-cost/capability designation: smol, default, or slow. The tier freezes a TokenBudget when an Invocation opens; it never changes that Invocation's provider/model identity.
+
+**TokenBudget** — Maximum provider-reported token count admitted for one Invocation. Unknown usage remains unknown; once known usage reaches the budget, no further ProviderRound starts.
 
 **spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant.
 

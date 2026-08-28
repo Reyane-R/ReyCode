@@ -1,19 +1,19 @@
 defmodule ReyCode.Orchestration.Delegation do
   @moduledoc """
-  Pure policy for agent-initiated delegation over the `spawn_task` orchestration
-  tool.
+  Pure policy for agent-initiated Delegation and DelegationWaves.
 
-  The high-tier caller decides *when* to delegate; this module decides *whether
-  a call is admissible*: strict argument shape, exact-name addressing against
-  task-kind participants only, persisted depth bound, and explicit per-caller
-  caps. Every rejection reason is deterministic and recorded as a failed tool
-  run — uncertainty never spawns a child invocation.
+  The high-tier caller decides when to delegate; this module decides whether a
+  `spawn_task` or `spawn_tasks` call is admissible: strict shapes, exact-name
+  task-Participant addressing, frozen shared/output contracts, persisted depth,
+  and explicit per-caller caps. Every rejection is deterministic and recorded;
+  uncertainty never opens a child Invocation.
   """
 
   alias ReyCode.Orchestration.{Invocation, Participant, Projection}
   alias ReyCode.Provider.TextBuffer
 
   @tool_name "spawn_task"
+  @batch_tool_name "spawn_tasks"
 
   @max_children_per_invocation 8
   @brief_max_bytes 16_384
@@ -23,14 +23,37 @@ defmodule ReyCode.Orchestration.Delegation do
 
   defmodule Plan do
     @moduledoc false
-    @enforce_keys [:participant, :brief, :output_schema, :isolate?]
+    @enforce_keys [
+      :participant,
+      :brief,
+      :output_schema,
+      :isolate?,
+      :shared_context,
+      :peer_names,
+      :detach?
+    ]
     defstruct @enforce_keys
 
     @type t :: %__MODULE__{
             participant: ReyCode.Orchestration.Participant.t(),
             brief: String.t(),
             output_schema: map() | nil,
-            isolate?: boolean()
+            isolate?: boolean(),
+            shared_context: String.t(),
+            peer_names: [String.t()],
+            detach?: boolean()
+          }
+  end
+
+  defmodule BatchPlan do
+    @moduledoc false
+    @enforce_keys [:workers, :integrator, :shared_context]
+    defstruct @enforce_keys
+
+    @type t :: %__MODULE__{
+            workers: [Plan.t()],
+            integrator: Plan.t() | nil,
+            shared_context: String.t()
           }
   end
 
@@ -43,10 +66,13 @@ defmodule ReyCode.Orchestration.Delegation do
           | :child_cap_exceeded
           | :unknown_agent
           | :ambiguous_agent
+          | :duplicate_agent
           | :primary_target
           | :delegation_unsupported_in_squad
   @spec tool_name() :: String.t()
   def tool_name, do: @tool_name
+  @spec batch_tool_name() :: String.t()
+  def batch_tool_name, do: @batch_tool_name
 
   @doc "Built-in delegation bounds; configuration may only lower or raise them explicitly."
   @spec default_bounds() :: bounds()
@@ -63,12 +89,12 @@ defmodule ReyCode.Orchestration.Delegation do
   @spec authorize(Invocation.t(), term(), Projection.t(), bounds()) ::
           {:ok, Plan.t()} | {:error, rejection()}
   def authorize(invocation, arguments, projection, bounds) do
-    with {:ok, agent, brief, output_schema, isolate?} <- parse_arguments(arguments),
+    with {:ok, agent, brief, output_schema, isolate?, detach?} <- parse_arguments(arguments),
          :ok <- check_mode(invocation, projection),
          :ok <- check_brief(brief, bounds.brief_max_bytes),
          :ok <- check_schema(output_schema),
          :ok <- check_depth(invocation),
-         :ok <- check_child_cap(invocation, bounds.max_children),
+         :ok <- check_child_cap(invocation, 1, bounds.max_children),
          {:ok, participant} <-
            resolve_participant(projection.rooms[invocation.room_id], agent) do
       {:ok,
@@ -76,8 +102,44 @@ defmodule ReyCode.Orchestration.Delegation do
          participant: participant,
          brief: brief,
          output_schema: output_schema,
-         isolate?: isolate?
+         isolate?: isolate?,
+         shared_context: "",
+         peer_names: [],
+         detach?: detach?
        }}
+    end
+  end
+
+  @doc "Validates one bounded `spawn_tasks` DelegationWave."
+  @spec authorize_batch(Invocation.t(), term(), Projection.t(), bounds()) ::
+          {:ok, BatchPlan.t()} | {:error, rejection()}
+  def authorize_batch(invocation, arguments, projection, bounds) do
+    with {:ok, shared_context, task_arguments, integrator_arguments} <-
+           parse_batch_arguments(arguments),
+         :ok <- check_mode(invocation, projection),
+         :ok <- check_depth(invocation),
+         :ok <- check_brief(shared_context, bounds.brief_max_bytes),
+         :ok <-
+           check_child_cap(
+             invocation,
+             length(task_arguments) + if(integrator_arguments, do: 1, else: 0),
+             bounds.max_children
+           ),
+         {:ok, workers} <-
+           authorize_batch_tasks(task_arguments, invocation, projection, bounds, shared_context),
+         {:ok, integrator} <-
+           authorize_integrator(
+             integrator_arguments,
+             invocation,
+             projection,
+             bounds,
+             shared_context
+           ),
+         :ok <- unique_participants(workers, integrator) do
+      peer_names = Enum.map(workers, & &1.participant.name)
+      workers = Enum.map(workers, &%{&1 | peer_names: peer_names})
+      integrator = if integrator, do: %{integrator | peer_names: peer_names}, else: nil
+      {:ok, %BatchPlan{workers: workers, integrator: integrator, shared_context: shared_context}}
     end
   end
 
@@ -91,10 +153,26 @@ defmodule ReyCode.Orchestration.Delegation do
             Jason.encode!(plan.output_schema),
         else: ""
 
+    shared_context =
+      if plan.shared_context == "",
+        do: "",
+        else: "\n\nShared Wave context:\n#{plan.shared_context}"
+
+    peer_context =
+      case Enum.reject(plan.peer_names, &(&1 == plan.participant.name)) do
+        [] ->
+          ""
+
+        peers ->
+          "\n\nActive Wave peers: #{Enum.join(peers, ", ")}. " <>
+            "Use send_peer with an exact peer name for bounded coordination."
+      end
+
     "You are the #{plan.participant.name} task agent. " <>
       "Standing responsibility: #{plan.participant.perspective}. " <>
       "Complete only the delegated task and report the result.\n\n" <>
-      "Delegated task:\n#{plan.brief}" <> schema_instruction
+      "Delegated task:\n#{plan.brief}" <>
+      shared_context <> peer_context <> schema_instruction
   end
 
   @doc """
@@ -125,17 +203,18 @@ defmodule ReyCode.Orchestration.Delegation do
   end
 
   defp parse_arguments(arguments) when is_map(arguments) do
-    allowed = ~w(agent brief output_schema isolate)
+    allowed = ~w(agent brief output_schema isolate detach)
     keys = arguments |> Map.keys() |> Enum.map(&to_string/1)
     agent = argument(arguments, "agent")
     brief = argument(arguments, "brief")
     output_schema = argument(arguments, "output_schema")
     isolate? = argument(arguments, "isolate", false)
+    detach? = argument(arguments, "detach", false)
 
     if Enum.all?(keys, &(&1 in allowed)) and is_binary(agent) and
          is_binary(brief) and (is_nil(output_schema) or is_map(output_schema)) and
-         is_boolean(isolate?) do
-      {:ok, agent, brief, output_schema, isolate?}
+         is_boolean(isolate?) and is_boolean(detach?) do
+      {:ok, agent, brief, output_schema, isolate?, detach?}
     else
       {:error, :invalid_arguments}
     end
@@ -150,6 +229,70 @@ defmodule ReyCode.Orchestration.Delegation do
   defp argument_key("brief"), do: :brief
   defp argument_key("output_schema"), do: :output_schema
   defp argument_key("isolate"), do: :isolate
+  defp argument_key("detach"), do: :detach
+  defp argument_key("shared_context"), do: :shared_context
+  defp argument_key("tasks"), do: :tasks
+  defp argument_key("integrator"), do: :integrator
+
+  defp parse_batch_arguments(arguments) when is_map(arguments) do
+    allowed = ~w(shared_context tasks integrator)
+    keys = arguments |> Map.keys() |> Enum.map(&to_string/1)
+    shared_context = argument(arguments, "shared_context", "")
+    tasks = argument(arguments, "tasks")
+    integrator = argument(arguments, "integrator")
+
+    if Enum.all?(keys, &(&1 in allowed)) and is_binary(shared_context) and
+         is_list(tasks) and tasks != [] and Enum.all?(tasks, &is_map/1) and
+         (is_nil(integrator) or is_map(integrator)) do
+      {:ok, shared_context, tasks, integrator}
+    else
+      {:error, :invalid_arguments}
+    end
+  end
+
+  defp parse_batch_arguments(_arguments), do: {:error, :invalid_arguments}
+
+  defp authorize_batch_tasks(arguments, invocation, projection, bounds, shared_context) do
+    Enum.reduce_while(arguments, {:ok, []}, fn task, {:ok, plans} ->
+      case authorize_batch_task(task, invocation, projection, bounds, shared_context) do
+        {:ok, plan} -> {:cont, {:ok, plans ++ [plan]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp authorize_integrator(nil, _invocation, _projection, _bounds, _shared_context),
+    do: {:ok, nil}
+
+  defp authorize_integrator(arguments, invocation, projection, bounds, shared_context),
+    do: authorize_batch_task(arguments, invocation, projection, bounds, shared_context)
+
+  defp authorize_batch_task(arguments, invocation, projection, bounds, shared_context) do
+    with {:ok, agent, brief, output_schema, isolate?, false} <- parse_arguments(arguments),
+         :ok <- check_brief(brief, bounds.brief_max_bytes),
+         :ok <- check_schema(output_schema),
+         {:ok, participant} <-
+           resolve_participant(projection.rooms[invocation.room_id], agent) do
+      {:ok,
+       %Plan{
+         participant: participant,
+         brief: brief,
+         output_schema: output_schema,
+         isolate?: isolate?,
+         shared_context: shared_context,
+         peer_names: [],
+         detach?: false
+       }}
+    else
+      {:ok, _agent, _brief, _schema, _isolate, true} -> {:error, :invalid_arguments}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp unique_participants(workers, integrator) do
+    names = Enum.map(workers ++ List.wrap(integrator), & &1.participant.name)
+    if Enum.uniq(names) == names, do: :ok, else: {:error, :duplicate_agent}
+  end
 
   defp check_schema(nil), do: :ok
 
@@ -292,24 +435,30 @@ defmodule ReyCode.Orchestration.Delegation do
       else: :ok
   end
 
-  defp check_child_cap(invocation, max_children) do
-    children =
+  defp check_child_cap(invocation, requested_count, max_children) do
+    existing_count =
       invocation.tool_run_order
       |> List.wrap()
-      |> Enum.count(fn run_id ->
-        case Map.get(invocation.tool_runs, run_id) do
-          %{tool: tool, child_invocation_id: child_id} ->
-            tool == @tool_name and not is_nil(child_id)
-
-          _other ->
-            false
-        end
+      |> Enum.reduce(0, fn run_id, count ->
+        count + delegated_child_count(Map.get(invocation.tool_runs, run_id))
       end)
 
-    if children >= max_children,
+    if existing_count + requested_count > max_children,
       do: {:error, :child_cap_exceeded},
       else: :ok
   end
+
+  defp delegated_child_count(%{tool: tool} = run)
+       when tool in [@tool_name, @batch_tool_name] do
+    length(run_child_ids(run))
+  end
+
+  defp delegated_child_count(_run), do: 0
+
+  defp run_child_ids(%{child_invocation_ids: [], child_invocation_id: child_id}),
+    do: List.wrap(child_id)
+
+  defp run_child_ids(run), do: run.child_invocation_ids
 
   defp resolve_participant(nil, _agent), do: {:error, :unknown_agent}
 

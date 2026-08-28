@@ -34,43 +34,55 @@ defmodule ReyCode.AgentLoop do
   end
 
   defp drain_or_stream(state, request) do
-    case Client.take_tool_run(state.engine, state.invocation_id) do
-      {:ok, :none} ->
-        provider_round(state, request)
+    state.engine
+    |> Client.take_tool_run(state.invocation_id)
+    |> handle_tool_action(state, request)
+  end
 
-      {:ok, {:execute, run}} ->
-        Agent.execute_tool_run(state, run)
-        run(state)
+  defp handle_tool_action({:ok, :none}, state, request), do: provider_round(state, request)
 
-      {:ok, {:delegate, _run}} ->
-        # Durable suspension: the child invocation owns the workspace until it
-        # reports; the parent resumes from admission with the recorded result.
-        {:stop, state}
+  defp handle_tool_action({:ok, {:execute, run}}, state, _request) do
+    Agent.execute_tool_run(state, run)
+    run(state)
+  end
 
-      {:ok, {:await, _run}} ->
-        {:stop, state}
+  defp handle_tool_action({:ok, {action, _run}}, state, _request)
+       when action in [:continue, :denied],
+       do: run(state)
 
-      {:ok, {:busy, _run}} ->
-        {:stop, state}
+  # Durable suspension: a child Invocation, owner decision, or existing worker
+  # owns continuation until the Engine re-arms admission.
+  defp handle_tool_action({:ok, {action, _run}}, state, _request)
+       when action in [:delegate, :await, :busy, :question],
+       do: {:stop, state}
 
-      {:ok, {:denied, _run}} ->
-        run(state)
+  defp handle_tool_action({:waiting, _reason}, state, _request), do: {:stop, state}
 
-      {:waiting, _reason} ->
-        {:stop, state}
-
-      {:error, reason} ->
-        Agent.fail(state, internal_error("tool run rejected: " <> inspect(reason)))
-        {:stop, state}
-    end
+  defp handle_tool_action({:error, reason}, state, _request) do
+    Agent.fail(state, internal_error("tool run rejected: " <> inspect(reason)))
+    {:stop, state}
   end
 
   defp provider_round(state, request) do
-    if request.round_index >= @max_rounds do
-      Agent.fail(state, internal_error("tool loop exceeded #{@max_rounds} provider rounds"))
-      {:stop, state}
-    else
-      stream_round(state, request)
+    cond do
+      request.used_tokens != nil and request.used_tokens >= request.token_budget_tokens ->
+        Agent.fail(
+          state,
+          Failure.new(
+            :token_budget_exceeded,
+            "Token budget exhausted: #{request.used_tokens}/#{request.token_budget_tokens}",
+            false
+          )
+        )
+
+        {:stop, state}
+
+      request.round_index >= @max_rounds ->
+        Agent.fail(state, internal_error("tool loop exceeded #{@max_rounds} provider rounds"))
+        {:stop, state}
+
+      true ->
+        stream_round(state, request)
     end
   end
 

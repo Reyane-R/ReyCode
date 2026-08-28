@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.InvocationRequest do
   @moduledoc "Builds the provider request for one durable invocation round."
 
   alias ReyCode.Orchestration.Context
-  alias ReyCode.Orchestration.{Invocation, Projection, Steering}
+  alias ReyCode.Orchestration.{Invocation, ModelTier, Projection, Steering}
   alias ReyCode.Provider.Request
 
   @type request_policy :: %{
@@ -31,6 +31,9 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       phase: invocation.phase,
       cycle: invocation.cycle,
       logical_work_id: invocation.logical_work_id,
+      model_tier: invocation.execution_context.model_tier,
+      token_budget_tokens: invocation.execution_context.token_budget_tokens,
+      used_tokens: ModelTier.used_tokens(invocation),
       agent_delay_ms: request_policy.agent_delay_ms,
       simulator_opts: request_policy.simulator_opts,
       dependencies: invocation.dependencies,

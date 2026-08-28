@@ -1,14 +1,30 @@
 defmodule ReyCode.Orchestration.InvocationExecution do
   @moduledoc "Frozen workspace and delegated-output contract for one Invocation."
 
-  @fields [:workspace, :workspace_roots, :output_schema, :isolation]
-  defstruct workspace: nil, workspace_roots: [], output_schema: nil, isolation: nil
+  alias ReyCode.Orchestration.ModelTier
+
+  @fields [
+    :workspace,
+    :workspace_roots,
+    :output_schema,
+    :isolation,
+    :model_tier,
+    :token_budget_tokens
+  ]
+  defstruct workspace: nil,
+            workspace_roots: [],
+            output_schema: nil,
+            isolation: nil,
+            model_tier: :default,
+            token_budget_tokens: 100_000
 
   @type t :: %__MODULE__{
           workspace: String.t() | nil,
           workspace_roots: [String.t()],
           output_schema: map() | nil,
-          isolation: map() | nil
+          isolation: map() | nil,
+          model_tier: ModelTier.t(),
+          token_budget_tokens: pos_integer()
         }
 
   @spec from_map(t() | map() | nil) :: t()

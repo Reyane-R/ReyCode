@@ -192,6 +192,18 @@ defmodule ReyCode.TUI.Activity do
       status == :waiting_tool_approval ->
         approval_item(invocation, workspace, now_ms, target_graphemes)
 
+      status == :waiting_operator ->
+        item(
+          invocation.id,
+          :question,
+          :blocked,
+          "Question",
+          truncate(invocation.coordination.pending_question.question, target_graphemes),
+          nil,
+          nil,
+          95
+        )
+
       status == :running or not is_nil(active_tool) ->
         running_invocation_item(invocation, turn, workspace, now_ms, target_graphemes)
 
@@ -266,38 +278,73 @@ defmodule ReyCode.TUI.Activity do
       |> Enum.reverse()
       |> Enum.map(&run_for(invocation, &1))
       |> Enum.find(
-        &match?(%{tool: tool, status: :running} when tool in ["spawn_task", :spawn_task], &1)
+        &match?(
+          %{tool: tool, status: :running}
+          when tool in ["spawn_task", :spawn_task, "spawn_tasks", :spawn_tasks],
+          &1
+        )
       )
 
-    if run do
-      child = Map.get(projection.invocations, run.child_invocation_id)
-      agent = argument(run.arguments, "agent") || "unknown agent"
-      target = truncate(single_line(agent), target_graphemes)
+    case run do
+      nil ->
+        item(invocation.id, :delegation, :blocked, "Paused", "delegation result", nil, nil, 55)
 
-      case child && child.status do
-        :running ->
-          started_at = child_started_at(child, projection)
-
-          item(
-            invocation.id,
-            :delegation,
-            :active,
-            "Delegating",
-            target,
-            elapsed_from(started_at, now_ms),
-            nil,
-            75
-          )
-
-        :queued ->
-          item(invocation.id, :delegation, :queued, "Queued", target, nil, nil, 25)
-
-        _status ->
-          item(invocation.id, :delegation, :blocked, "Resuming", target, nil, nil, 55)
-      end
-    else
-      item(invocation.id, :delegation, :blocked, "Paused", "delegation result", nil, nil, 55)
+      run ->
+        delegation_run_item(invocation, run, projection, now_ms, target_graphemes)
     end
+  end
+
+  defp delegation_run_item(invocation, run, projection, now_ms, target_graphemes) do
+    child_ids = delegation_child_ids(run)
+    children = Enum.map(child_ids, &Map.get(projection.invocations, &1))
+    target = delegation_target(run, child_ids, target_graphemes)
+    delegation_status_item(invocation, children, target, projection, now_ms)
+  end
+
+  defp delegation_child_ids(run) do
+    case Map.get(run, :child_invocation_ids, []) do
+      [] -> List.wrap(Map.get(run, :child_invocation_id))
+      ids -> ids
+    end
+  end
+
+  defp delegation_target(%{tool: tool}, child_ids, target_graphemes)
+       when tool in ["spawn_tasks", :spawn_tasks],
+       do: truncate("#{length(child_ids)} agents", target_graphemes)
+
+  defp delegation_target(run, _child_ids, target_graphemes) do
+    run.arguments
+    |> argument("agent")
+    |> then(&(&1 || "unknown agent"))
+    |> single_line()
+    |> truncate(target_graphemes)
+  end
+
+  defp delegation_status_item(invocation, children, target, projection, now_ms) do
+    case Enum.find(children, &(&1 && &1.status == :running)) do
+      nil ->
+        delegation_idle_item(invocation, children, target)
+
+      running ->
+        started_at = child_started_at(running, projection)
+
+        item(
+          invocation.id,
+          :delegation,
+          :active,
+          "Delegating",
+          target,
+          elapsed_from(started_at, now_ms),
+          nil,
+          75
+        )
+    end
+  end
+
+  defp delegation_idle_item(invocation, children, target) do
+    if Enum.any?(children, &(&1 && &1.status == :queued)),
+      do: item(invocation.id, :delegation, :queued, "Queued", target, nil, nil, 25),
+      else: item(invocation.id, :delegation, :blocked, "Resuming", target, nil, nil, 55)
   end
 
   defp approval_item(invocation, workspace, now_ms, target_graphemes) do
@@ -463,6 +510,8 @@ defmodule ReyCode.TUI.Activity do
   defp active_tool_label("edit"), do: "Editing"
   defp active_tool_label("write"), do: "Writing"
   defp active_tool_label("spawn_task"), do: "Delegating"
+  defp active_tool_label("spawn_tasks"), do: "Delegating"
+  defp active_tool_label("send_peer"), do: "Messaging"
   defp active_tool_label("process"), do: "Supervising"
   defp active_tool_label(_name), do: "Working"
 
@@ -473,36 +522,38 @@ defmodule ReyCode.TUI.Activity do
   defp terminal_tool_label("edit"), do: "Edited"
   defp terminal_tool_label("write"), do: "Wrote"
   defp terminal_tool_label("spawn_task"), do: "Delegated"
+  defp terminal_tool_label("spawn_tasks"), do: "Delegated"
+  defp terminal_tool_label("send_peer"), do: "Messaged"
   defp terminal_tool_label("process"), do: "Managed"
   defp terminal_tool_label(name), do: humanize(name)
 
   defp tool_target(name, arguments, workspace, target_graphemes) do
-    value =
-      case name do
-        name when name in ["read", "edit", "write", "glob", "list"] ->
-          path_target(argument(arguments, "path"), workspace)
-
-        "grep" ->
-          argument(arguments, "pattern")
-
-        "process" ->
-          argument(arguments, "name") || argument(arguments, "action")
-
-        "bash" ->
-          argument(arguments, "command")
-
-        "spawn_task" ->
-          argument(arguments, "agent")
-
-        _name ->
-          first_argument(arguments)
-      end
-
-    value
+    name
+    |> raw_tool_target(arguments, workspace)
     |> single_line()
     |> truncate(target_graphemes)
     |> blank_to_nil()
   end
+
+  defp raw_tool_target(name, arguments, workspace)
+       when name in ["read", "edit", "write", "glob", "list"],
+       do: path_target(argument(arguments, "path"), workspace)
+
+  defp raw_tool_target("grep", arguments, _workspace), do: argument(arguments, "pattern")
+
+  defp raw_tool_target("process", arguments, _workspace),
+    do: argument(arguments, "name") || argument(arguments, "action")
+
+  defp raw_tool_target("bash", arguments, _workspace), do: argument(arguments, "command")
+  defp raw_tool_target("spawn_task", arguments, _workspace), do: argument(arguments, "agent")
+
+  defp raw_tool_target("spawn_tasks", arguments, _workspace) do
+    tasks = argument(arguments, "tasks") || []
+    "#{length(tasks)} agents"
+  end
+
+  defp raw_tool_target("send_peer", arguments, _workspace), do: argument(arguments, "target")
+  defp raw_tool_target(_name, arguments, _workspace), do: first_argument(arguments)
 
   defp path_target(nil, _workspace), do: nil
 

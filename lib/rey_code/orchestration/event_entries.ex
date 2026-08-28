@@ -2,7 +2,19 @@ defmodule ReyCode.Orchestration.EventEntries do
   @moduledoc "Pure construction of orchestration event entries."
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.{Invocation, Participant, Room, Squad, ToolRun, Turn}
+
+  alias ReyCode.Orchestration.{
+    Invocation,
+    ModelTier,
+    OperatorQuestion,
+    Participant,
+    Room,
+    Squad,
+    ToolRun,
+    Turn,
+    WorkPlan
+  }
+
   alias ReyCode.Orchestration.Squad.Seat
   alias ReyCode.Provider.Frame
 
@@ -168,6 +180,55 @@ defmodule ReyCode.Orchestration.EventEntries do
     ]
   end
 
+  @doc "Builds the source message and running-independent Turn for DetachedDelegation."
+  @spec detached_turn(
+          Invocation.t(),
+          Participant.t(),
+          String.t(),
+          String.t(),
+          String.t(),
+          non_neg_integer()
+        ) :: [event_entry()]
+  def detached_turn(parent, participant, task, turn_id, message_id, context_sequence) do
+    [
+      event(
+        :message_posted,
+        %{
+          "message_id" => message_id,
+          "room_id" => parent.room_id,
+          "turn_id" => turn_id,
+          "author_name" => parent.participant.name,
+          "author_id" => parent.participant.id,
+          "author_kind" => "agent",
+          "body" => task
+        },
+        :room,
+        parent.room_id,
+        parent.room_id,
+        turn_id
+      ),
+      event(
+        :turn_queued,
+        %{
+          "turn_id" => turn_id,
+          "room_id" => parent.room_id,
+          "user_message_id" => message_id,
+          "mode" => "delegate",
+          "context_through_sequence" => context_sequence,
+          "input_kind" => "detached",
+          "participant_id" => participant.id,
+          "source_invocation_id" => parent.id,
+          "task" => task,
+          "detached" => true
+        },
+        :turn,
+        turn_id,
+        parent.room_id,
+        turn_id
+      )
+    ]
+  end
+
   @doc "Builds room participant configuration events in participant order."
   @spec participant_configuration(String.t(), [String.t()], atom(), String.t() | nil) ::
           [event_entry()]
@@ -187,6 +248,23 @@ defmodule ReyCode.Orchestration.EventEntries do
         room_id
       )
     end)
+  end
+
+  @doc "Builds one Participant ModelTier configuration event."
+  @spec participant_tier_configured(String.t(), String.t(), ModelTier.t()) :: event_entry()
+  def participant_tier_configured(room_id, participant_id, tier) do
+    event(
+      :participant_tier_configured,
+      %{
+        "room_id" => room_id,
+        "participant_id" => participant_id,
+        "model_tier" => Atom.to_string(tier)
+      },
+      :room,
+      room_id,
+      room_id,
+      room_id
+    )
   end
 
   @doc "Builds squad role configuration events in role order."
@@ -217,9 +295,12 @@ defmodule ReyCode.Orchestration.EventEntries do
   @doc "Builds the event that marks a turn as running."
   @spec turn_started(Turn.t()) :: event_entry()
   def turn_started(turn) do
+    data = %{"turn_id" => turn.id, "room_id" => turn.room_id}
+    data = if Map.get(turn, :detached?, false), do: Map.put(data, "detached", true), else: data
+
     event(
       :turn_started,
-      %{"turn_id" => turn.id, "room_id" => turn.room_id},
+      data,
       :turn,
       turn.id,
       turn.room_id,
@@ -503,9 +584,22 @@ defmodule ReyCode.Orchestration.EventEntries do
   Builds the event linking one parent `spawn_task` tool run to its child
   invocation and durably suspending the parent until the child terminates.
   """
-  @spec delegation_opened(Invocation.t(), ToolRun.t(), String.t(), String.t(), non_neg_integer()) ::
-          event_entry()
-  def delegation_opened(parent_invocation, run, child_invocation_id, child_message_id, depth) do
+  @spec delegation_opened(
+          Invocation.t(),
+          ToolRun.t(),
+          String.t(),
+          String.t(),
+          non_neg_integer(),
+          boolean()
+        ) :: event_entry()
+  def delegation_opened(
+        parent_invocation,
+        run,
+        child_invocation_id,
+        child_message_id,
+        depth,
+        suspend_parent \\ true
+      ) do
     invocation_event(
       :delegation_opened,
       %{
@@ -516,9 +610,90 @@ defmodule ReyCode.Orchestration.EventEntries do
         "tool_run_id" => run.id,
         "child_invocation_id" => child_invocation_id,
         "child_message_id" => child_message_id,
-        "delegation_depth" => depth
+        "delegation_depth" => depth,
+        "suspend_parent" => suspend_parent
       },
       parent_invocation
+    )
+  end
+
+  @doc "Builds one durable PeerMessage delivery event."
+  @spec peer_message_sent(
+          Invocation.t(),
+          Invocation.t(),
+          String.t(),
+          String.t()
+        ) :: event_entry()
+  def peer_message_sent(sender, target, peer_message_id, body) do
+    invocation_event(
+      :peer_message_sent,
+      %{
+        "turn_id" => sender.turn_id,
+        "room_id" => sender.room_id,
+        "peer_message_id" => peer_message_id,
+        "sender_invocation_id" => sender.id,
+        "sender_name" => sender.participant.name,
+        "target_invocation_id" => target.id,
+        "body" => body
+      },
+      sender
+    )
+  end
+
+  @doc "Builds the event that pauses an Invocation for one OperatorQuestion."
+  @spec operator_question_asked(Invocation.t(), OperatorQuestion.t()) :: event_entry()
+  def operator_question_asked(invocation, question) do
+    invocation_event(
+      :operator_question_asked,
+      Map.merge(
+        %{
+          "invocation_id" => invocation.id,
+          "message_id" => invocation.message_id,
+          "turn_id" => invocation.turn_id,
+          "room_id" => invocation.room_id
+        },
+        OperatorQuestion.to_wire(question)
+      ),
+      invocation
+    )
+  end
+
+  @doc "Builds the event recording the Operator's selected question option."
+  @spec operator_question_answered(
+          Invocation.t(),
+          OperatorQuestion.t(),
+          map()
+        ) :: event_entry()
+  def operator_question_answered(invocation, question, option) do
+    invocation_event(
+      :operator_question_answered,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "question_id" => question.id,
+        "tool_run_id" => question.tool_run_id,
+        "selected_id" => option.id,
+        "selected_label" => option.label
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds one complete validated WorkPlan projection event."
+  @spec invocation_plan_updated(Invocation.t(), WorkPlan.t()) :: event_entry()
+  def invocation_plan_updated(invocation, plan) do
+    invocation_event(
+      :invocation_plan_updated,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.room_id,
+        "plan" => WorkPlan.to_wire(plan)
+      },
+      invocation
     )
   end
 
@@ -778,6 +953,11 @@ defmodule ReyCode.Orchestration.EventEntries do
       Enum.find(room.participants, &(&1.id == spec.participant_id)) ||
         Map.get(spec, :participant)
 
+    model_tier = Map.get(spec, :model_tier, Map.get(participant, :model_tier, :default))
+
+    token_budget_tokens =
+      Map.get(spec, :token_budget_tokens, ModelTier.budget_tokens(model_tier))
+
     invocation_event(
       :assistant_message_opened,
       %{
@@ -797,6 +977,8 @@ defmodule ReyCode.Orchestration.EventEntries do
         "project_instruction_digest" => Map.get(spec, :project_instruction_digest),
         "project_instruction_sources" => Map.get(spec, :project_instruction_sources, []),
         "attempt" => Map.get(spec, :attempt, 1),
+        "model_tier" => Atom.to_string(model_tier),
+        "token_budget_tokens" => token_budget_tokens,
         "output_schema" => Map.get(spec, :output_schema),
         "workspace" => Map.get(spec, :workspace) || Map.get(room, :workspace) || "",
         "workspace_roots" => Map.get(spec, :workspace_roots, []),
@@ -843,6 +1025,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       "perspective" => participant.perspective,
       "provider" => wire_provider(participant.provider),
       "model" => participant.model,
+      "model_tier" => Atom.to_string(Map.get(participant, :model_tier, :default)),
       "kind" => wire_kind(Map.get(participant, :kind))
     }
   end

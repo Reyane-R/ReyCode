@@ -8,9 +8,13 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     DelegationWorktree,
     EventEntries,
     InvocationRequest,
+    OperatorQuestions,
+    PeerMessaging,
     ToolRun,
     ToolRuns,
-    Validation
+    Turn,
+    Validation,
+    WorkPlan
   }
 
   alias ReyCode.Orchestration.Engine.{
@@ -26,8 +30,49 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   alias ReyCode.ToolRegistry
 
   @delegation_tool Delegation.tool_name()
+  @batch_delegation_tool Delegation.batch_tool_name()
+  @peer_message_tool PeerMessaging.tool_name()
+  @operator_question_tool OperatorQuestions.tool_name()
+  @plan_tool "update_plan"
 
   @type response :: {:reply, term(), map()}
+
+  @doc "Records one exact option selection and resumes the waiting Invocation."
+  @spec answer_question(map(), String.t(), String.t(), String.t()) :: response()
+  def answer_question(state, invocation_id, question_id, option_id) do
+    invocation = state.projection.invocations[invocation_id]
+    question = invocation && invocation.coordination.pending_question
+
+    with %{} <- invocation,
+         %{} <- question,
+         true <- invocation.status == :waiting_operator,
+         true <- question.id == question_id,
+         %{} = option <- Enum.find(question.options, &(&1.id == option_id)),
+         %ToolRun{status: :running} = run <- Map.get(invocation.tool_runs, question.tool_run_id) do
+      result = %{
+        "output" => option.label,
+        "truncated" => false,
+        "metadata" => %{"option_id" => option.id}
+      }
+
+      entries = [
+        EventEntries.operator_question_answered(invocation, question, option),
+        EventEntries.tool_run_completed(invocation, run, result)
+      ]
+
+      next =
+        state
+        |> Persistence.append_and_apply!(entries)
+        |> Admission.enqueue(invocation.id)
+        |> Lifecycle.pump_admission()
+
+      {:reply, :ok, next}
+    else
+      nil -> {:reply, {:error, :question_not_found}, state}
+      false -> {:reply, {:error, :stale_question}, state}
+      _other -> {:reply, {:error, :invalid_question_selection}, state}
+    end
+  end
 
   @doc "Builds the current durable request for one invocation."
   @spec request(map(), term()) :: response()
@@ -47,6 +92,9 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
         invocation.status == :waiting_tool_approval ->
           {:waiting, :tool_approval}
+
+        invocation.status == :waiting_operator ->
+          {:waiting, :operator_question}
 
         true ->
           {:ok,
@@ -248,8 +296,21 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     end
   end
 
-  defp claim_new_run(state, invocation, %{tool: tool} = call) when tool == @delegation_tool do
+  defp claim_new_run(state, invocation, %{tool: tool} = call)
+       when tool in [@delegation_tool, @batch_delegation_tool] do
     claim_delegation(state, invocation, call)
+  end
+
+  defp claim_new_run(state, invocation, %{tool: @peer_message_tool} = call) do
+    claim_peer_message(state, invocation, call)
+  end
+
+  defp claim_new_run(state, invocation, %{tool: @operator_question_tool} = call) do
+    claim_operator_question(state, invocation, call)
+  end
+
+  defp claim_new_run(state, invocation, %{tool: @plan_tool} = call) do
+    claim_plan_update(state, invocation, call)
   end
 
   defp claim_new_run(state, invocation, call) do
@@ -273,6 +334,71 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     next = maybe_release_for_approval(next, invocation, authorization)
     {:reply, {:ok, {authorization_action(authorization), run}}, next}
   end
+
+  defp claim_operator_question(state, invocation, call) do
+    run = orchestration_run(state, invocation, call)
+    question_id = Identity.new_id("question")
+
+    case OperatorQuestions.build(call.arguments, question_id, run.id, "") do
+      {:ok, question} ->
+        entries = [
+          EventEntries.tool_run_requested(invocation, run),
+          EventEntries.tool_run_started(invocation, %{run | status: :ready}),
+          EventEntries.operator_question_asked(invocation, question)
+        ]
+
+        next = Persistence.append_and_apply!(state, entries)
+        pending = next.projection.invocations[invocation.id].tool_runs[run.id]
+        {:reply, {:ok, {:question, pending}}, next}
+
+      {:error, reason} ->
+        reject_delegation(state, invocation, run, reason)
+    end
+  end
+
+  defp claim_plan_update(state, invocation, call) do
+    run = orchestration_run(state, invocation, call)
+
+    case WorkPlan.transition(invocation.coordination.work_plan, call.arguments, timestamp()) do
+      {:ok, plan} ->
+        result = %{
+          "output" => Jason.encode!(WorkPlan.to_wire(plan)),
+          "truncated" => false,
+          "metadata" => %{}
+        }
+
+        entries = [
+          EventEntries.tool_run_requested(invocation, run),
+          EventEntries.tool_run_started(invocation, %{run | status: :ready}),
+          EventEntries.invocation_plan_updated(invocation, plan),
+          EventEntries.tool_run_completed(invocation, run, result)
+        ]
+
+        next = Persistence.append_and_apply!(state, entries)
+        completed = next.projection.invocations[invocation.id].tool_runs[run.id]
+        {:reply, {:ok, {:continue, completed}}, next}
+
+      {:error, reason} ->
+        reject_delegation(state, invocation, run, reason)
+    end
+  end
+
+  defp orchestration_run(state, invocation, call) do
+    {workspace, workspace_roots} = invocation_workspace(state, invocation)
+
+    %ToolRun{
+      id: Identity.new_id("toolrun"),
+      tool_call_id: call.id,
+      round_index: length(invocation.rounds) - 1,
+      tool: call.tool,
+      arguments: call.arguments,
+      workspace: Path.expand(workspace),
+      workspace_roots: workspace_roots,
+      authorization: :allow
+    }
+  end
+
+  defp timestamp, do: DateTime.utc_now() |> DateTime.to_iso8601()
 
   defp authorization_action(:allow), do: :execute
   defp authorization_action(:ask), do: :await
@@ -321,27 +447,295 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       authorization: :allow
     }
 
-    case Delegation.authorize(
-           invocation,
-           call.arguments,
-           state.projection,
-           delegation_bounds(state)
-         ) do
-      {:ok, plan} ->
+    result =
+      case call.tool do
+        @delegation_tool ->
+          Delegation.authorize(
+            invocation,
+            call.arguments,
+            state.projection,
+            delegation_bounds(state)
+          )
+
+        @batch_delegation_tool ->
+          Delegation.authorize_batch(
+            invocation,
+            call.arguments,
+            state.projection,
+            delegation_bounds(state)
+          )
+      end
+
+    case result do
+      {:ok, %Delegation.Plan{detach?: true} = plan} ->
+        open_detached_delegation(state, invocation, run, plan)
+
+      {:ok, %Delegation.Plan{} = plan} ->
         open_child_delegation(state, invocation, run, plan)
 
+      {:ok, %Delegation.BatchPlan{} = plan} ->
+        open_delegation_wave(state, invocation, run, plan)
+
       {:error, reason} ->
+        reject_delegation(state, invocation, run, reason)
+    end
+  end
+
+  defp claim_peer_message(state, invocation, call) do
+    {workspace, workspace_roots} = invocation_workspace(state, invocation)
+
+    run = %ToolRun{
+      id: Identity.new_id("toolrun"),
+      tool_call_id: call.id,
+      round_index: length(invocation.rounds) - 1,
+      tool: call.tool,
+      arguments: call.arguments,
+      workspace: Path.expand(workspace),
+      workspace_roots: workspace_roots,
+      authorization: :allow
+    }
+
+    case PeerMessaging.authorize(invocation, call.arguments, state.projection) do
+      {:ok, target, body} ->
+        peer_message_id = Identity.new_id("peer")
+
+        result = %{
+          "output" => "delivered to #{target.participant.name}",
+          "truncated" => false,
+          "metadata" => %{
+            "peer_message_id" => peer_message_id,
+            "target_invocation_id" => target.id
+          }
+        }
+
         entries = [
-          EventEntries.tool_run_requested(invocation, %{run | authorization: :denied}),
-          EventEntries.tool_run_failed(invocation, run, %{
-            "ok" => false,
-            "error" => Atom.to_string(reason)
-          })
+          EventEntries.tool_run_requested(invocation, run),
+          EventEntries.tool_run_started(invocation, %{run | status: :ready}),
+          EventEntries.peer_message_sent(invocation, target, peer_message_id, body),
+          EventEntries.tool_run_completed(invocation, run, result)
         ]
 
         next = Persistence.append_and_apply!(state, entries)
-        denied = next.projection.invocations[invocation.id].tool_runs[run.id]
-        {:reply, {:ok, {:denied, denied}}, next}
+        completed = next.projection.invocations[invocation.id].tool_runs[run.id]
+        {:reply, {:ok, {:continue, completed}}, next}
+
+      {:error, reason} ->
+        reject_delegation(state, invocation, run, reason)
+    end
+  end
+
+  defp open_delegation_wave(state, invocation, run, plan) do
+    room = state.projection.rooms[invocation.room_id]
+    turn = state.projection.turns[invocation.turn_id]
+    depth = invocation.delegation_depth + 1
+
+    worker_refs =
+      Enum.map(plan.workers, fn worker ->
+        {worker, Identity.new_id("inv"), Identity.new_id("msg"), []}
+      end)
+
+    worker_ids = Enum.map(worker_refs, fn {_plan, child_id, _message_id, _deps} -> child_id end)
+
+    child_refs =
+      case plan.integrator do
+        nil ->
+          worker_refs
+
+        integrator ->
+          worker_refs ++
+            [
+              {
+                integrator,
+                Identity.new_id("inv"),
+                Identity.new_id("msg"),
+                worker_ids
+              }
+            ]
+      end
+
+    case prepare_wave_children(invocation, room, child_refs) do
+      {:ok, prepared} ->
+        specs = Enum.map(prepared, &wave_child_spec(&1, invocation, run, depth))
+        ids = Enum.map(prepared, &{&1.child_id, &1.message_id})
+
+        delegation_entries =
+          Enum.map(prepared, fn child ->
+            EventEntries.delegation_opened(
+              invocation,
+              run,
+              child.child_id,
+              child.message_id,
+              depth
+            )
+          end)
+
+        entries =
+          [
+            EventEntries.tool_run_requested(invocation, run),
+            EventEntries.tool_run_started(invocation, %{run | status: :ready})
+          ] ++
+            EventEntries.open_invocations(room, turn, specs, ids) ++ delegation_entries
+
+        next =
+          prepared
+          |> Enum.reduce(Persistence.append_and_apply!(state, entries), fn child, acc ->
+            Admission.enqueue(acc, child.child_id)
+          end)
+          |> Lifecycle.pump_admission()
+
+        pending = next.projection.invocations[invocation.id].tool_runs[run.id]
+        {:reply, {:ok, {:delegate, pending}}, next}
+
+      {:error, reason} ->
+        reject_delegation(state, invocation, run, reason)
+    end
+  end
+
+  defp prepare_wave_children(invocation, room, child_refs) do
+    Enum.reduce_while(child_refs, {:ok, []}, fn {plan, child_id, message_id, dependencies},
+                                                {:ok, prepared} ->
+      case delegation_workspace(invocation, room, plan, child_id) do
+        {:ok, workspace} ->
+          child = %{
+            plan: plan,
+            child_id: child_id,
+            message_id: message_id,
+            dependencies: dependencies,
+            workspace: workspace
+          }
+
+          {:cont, {:ok, prepared ++ [child]}}
+
+        {:error, reason} ->
+          cleanup_prepared_children(prepared)
+          {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp cleanup_prepared_children(children) do
+    Enum.each(children, fn child ->
+      case child.workspace.isolation do
+        nil ->
+          :ok
+
+        isolation ->
+          _ =
+            DelegationWorktree.cleanup(%{
+              workspace: isolation["workspace"],
+              source_workspace: isolation["source_workspace"]
+            })
+      end
+    end)
+  end
+
+  defp wave_child_spec(child, invocation, run, depth) do
+    %{
+      participant_id: child.plan.participant.id,
+      phase_index: if(child.dependencies == [], do: 0, else: 1),
+      label: if(child.dependencies == [], do: "delegated task", else: "integration task"),
+      system_prompt: Delegation.child_system_prompt(child.plan),
+      dependencies: child.dependencies,
+      output_schema: child.plan.output_schema,
+      workspace: child.workspace.path,
+      workspace_roots: child.workspace.roots,
+      isolation: child.workspace.isolation,
+      delegated_from_invocation_id: invocation.id,
+      delegated_from_tool_run_id: run.id,
+      delegation_depth: depth
+    }
+  end
+
+  defp open_detached_delegation(state, invocation, run, plan) do
+    room = state.projection.rooms[invocation.room_id]
+    turn_id = Identity.new_id("turn")
+    source_message_id = Identity.new_id("msg")
+    child_id = Identity.new_id("inv")
+    child_message_id = Identity.new_id("msg")
+    depth = invocation.delegation_depth + 1
+
+    turn = %Turn{
+      id: turn_id,
+      room_id: room.id,
+      user_message_id: source_message_id,
+      input_kind: :detached,
+      mode: :delegate,
+      participant_id: plan.participant.id,
+      source_invocation_id: invocation.id,
+      task: plan.brief,
+      detached?: true,
+      status: :queued,
+      context_through_sequence: state.projection.sequence
+    }
+
+    case delegation_workspace(invocation, room, plan, child_id) do
+      {:ok, workspace} ->
+        child_spec = %{
+          participant_id: plan.participant.id,
+          phase_index: 0,
+          label: "detached task",
+          system_prompt: Delegation.child_system_prompt(plan),
+          output_schema: plan.output_schema,
+          workspace: workspace.path,
+          workspace_roots: workspace.roots,
+          isolation: workspace.isolation,
+          delegated_from_invocation_id: invocation.id,
+          delegated_from_tool_run_id: run.id,
+          delegation_depth: depth
+        }
+
+        receipt = %{
+          "output" => "detached task started",
+          "truncated" => false,
+          "metadata" => %{
+            "turn_id" => turn_id,
+            "invocation_id" => child_id
+          }
+        }
+
+        entries =
+          [
+            EventEntries.tool_run_requested(invocation, run),
+            EventEntries.tool_run_started(invocation, %{run | status: :ready})
+          ] ++
+            EventEntries.detached_turn(
+              invocation,
+              plan.participant,
+              plan.brief,
+              turn_id,
+              source_message_id,
+              state.projection.sequence
+            ) ++
+            [EventEntries.turn_started(turn)] ++
+            EventEntries.open_invocations(
+              room,
+              %{turn | status: :running},
+              [child_spec],
+              [{child_id, child_message_id}]
+            ) ++
+            [
+              EventEntries.delegation_opened(
+                invocation,
+                run,
+                child_id,
+                child_message_id,
+                depth,
+                false
+              ),
+              EventEntries.tool_run_completed(invocation, run, receipt)
+            ]
+
+        next =
+          state
+          |> Persistence.append_and_apply!(entries)
+          |> Admission.enqueue(child_id)
+          |> Lifecycle.pump_admission()
+
+        completed = next.projection.invocations[invocation.id].tool_runs[run.id]
+        {:reply, {:ok, {:continue, completed}}, next}
+
+      {:error, reason} ->
+        reject_delegation(state, invocation, run, reason)
     end
   end
 
@@ -426,11 +820,13 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp reject_delegation(state, invocation, run, reason) do
+    error = if is_atom(reason), do: Atom.to_string(reason), else: inspect(reason)
+
     entries = [
       EventEntries.tool_run_requested(invocation, %{run | authorization: :denied}),
       EventEntries.tool_run_failed(invocation, run, %{
         "ok" => false,
-        "error" => inspect(reason)
+        "error" => error
       })
     ]
 

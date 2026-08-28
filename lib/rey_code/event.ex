@@ -50,7 +50,8 @@ defmodule ReyCode.Event do
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
     gate_review_requested gate_resolved squad_budget_extended tool_ask_requested tool_ask_resolved
     provider_round_recorded tool_run_requested tool_run_approval_resolved tool_run_started
-    tool_run_completed tool_run_failed tool_run_interrupted delegation_opened
+    tool_run_completed tool_run_failed tool_run_interrupted delegation_opened peer_message_sent
+    operator_question_asked operator_question_answered invocation_plan_updated participant_tier_configured
   )a
   @type type ::
           unquote(
@@ -74,6 +75,7 @@ defmodule ReyCode.Event do
           | :map_list
           | :non_negative_integer
           | :positive_integer
+          | :boolean
           | {:one_of, [String.t()]}
           | :participant_list
           | :participant
@@ -90,7 +92,8 @@ defmodule ReyCode.Event do
   @authorizations ~w(allow ask denied)
   @release_authorities ~w(human leader)
   @participant_kinds ~w(primary task legacy)
-  @input_kinds ~w(operator follow_up)
+  @input_kinds ~w(operator follow_up detached)
+  @model_tiers ~w(smol default slow)
   @retry_kinds ~w(provider_retry rework)
 
   @frame_kinds ~w(
@@ -164,6 +167,14 @@ defmodule ReyCode.Event do
       },
       optional: %{}
     },
+    participant_tier_configured: %{
+      required: %{
+        "room_id" => :id,
+        "participant_id" => :id,
+        "model_tier" => {:one_of, @model_tiers}
+      },
+      optional: %{}
+    },
     message_posted: %{
       required: %{
         "message_id" => :id,
@@ -171,7 +182,11 @@ defmodule ReyCode.Event do
         "turn_id" => :nullable_text,
         "body" => :text
       },
-      optional: %{"author_name" => :text}
+      optional: %{
+        "author_name" => :text,
+        "author_id" => :id,
+        "author_kind" => {:one_of, ~w(user agent)}
+      }
     },
     turn_queued: %{
       required: %{
@@ -183,10 +198,13 @@ defmodule ReyCode.Event do
       },
       optional: %{
         "participant_id" => :nullable_text,
-        "input_kind" => {:one_of, @input_kinds}
+        "input_kind" => {:one_of, @input_kinds},
+        "source_invocation_id" => :id,
+        "task" => :text,
+        "detached" => :boolean
       }
     },
-    turn_started: %{required: @turn_room_identity, optional: %{}},
+    turn_started: %{required: @turn_room_identity, optional: %{"detached" => :boolean}},
     assistant_message_opened: %{
       required: %{
         "invocation_id" => :id,
@@ -208,6 +226,8 @@ defmodule ReyCode.Event do
         "project_instructions" => :text,
         "project_instruction_digest" => :nullable_text,
         "project_instruction_sources" => :text_list,
+        "model_tier" => {:one_of, @model_tiers},
+        "token_budget_tokens" => :positive_integer,
         "output_schema" => :nullable_wire_map,
         "workspace" => :text,
         "workspace_roots" => :text_list,
@@ -215,6 +235,34 @@ defmodule ReyCode.Event do
         "delegated_from_tool_run_id" => :id,
         "delegation_depth" => :non_negative_integer
       }
+    },
+    operator_question_asked: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "question_id" => :id,
+          "tool_run_id" => :id,
+          "question" => :text,
+          "options" => :map_list
+        }),
+      optional: %{"recommended_id" => :nullable_text}
+    },
+    operator_question_answered: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{
+          "question_id" => :id,
+          "tool_run_id" => :id,
+          "selected_id" => :id,
+          "selected_label" => :text
+        }),
+      optional: %{}
+    },
+    invocation_plan_updated: %{
+      required:
+        Map.merge(@invocation_identity, @turn_room_identity)
+        |> Map.merge(%{"plan" => :wire_map}),
+      optional: %{}
     },
     invocation_started: %{
       required: Map.merge(@invocation_identity, @turn_room_identity),
@@ -430,6 +478,17 @@ defmodule ReyCode.Event do
           "child_invocation_id" => :id,
           "child_message_id" => :id,
           "delegation_depth" => :non_negative_integer
+        }),
+      optional: %{"suspend_parent" => :boolean}
+    },
+    peer_message_sent: %{
+      required:
+        Map.merge(@turn_room_identity, %{
+          "peer_message_id" => :id,
+          "sender_invocation_id" => :id,
+          "sender_name" => :text,
+          "target_invocation_id" => :id,
+          "body" => :text
         }),
       optional: %{}
     }
@@ -651,6 +710,8 @@ defmodule ReyCode.Event do
 
   defp check_rule(:positive_integer, value) when is_integer(value) and value > 0, do: :ok
   defp check_rule(:positive_integer, _value), do: {:error, "must be a positive integer"}
+  defp check_rule(:boolean, value) when is_boolean(value), do: :ok
+  defp check_rule(:boolean, _value), do: {:error, "must be a boolean"}
 
   defp check_rule({:one_of, values}, value) do
     if value in values,

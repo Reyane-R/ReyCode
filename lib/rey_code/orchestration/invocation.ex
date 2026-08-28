@@ -5,6 +5,7 @@ defmodule ReyCode.Orchestration.Invocation do
   alias ReyCode.ProjectInstructions.Capture
 
   alias ReyCode.Orchestration.{
+    InvocationCoordination,
     InvocationExecution,
     Participant,
     ProviderRound,
@@ -30,6 +31,7 @@ defmodule ReyCode.Orchestration.Invocation do
     :system_prompt,
     :project_instructions,
     :execution_context,
+    :coordination,
     :status,
     :attempt,
     :usage,
@@ -62,6 +64,7 @@ defmodule ReyCode.Orchestration.Invocation do
             system_prompt: nil,
             project_instructions: nil,
             execution_context: %InvocationExecution{},
+            coordination: %InvocationCoordination{},
             status: nil,
             attempt: 1,
             usage: nil,
@@ -94,6 +97,7 @@ defmodule ReyCode.Orchestration.Invocation do
           system_prompt: String.t() | nil,
           project_instructions: Capture.t() | nil,
           execution_context: InvocationExecution.t(),
+          coordination: InvocationCoordination.t(),
           status: atom() | nil,
           attempt: pos_integer(),
           usage: map() | nil,
@@ -103,7 +107,6 @@ defmodule ReyCode.Orchestration.Invocation do
           tool_runs: %{optional(String.t()) => ToolRun.t()},
           tool_run_order: [String.t()],
           pending_steering: [Steering.t()],
-          pending_tool_review: ToolAsk.t() | nil,
           completion_metadata: map() | nil,
           last_frame_sequence: non_neg_integer(),
           error: Failure.t() | nil,
@@ -117,11 +120,13 @@ defmodule ReyCode.Orchestration.Invocation do
   def from_map(invocation) when is_map(invocation) do
     capture = instruction_capture(invocation)
     execution_context = execution_context(invocation)
+    coordination = coordination(invocation)
 
     invocation =
       invocation
       |> Map.put(:project_instructions, capture)
       |> Map.put(:execution_context, execution_context)
+      |> Map.put(:coordination, coordination)
       |> Map.put_new(:phase_index, Map.get(invocation, :stage))
       |> then(&struct!(__MODULE__, Map.take(&1, @fields)))
 
@@ -164,17 +169,38 @@ defmodule ReyCode.Orchestration.Invocation do
   end
 
   defp execution_context(invocation) do
-    case fetch(invocation, :execution_context) do
-      nil ->
-        %InvocationExecution{
-          workspace: fetch(invocation, :workspace),
-          workspace_roots: fetch(invocation, :workspace_roots, []),
-          output_schema: fetch(invocation, :output_schema),
-          isolation: fetch(invocation, :isolation)
-        }
+    context =
+      case fetch(invocation, :execution_context) do
+        nil ->
+          %InvocationExecution{
+            workspace: fetch(invocation, :workspace),
+            workspace_roots: fetch(invocation, :workspace_roots, []),
+            output_schema: fetch(invocation, :output_schema),
+            isolation: fetch(invocation, :isolation)
+          }
 
-      context ->
-        InvocationExecution.from_map(context)
+        value ->
+          InvocationExecution.from_map(value)
+      end
+
+    %{
+      context
+      | model_tier: fetch(invocation, :model_tier, context.model_tier),
+        token_budget_tokens: fetch(invocation, :token_budget_tokens, context.token_budget_tokens)
+    }
+  end
+
+  defp coordination(invocation) do
+    case fetch(invocation, :coordination) do
+      nil ->
+        InvocationCoordination.from_map(%{
+          peer_messages: fetch(invocation, :peer_messages, []),
+          pending_question: fetch(invocation, :pending_question),
+          work_plan: fetch(invocation, :work_plan)
+        })
+
+      value ->
+        InvocationCoordination.from_map(value)
     end
   end
 

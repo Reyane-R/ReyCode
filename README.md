@@ -123,6 +123,9 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/connect`: open provider configuration without model completion
 - `/model`: switch the Assistant model in one step
 - `/task`: delegate one task to one task agent
+- `/answer`: answer the newest waiting OperatorQuestion
+- `/plan`: inspect the newest Invocation WorkPlan
+- `/tier`: configure Participant `smol`/`default`/`slow` tiers and future Invocation budgets
 - `/steer <correction>`: queue a correction for the active Invocation's next provider-round boundary
 - `/unqueue`: cancel the newest queued follow-up before it starts
 
@@ -548,13 +551,73 @@ spawning. Delegation itself is auto-allowed; everything the child executes
 still passes the normal tool approval model above. Suspension, restart
 recovery (child first, exactly once per side), and cancellation are durable.
 
-`spawn_task` also accepts an optional `output_schema` and `isolate` flag.
+`spawn_task` also accepts optional `output_schema`, `isolate`, and `detach` flags.
 Structured children are instructed to return only JSON; the frozen schema is
-validated before the parent ToolRun can complete. `isolate: true` requires a
-clean git-root Workspace, runs the child in a detached temporary worktree, and
+validated before an attached parent ToolRun can complete or a detached Turn can succeed.
+`isolate: true` requires a clean git-root Workspace, runs the child in a detached temporary worktree, and
 applies the complete bounded binary patch to the source Workspace only after a
 successful schema-valid child result. Failed, cancelled, stale, or conflicting
 children remove the worktree without applying it.
+
+For parallel work, `spawn_tasks` opens one bounded DelegationWave:
+
+    spawn_tasks  {"shared_context":"Use the public interface","tasks":[{"agent":"Luna","brief":"Run focused tests","output_schema":{"type":"object"}},{"agent":"Nova","brief":"Review the changed contract"}],"integrator":{"agent":"Release","brief":"Integrate the worker reports"}}
+
+Worker children enter admission together and retain their individual
+`output_schema`/`isolate` contracts. An optional IntegrationOwner is opened
+with dependencies on every worker and starts only after the worker barrier.
+The attached parent stays suspended until every Wave child is terminal, then
+receives one ordered JSON report containing each outcome and usage record.
+Configured global/workspace concurrency still governs actual parallelism;
+isolated worktrees count as distinct execution workspaces.
+
+Active Wave children can coordinate durably:
+
+    send_peer  {"target":"Nova","body":"I own the parser; consume parse/1"}
+
+Addressing is exact-name and limited to active siblings from the same Wave.
+Bodies and per-sender message counts are bounded. A PeerMessage is included in
+the target's next ProviderRound context; `send_peer` does not imply a barrier,
+so a recipient that needs the message must keep working until it arrives.
+Agent Hub rows show retained peer-message counts.
+
+For work that should not suspend the source assistant, `spawn_task` accepts
+`detach: true`. The tool result immediately returns the durable background
+Turn and child Invocation IDs. That background Turn owns the normal provider,
+approval, schema, worktree, cancellation, recovery, Outcome, and usage
+lifecycle without occupying the Session's active Turn slot. Its Task
+Participant Message streams into the ordinary transcript and becomes the
+durable auto-delivery when terminal.
+
+## Operator questions, WorkPlans, and model tiers
+
+Providers can pause only their own Invocation for a bounded human choice:
+
+    ask_operator  {"question":"Which release path?","options":[{"label":"Safe","description":"Run every gate"},{"label":"Fast","description":"Prefer speed"}],"recommended":0}
+
+The question and its two to five options are durable. `/answer` opens the
+waiting question; selecting one option completes the originating ToolRun and
+re-arms the Invocation. This is not tool authorization and grants no execution
+authority.
+
+Providers maintain visible phased progress with `update_plan`. `init` accepts
+ordered phases and unique item names; later actions are `start`, `done`,
+`block`, `unblock`, and `drop`. At most one actionable item is in progress.
+When none is running, the earliest pending item auto-promotes. `/plan` renders
+the newest WorkPlan without changing it.
+
+Each Participant has a ModelTier:
+
+- `smol`: 32,000 provider-reported tokens per Invocation
+- `default`: 100,000 tokens
+- `slow`: 200,000 tokens
+
+Task Participants default to `smol`; the Primary Participant defaults to
+`default`. `/tier` changes the tier for future Invocations. The concrete
+provider/model remains the one explicitly configured for that Participant.
+Tier and TokenBudget freeze when an Invocation opens. After known cumulative
+usage reaches the budget, tools from the recorded round still drain, but the
+Engine fails the Invocation before starting another ProviderRound.
 
 ## Diagnostics
 

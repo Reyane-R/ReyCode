@@ -2,7 +2,19 @@ defmodule ReyCode.TUITest do
   use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.Engine
+
+  alias ReyCode.Orchestration.{
+    Engine,
+    Invocation,
+    InvocationCoordination,
+    Message,
+    OperatorQuestion,
+    Participant,
+    PeerMessage,
+    Turn,
+    WorkPlan
+  }
+
   alias ReyCode.Test.Wait
   alias ReyCode.TUI.{AnimationClock, State}
 
@@ -796,6 +808,185 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Escape")
     assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "Keep this draft"
     assert Breeze.Test.render!(session) =~ "Keep this draft"
+  end
+
+  test "Agent Hub renders Wave labels and durable peer-message counts" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection = Engine.snapshot(engine)
+    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    room = projection.rooms[room_id]
+
+    peer_messages =
+      Enum.map(1..2, fn index ->
+        %PeerMessage{
+          id: "peer-#{index}",
+          sender_invocation_id: "sibling",
+          sender_name: "Nova",
+          target_invocation_id: "child-wave",
+          body: "coordination #{index}",
+          created_sequence: projection.sequence
+        }
+      end)
+
+    child = %Invocation{
+      id: "child-wave",
+      room_id: room_id,
+      turn_id: "turn-wave",
+      message_id: "message-wave",
+      delegated_from_invocation_id: "parent-wave",
+      delegated_from_tool_run_id: "run-wave",
+      participant: %Participant{id: "luna", name: "Luna", kind: :task},
+      label: "integration task",
+      status: :running,
+      coordination: %InvocationCoordination{peer_messages: peer_messages}
+    }
+
+    message = %Message{
+      id: "message-wave",
+      room_id: room_id,
+      turn_id: "turn-wave",
+      invocation_id: child.id,
+      role: :assistant,
+      status: :streaming
+    }
+
+    turn = %Turn{
+      id: "turn-wave",
+      room_id: room_id,
+      input_kind: :detached,
+      mode: :delegate,
+      participant_id: child.participant.id,
+      detached?: true,
+      status: :running,
+      invocation_order: [child.id],
+      created_at: DateTime.utc_now() |> DateTime.add(-2, :second) |> DateTime.to_iso8601()
+    }
+
+    projection =
+      projection
+      |> put_in([:rooms, room_id], %{room | message_order: room.message_order ++ [message.id]})
+      |> put_in([:messages, message.id], message)
+      |> put_in([:invocations, child.id], child)
+      |> put_in([:turns, turn.id], turn)
+
+    push_projection(session, projection)
+    type(session, "/hub")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+
+    screen = Breeze.Test.render!(session)
+    assert screen =~ "Agent Hub"
+    assert screen =~ "Luna · running · integration task · 2 peer messages"
+  end
+
+  test "Tier Two modals render waiting questions, WorkPlans, and model tiers" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection = Engine.snapshot(engine)
+    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    room = projection.rooms[room_id]
+    primary = Enum.find(room.participants, &(&1.kind == :primary))
+
+    question = %OperatorQuestion{
+      id: "question-tui",
+      tool_run_id: "run-question",
+      question: "Which implementation path?",
+      options: [
+        %{id: "option-0", label: "Safe", description: "Preserve compatibility"},
+        %{id: "option-1", label: "Fast", description: "Prefer speed"}
+      ],
+      recommended_id: "option-0",
+      asked_at: "2026-08-27T00:00:00Z"
+    }
+
+    plan = %WorkPlan{
+      phases: [
+        %WorkPlan.Phase{
+          name: "Build",
+          items: [
+            %WorkPlan.Item{name: "Implement", status: :in_progress, blocked_reason: nil},
+            %WorkPlan.Item{name: "Test", status: :pending, blocked_reason: nil}
+          ]
+        }
+      ],
+      updated_at: "2026-08-27T00:00:00Z"
+    }
+
+    invocation = %Invocation{
+      id: "invocation-tier-two",
+      room_id: room_id,
+      turn_id: "turn-tier-two",
+      message_id: "message-tier-two",
+      participant: primary,
+      label: "assistant response",
+      status: :waiting_operator,
+      coordination: %InvocationCoordination{pending_question: question, work_plan: plan}
+    }
+
+    message = %Message{
+      id: invocation.message_id,
+      room_id: room_id,
+      turn_id: invocation.turn_id,
+      invocation_id: invocation.id,
+      role: :assistant,
+      status: :streaming
+    }
+
+    turn = %Turn{
+      id: invocation.turn_id,
+      room_id: room_id,
+      mode: :direct,
+      status: :running,
+      invocation_order: [invocation.id],
+      created_at: "2026-08-27T00:00:00Z"
+    }
+
+    projection =
+      projection
+      |> put_in([:rooms, room_id], %{room | message_order: room.message_order ++ [message.id]})
+      |> put_in([:messages, message.id], message)
+      |> put_in([:invocations, invocation.id], invocation)
+      |> put_in([:turns, turn.id], turn)
+
+    push_projection(session, projection)
+
+    type(session, "/answer")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    question_screen = Breeze.Test.render!(session)
+    assert question_screen =~ "Operator question"
+    assert question_screen =~ "Which implementation path?"
+    assert question_screen =~ "Safe · recommended"
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
+
+    type(session, "/plan")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    plan_screen = Breeze.Test.render!(session)
+    assert plan_screen =~ "WorkPlan"
+    assert plan_screen =~ "▶ Implement"
+    assert plan_screen =~ "○ Test"
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
+
+    type(session, "/tier")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.render!(session) =~ "Model tiers"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    tier_screen = Breeze.Test.render!(session)
+    assert tier_screen =~ "smol · 32000 tokens"
+    assert tier_screen =~ "default · 100000 tokens"
+    assert tier_screen =~ "slow · 200000 tokens"
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+
+    configured_primary =
+      Engine.snapshot(engine).rooms[room_id].participants
+      |> Enum.find(&(&1.id == primary.id))
+
+    assert configured_primary.model_tier == :smol
   end
 
   test "an unknown slash command is never posted to the session" do

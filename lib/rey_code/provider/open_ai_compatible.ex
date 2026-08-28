@@ -303,9 +303,26 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp wire_tool_description("spawn_task") do
-    "Delegate a bounded subtask to a named task agent. The parent pauses until " <>
-      "the child reports; the report returns as this tool's result. " <>
-      "Arguments: {\"agent\": <exact task participant name>, \"brief\": <instruction>}"
+    "Delegate one bounded subtask to a named task agent. Attached parents pause until " <>
+      "the child reports; detach=true returns a durable background-Turn receipt immediately."
+  end
+
+  defp wire_tool_description("spawn_tasks") do
+    "Open one bounded DelegationWave of parallel task agents with frozen shared context, " <>
+      "per-child output schemas, and an optional dependency-gated IntegrationOwner."
+  end
+
+  defp wire_tool_description("send_peer") do
+    "Send one bounded durable message to an exact-name active peer in the same DelegationWave."
+  end
+
+  defp wire_tool_description("ask_operator") do
+    "Pause this Invocation for one bounded multiple-choice OperatorQuestion. " <>
+      "Use only when materially different options require human judgment."
+  end
+
+  defp wire_tool_description("update_plan") do
+    "Initialize or transition one durable phased WorkPlan owned by this Invocation."
   end
 
   defp wire_tool_description("read"),
@@ -338,20 +355,93 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp wire_tool_description(name), do: "ReyCode workspace tool #{name}"
 
   defp tool_schema("spawn_task") do
+    delegation_task_schema(true)
+  end
+
+  defp tool_schema("spawn_tasks") do
     object_schema(
       %{
-        "agent" => %{"type" => "string", "description" => "Exact task participant name"},
-        "brief" => %{"type" => "string", "description" => "Self-contained task instruction"},
-        "output_schema" => %{
-          "type" => "object",
-          "description" => "Optional JSON Schema for the child report"
+        "shared_context" => %{
+          "type" => "string",
+          "description" => "Frozen context shared by every Wave child"
         },
-        "isolate" => %{
-          "type" => "boolean",
-          "description" => "Run in a temporary git worktree and apply its patch on success"
+        "tasks" => %{
+          "type" => "array",
+          "minItems" => 1,
+          "maxItems" => 8,
+          "items" => delegation_task_schema(false)
+        },
+        "integrator" =>
+          delegation_task_schema(false)
+          |> Map.put(
+            "description",
+            "Optional Task Participant started after all worker children terminate"
+          )
+      },
+      ["tasks"]
+    )
+  end
+
+  defp tool_schema("send_peer") do
+    object_schema(
+      %{
+        "target" => %{"type" => "string", "description" => "Exact active peer name"},
+        "body" => %{"type" => "string", "description" => "Bounded coordination message"}
+      },
+      ["target", "body"]
+    )
+  end
+
+  defp tool_schema("ask_operator") do
+    object_schema(
+      %{
+        "question" => %{"type" => "string"},
+        "options" => %{
+          "type" => "array",
+          "minItems" => 2,
+          "maxItems" => 5,
+          "items" =>
+            object_schema(
+              %{
+                "label" => %{"type" => "string"},
+                "description" => %{"type" => "string"}
+              },
+              ["label"]
+            )
+        },
+        "recommended" => %{
+          "type" => "integer",
+          "minimum" => 0,
+          "maximum" => 4,
+          "description" => "Optional zero-based recommended option"
         }
       },
-      ["agent", "brief"]
+      ["question", "options"]
+    )
+  end
+
+  defp tool_schema("update_plan") do
+    object_schema(
+      %{
+        "action" => %{
+          "type" => "string",
+          "enum" => ["init", "start", "done", "block", "unblock", "drop"]
+        },
+        "phases" => %{
+          "type" => "array",
+          "items" =>
+            object_schema(
+              %{
+                "name" => %{"type" => "string"},
+                "items" => %{"type" => "array", "items" => %{"type" => "string"}}
+              },
+              ["name", "items"]
+            )
+        },
+        "item" => %{"type" => "string"},
+        "reason" => %{"type" => "string"}
+      },
+      ["action"]
     )
   end
 
@@ -496,6 +586,33 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp tool_schema(_name),
     do: %{"type" => "object", "additionalProperties" => true, "properties" => %{}}
+
+  defp delegation_task_schema(include_detach?) do
+    properties = %{
+      "agent" => %{"type" => "string", "description" => "Exact task participant name"},
+      "brief" => %{"type" => "string", "description" => "Self-contained task instruction"},
+      "output_schema" => %{
+        "type" => "object",
+        "description" => "Optional JSON Schema for the child report"
+      },
+      "isolate" => %{
+        "type" => "boolean",
+        "description" => "Run in a temporary git worktree and apply its patch on success"
+      }
+    }
+
+    properties =
+      if include_detach? do
+        Map.put(properties, "detach", %{
+          "type" => "boolean",
+          "description" => "Run in an independent background Turn and return its receipt now"
+        })
+      else
+        properties
+      end
+
+    object_schema(properties, ["agent", "brief"])
+  end
 
   defp object_schema(properties, required) do
     %{

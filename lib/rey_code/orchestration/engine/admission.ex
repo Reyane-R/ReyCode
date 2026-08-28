@@ -91,12 +91,14 @@ defmodule ReyCode.Orchestration.Engine.Admission do
     }
   end
 
-  @doc "Checks whether the invocation's workspace still has capacity."
+  @doc "Checks whether dependencies are terminal and the invocation workspace has capacity."
   @spec workspace_slot_available?(map(), {String.t(), non_neg_integer()}) :: boolean()
   def workspace_slot_available?(state, {invocation_id, _index}) do
     workspace = workspace(state, invocation_id)
     active = Enum.count(state.active_executions, fn {_id, value} -> value == workspace end)
-    limit_available?(active, state.limits.workspace_concurrency)
+
+    dependencies_terminal?(state, invocation_id) and
+      limit_available?(active, state.limits.workspace_concurrency)
   end
 
   @doc "Resolves the expanded workspace path an invocation runs in."
@@ -104,13 +106,38 @@ defmodule ReyCode.Orchestration.Engine.Admission do
   def workspace(state, invocation_id) do
     invocation = state.projection.invocations[invocation_id]
     room = invocation && state.projection.rooms[invocation.room_id]
-    if room, do: Path.expand(room.workspace), else: "unknown"
+    execution_context = invocation && Map.get(invocation, :execution_context)
+    execution_workspace = execution_context && Map.get(execution_context, :workspace)
+
+    cond do
+      execution_workspace ->
+        Path.expand(execution_workspace)
+
+      room ->
+        Path.expand(room.workspace)
+
+      true ->
+        "unknown"
+    end
   end
 
   @doc "Checks whether current usage is within the configured limit."
   @spec limit_available?(non_neg_integer(), pos_integer() | :infinity) :: boolean()
   def limit_available?(_current, :infinity), do: true
   def limit_available?(current, limit), do: current < limit
+
+  defp dependencies_terminal?(state, invocation_id) do
+    invocation = state.projection.invocations[invocation_id]
+
+    (invocation || %{})
+    |> Map.get(:dependencies, [])
+    |> Enum.all?(fn dependency_id ->
+      case state.projection.invocations[dependency_id] do
+        %{status: status} when status in [:completed, :failed] -> true
+        _other -> false
+      end
+    end)
+  end
 
   defp queued_turn_count(projection) do
     Enum.count(projection.turns, fn {_id, turn} -> turn.status == :queued end)

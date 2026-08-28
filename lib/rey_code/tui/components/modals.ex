@@ -17,10 +17,13 @@ defmodule ReyCode.TUI.Components.Modals do
     Delegation,
     Help,
     ModelPicker,
+    ModelTiers,
+    OperatorQuestion,
     SessionPicker,
     Settings,
     SlashPalette,
     ToolReview,
+    WorkPlan,
     Workspace
   }
 
@@ -31,13 +34,16 @@ defmodule ReyCode.TUI.Components.Modals do
     agent_profile: AgentProfile,
     delegation: Delegation,
     model_picker: ModelPicker,
+    model_tiers: ModelTiers,
+    operator_question: OperatorQuestion,
     session_picker: SessionPicker,
     settings: Settings,
     workspace: Workspace,
     cancel: Cancellation,
     tool_review: ToolReview,
     slash: SlashPalette,
-    help: Help
+    help: Help,
+    work_plan: WorkPlan
   }
 
   @doc "Returns the owning feature module for an open modal."
@@ -60,12 +66,15 @@ defmodule ReyCode.TUI.Components.Modals do
   defp dispatch(:agent_profile, assigns), do: AgentProfile.modal(assigns)
   defp dispatch(:delegation, assigns), do: Delegation.modal(assigns)
   defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)
+  defp dispatch(:model_tiers, assigns), do: ModelTiers.modal(assigns)
+  defp dispatch(:operator_question, assigns), do: OperatorQuestion.modal(assigns)
   defp dispatch(:session_picker, assigns), do: SessionPicker.modal(assigns)
   defp dispatch(:workspace, assigns), do: Workspace.modal(assigns)
   defp dispatch(:settings, assigns), do: SettingsModal.modal(assigns)
   defp dispatch(:cancel, assigns), do: Cancellation.modal(assigns)
   defp dispatch(:tool_review, assigns), do: ToolReview.modal(assigns)
   defp dispatch(:help, assigns), do: Help.modal(assigns)
+  defp dispatch(:work_plan, assigns), do: WorkPlan.modal(assigns)
   defp dispatch(_modal, assigns), do: empty(assigns)
   defp empty(assigns), do: ~H""
 end

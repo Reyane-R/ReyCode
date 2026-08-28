@@ -557,6 +557,70 @@ defmodule ReyCode.EventContractTest do
       "delegation_depth" => 1
     }
 
+  defp valid_data(:peer_message_sent),
+    do: %{
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "peer_message_id" => "peer-1",
+      "sender_invocation_id" => "inv-1",
+      "sender_name" => "Luna",
+      "target_invocation_id" => "inv-2",
+      "body" => "Use the public interface"
+    }
+
+  defp valid_data(:participant_tier_configured),
+    do: %{
+      "room_id" => "room-1",
+      "participant_id" => "participant-1",
+      "model_tier" => "smol"
+    }
+
+  defp valid_data(:operator_question_asked),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "question_id" => "question-1",
+      "tool_run_id" => "run-1",
+      "question" => "Which path?",
+      "options" => [
+        %{"id" => "option-0", "label" => "Safe", "description" => "Conservative"},
+        %{"id" => "option-1", "label" => "Fast", "description" => "Aggressive"}
+      ]
+    }
+
+  defp valid_data(:operator_question_answered),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "question_id" => "question-1",
+      "tool_run_id" => "run-1",
+      "selected_id" => "option-0",
+      "selected_label" => "Safe"
+    }
+
+  defp valid_data(:invocation_plan_updated),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "plan" => %{
+        "phases" => [
+          %{
+            "name" => "Build",
+            "items" => [
+              %{"name" => "Implement", "status" => "in_progress", "blocked_reason" => nil}
+            ]
+          }
+        ],
+        "updated_at" => "2026-08-27T00:00:00Z"
+      }
+    }
+
   defp wire_event(type, data) do
     %{
       "id" => Integer.to_string(7),
