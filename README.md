@@ -79,31 +79,37 @@ mix run --no-halt
 [mise]: https://mise.jdx.dev
 [asdf]: https://asdf-vm.com
 
-## Deploy as `reycode`
+## Install as `reycode` (macOS / Linux)
 
-Build a self-contained release. It bundles its own Erlang runtime, so the
-resulting binary runs without `mix` or a global Elixir install:
-
-```sh
-MIX_ENV=prod mix release
-```
-
-Put a launcher on your `PATH` (from the repository root):
+Install the latest release — no Elixir, Erlang, or build tools required. The
+release bundles its own Erlang runtime and all native extensions:
 
 ```sh
-printf '#!/bin/sh\nif [ $# -eq 0 ]; then set -- start; fi\nexec "%s/_build/prod/rel/rey_code/bin/rey_code" "$@"\n' "$(pwd)" \
-  > ~/.local/bin/reycode && chmod +x ~/.local/bin/reycode
+curl -fsSL https://raw.githubusercontent.com/Reyane-R/ReyCode/main/install.sh | sh
 ```
 
-Typing `reycode` now opens the terminal UI. A symlink is not enough here: the
-release boot script resolves its own directory, so it must be invoked by a real
+This downloads the release for your OS and architecture (macOS arm64/x86_64,
+Linux x86_64/arm64), extracts it to `~/.reycode`, and puts a `reycode` launcher
+in `~/.local/bin`. Pin or relocate with environment variables:
+
+```sh
+REYCODE_VERSION=v0.1.0 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
+  sh install.sh   # from a repository checkout
+```
+
+Typing `reycode` opens the terminal UI. A symlink is not enough here: the
+release boot script resolves its own directory, so the launcher must be a real
 script. `reycode version` prints the release identity; any other arguments pass
 through to the release script (`reycode daemon` runs it in the background).
+
+To build from source instead, run `MIX_ENV=prod mix release` in a checkout and
+point the launcher at `_build/prod/rel/rey_code/bin/rey_code`.
 
 The SQLite event store is single-writer: one live instance per data directory.
 A second instance against the same store fails closed with `database is
 locked`. Quit the first instance with `Ctrl+Q`, or run a throwaway instance in
 isolation by launching it under a different `$HOME`.
+
 
 
 ## Run
