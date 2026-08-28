@@ -2,14 +2,16 @@ defmodule ReyCode.TUI.State do
   @moduledoc "Shared terminal state initialization and projection updates for the root view."
 
   alias Breeze.{Component, View}
-  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.{Engine, ModelTier}
   alias ReyCode.Provider.{Catalog, Presentation}
 
   alias ReyCode.TUI.{
     Activity,
     AgentProfile,
     AnimationClock,
+    Artifacts,
     Delegation,
+    MergeReview,
     ModelPicker,
     ModelTiers,
     OperatorQuestion,
@@ -55,11 +57,13 @@ defmodule ReyCode.TUI.State do
         home: true,
         modal: nil,
         cancel_turn_id: nil,
+        artifacts: Artifacts.initial(),
         agent_profile: AgentProfile.initial(),
         delegation: Delegation.initial(),
         tool_review: ToolReview.initial(),
         operator_question: OperatorQuestion.initial(),
         work_plan_invocation_id: nil,
+        merge_review: MergeReview.initial(),
         model_tiers: ModelTiers.initial(),
         slash: nil,
         model_picker: ModelPicker.initial(),
@@ -100,6 +104,8 @@ defmodule ReyCode.TUI.State do
         assigns.animation_style
       )
 
+    budget = invocation_budget(session, assigns.projection)
+
     Component.assign(assigns,
       session: session,
       sessions: Enum.map(assigns.projection.session_order, &assigns.projection.sessions[&1]),
@@ -115,7 +121,10 @@ defmodule ReyCode.TUI.State do
       activity_frame: frame,
       draft: Map.get(assigns.drafts, assigns.selected_session_id, ""),
       git_branch: git_branch(session && session.workspace),
-      token_label: token_label(session, assigns.projection, assigns.config),
+      question_label: question_label(session, assigns.projection),
+      token_label: token_label(session, assigns.projection, assigns.config, budget),
+      token_label_class: token_label_class(budget),
+      budget_notice: budget_notice(budget),
       message_width: message_width,
       timeline_id: timeline_id(session.id),
       recent_session_rows: recent_session_rows(assigns),
@@ -139,6 +148,26 @@ defmodule ReyCode.TUI.State do
     end)
   end
 
+  defp question_label(nil, _projection), do: ""
+
+  defp question_label(session, projection) do
+    count =
+      projection.invocations
+      |> Map.values()
+      |> Enum.count(fn invocation ->
+        coordination = Map.get(invocation, :coordination)
+
+        Map.get(invocation, :session_id) == session.id and
+          match?(%{pending_question: question} when not is_nil(question), coordination)
+      end)
+
+    case count do
+      0 -> ""
+      1 -> "Ⅱ 1 question waiting"
+      value -> "Ⅱ #{value} questions waiting"
+    end
+  end
+
   defp git_branch(nil), do: nil
 
   defp git_branch(workspace) do
@@ -149,11 +178,58 @@ defmodule ReyCode.TUI.State do
     end
   end
 
-  defp token_label(session, projection, config) do
+  defp token_label(session, projection, config, nil) do
     tokens = token_usage(session, projection)
 
     "#{meter_bar(session, projection, config)}  tok #{format_tokens(tokens)}/#{format_tokens(config.orchestration.context_budget_tokens)}"
   end
+
+  defp token_label(_session, _projection, _config, budget), do: invocation_budget_label(budget)
+
+  defp invocation_budget(nil, _projection), do: nil
+
+  defp invocation_budget(session, projection) do
+    invocation =
+      session.message_order
+      |> Enum.map(&projection.messages[&1])
+      |> Enum.filter(&(&1 && &1.invocation_id))
+      |> Enum.map(&projection.invocations[&1.invocation_id])
+      |> Enum.find(&(&1 && &1.status not in [:completed, :failed, :cancelled]))
+
+    case invocation && Map.get(invocation, :execution_context) do
+      %{token_budget_tokens: limit, model_tier: tier} ->
+        used = ModelTier.used_tokens(invocation)
+
+        %{
+          participant: invocation.participant.name,
+          tier: tier,
+          used: used,
+          limit: limit,
+          ratio: if(is_number(used) and limit > 0, do: used / limit, else: nil)
+        }
+
+      _missing_budget ->
+        nil
+    end
+  end
+
+  defp invocation_budget_label(budget) do
+    used = if is_number(budget.used), do: format_tokens(budget.used), else: "?"
+    warning = if is_number(budget.ratio) and budget.ratio >= 0.8, do: "Ⅱ ", else: ""
+    "#{warning}tok #{budget.tier} #{used}/#{format_tokens(budget.limit)}"
+  end
+
+  defp token_label_class(%{ratio: ratio}) when is_number(ratio) and ratio >= 0.8,
+    do: "pl-2 text-warning"
+
+  defp token_label_class(_budget), do: "pl-2 text-muted"
+
+  defp budget_notice(%{ratio: ratio} = budget) when is_number(ratio) and ratio >= 0.8 do
+    percent = round(ratio * 100)
+    "#{budget.participant} has used #{percent}% of its #{budget.tier} token budget"
+  end
+
+  defp budget_notice(_budget), do: nil
 
   defp meter_bar(session, projection, config) do
     used = token_usage(session, projection)

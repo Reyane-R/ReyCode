@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.TierTwoPolicyTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.{ModelTier, OperatorQuestions, WorkPlan}
+  alias ReyCode.Orchestration.{ModelTier, OperatorQuestion, OperatorQuestions, WorkPlan}
 
   test "OperatorQuestion freezes two to five bounded options and recommendation" do
     assert {:ok, question} =
@@ -9,10 +9,16 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
                %{
                  "question" => "Which release path?",
                  "options" => [
-                   %{"label" => "Safe", "description" => "Run every gate"},
+                   %{
+                     "label" => "Safe",
+                     "description" => "Run every gate",
+                     "preview" => "@@ -1 +1 @@"
+                   },
                    %{"label" => "Fast"}
                  ],
-                 "recommended" => 0
+                 "recommended" => 0,
+                 "multi" => true,
+                 "allow_other" => true
                },
                "question-1",
                "run-1",
@@ -21,6 +27,41 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
 
     assert Enum.map(question.options, & &1.id) == ["option-0", "option-1"]
     assert question.recommended_id == "option-0"
+    assert question.multi?
+    assert question.allow_other?
+    assert hd(question.options).preview == "@@ -1 +1 @@"
+
+    assert {:ok, answer} =
+             OperatorQuestions.resolve(question, %{
+               option_ids: ["option-0", "option-1"],
+               other: "Keep a rollback"
+             })
+
+    assert answer.labels == ["Safe", "Fast"]
+    assert answer.other == "Keep a rollback"
+    assert {:ok, %{labels: ["Safe"]}} = OperatorQuestions.resolve(question, "option-0")
+    assert {:ok, ordered} = OperatorQuestions.resolve(question, ["option-1", "option-0"])
+    assert ordered.labels == ["Fast", "Safe"]
+    assert {:error, :invalid_question_selection} = OperatorQuestions.resolve(question, 42)
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, %{"option_ids" => [], "other" => 42})
+
+    wire = OperatorQuestion.to_wire(question)
+
+    decoded =
+      OperatorQuestion.from_map(%{
+        id: wire["question_id"],
+        tool_run_id: wire["tool_run_id"],
+        question: wire["question"],
+        options: wire["options"],
+        recommended_id: wire["recommended_id"],
+        multi?: wire["multi"],
+        allow_other?: wire["allow_other"],
+        asked_at: "now"
+      })
+
+    assert decoded == question
 
     assert {:error, :invalid_question_arguments} =
              OperatorQuestions.build(

@@ -26,11 +26,14 @@ defmodule ReyCode.TUI.Render do
       slash_rows={@slash_rows}
       slash_style={@slash_style}
       git_branch={@git_branch}
+      question_label={@question_label}
+      token_label_class={@token_label_class}
       token_label={@token_label}
       terminal_width={@breeze.terminal.width}
       terminal_height={@breeze.terminal.height}
       draft={@draft}
       notice={@notice}
+      budget_notice={@budget_notice}
       slash={@slash}
     />
     <.active term={assigns}/>

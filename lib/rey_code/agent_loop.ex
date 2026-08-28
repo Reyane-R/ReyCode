@@ -10,7 +10,7 @@ defmodule ReyCode.AgentLoop do
   the loop after an approval decision or an engine restart.
   """
 
-  alias ReyCode.{Agent, Failure}
+  alias ReyCode.{Agent, ArtifactStore, Failure}
   alias ReyCode.Orchestration.Engine.Client
   alias ReyCode.Provider.Catalog
   alias ReyCode.Provider.Response
@@ -149,6 +149,7 @@ defmodule ReyCode.AgentLoop do
       )
 
     result = ToolRegistry.execute(tool_request, state.config)
+    result = ArtifactStore.spool(result, state.config.artifacts, state.invocation_id, run.id)
     record_tool_result(state, run, Result.to_wire(result))
   end
 

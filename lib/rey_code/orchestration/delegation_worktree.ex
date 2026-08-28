@@ -2,11 +2,12 @@ defmodule ReyCode.Orchestration.DelegationWorktree do
   @moduledoc "Bounded git-worktree isolation and patch application for delegated Invocations."
 
   alias ReyCode.Hashing
-  alias ReyCode.Provider.Command
+  alias ReyCode.Provider.{Command, TextBuffer}
   alias ReyCode.Security.CanonicalPath
 
   @timeout_ms 10_000
   @max_output_bytes 2_000_000
+  @max_preview_bytes 65_536
 
   @type isolation :: %{workspace: String.t(), source_workspace: String.t()}
 
@@ -32,9 +33,38 @@ defmodule ReyCode.Orchestration.DelegationWorktree do
     end
   end
 
-  @doc "Checks and applies one isolated worktree patch to its source workspace."
-  @spec apply(isolation()) :: :ok | {:error, term()}
-  def apply(%{workspace: workspace, source_workspace: source}) do
+  @doc "Returns one bounded human-readable patch preview without applying it."
+  @spec preview(isolation()) :: {:ok, String.t()} | {:error, term()}
+  def preview(%{"workspace" => workspace, "source_workspace" => source}),
+    do: preview(%{workspace: workspace, source_workspace: source})
+
+  def preview(%{workspace: workspace}) do
+    with git when is_binary(git) <- System.find_executable("git"),
+         {:ok, _output} <- command(git, ["add", "-N", "--", "."], workspace),
+         {:ok, stat} <- command(git, ["diff", "--stat", "HEAD"], workspace),
+         {:ok, diff} <-
+           command(git, ["diff", "--no-ext-diff", "--unified=3", "HEAD"], workspace) do
+      preview =
+        [String.trim_trailing(stat), String.trim_trailing(diff)]
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.join("\n\n")
+
+      if byte_size(preview) > @max_preview_bytes,
+        do:
+          {:ok, TextBuffer.truncate_utf8(preview, @max_preview_bytes) <> "\n… preview truncated"},
+        else: {:ok, preview}
+    else
+      nil -> {:error, :git_not_found}
+      {:error, reason} -> {:error, {:worktree_preview_failed, reason}}
+    end
+  end
+
+  @doc "Checks and applies one isolated patch while retaining the worktree for durable resolution."
+  @spec apply_keep(isolation()) :: :ok | {:error, term()}
+  def apply_keep(%{"workspace" => workspace, "source_workspace" => source}),
+    do: apply_keep(%{workspace: workspace, source_workspace: source})
+
+  def apply_keep(%{workspace: workspace, source_workspace: source}) do
     git = System.find_executable("git")
     patch = Path.join(workspace, ".reycode-delegation.patch")
 
@@ -44,8 +74,8 @@ defmodule ReyCode.Orchestration.DelegationWorktree do
            {:ok, diff} <-
              command(git, ["diff", "--binary", "--no-ext-diff", "HEAD"], workspace),
            :ok <- write_patch(patch, diff),
-           :ok <- apply_patch(git, source, patch, diff) do
-        cleanup(%{workspace: workspace, source_workspace: source})
+           :ok <- apply_patch_idempotent(git, source, patch, diff) do
+        :ok
       else
         false -> {:error, :git_not_found}
         {:error, reason} -> {:error, reason}
@@ -55,9 +85,22 @@ defmodule ReyCode.Orchestration.DelegationWorktree do
     end
   end
 
+  @doc "Applies one isolated worktree patch and removes the worktree."
+  @spec apply(isolation()) :: :ok | {:error, term()}
+  def apply(isolation) do
+    with :ok <- apply_keep(isolation), do: cleanup(isolation)
+  end
+
   @doc "Removes an isolated worktree without applying its changes."
   @spec cleanup(isolation()) :: :ok | {:error, term()}
+  def cleanup(%{"workspace" => workspace, "source_workspace" => source}),
+    do: cleanup(%{workspace: workspace, source_workspace: source})
+
   def cleanup(%{workspace: workspace, source_workspace: source}) do
+    if File.exists?(workspace), do: remove_worktree(workspace, source), else: :ok
+  end
+
+  defp remove_worktree(workspace, source) do
     case System.find_executable("git") do
       nil ->
         {:error, :git_not_found}
@@ -92,14 +135,21 @@ defmodule ReyCode.Orchestration.DelegationWorktree do
   defp write_patch(_path, ""), do: :ok
   defp write_patch(path, diff), do: File.write(path, diff, [:binary])
 
-  defp apply_patch(_git, _source, _patch, ""), do: :ok
+  defp apply_patch_idempotent(_git, _source, _patch, ""), do: :ok
 
-  defp apply_patch(git, source, patch, _diff) do
-    with {:ok, _output} <- command(git, ["apply", "--check", patch], source),
-         {:ok, _output} <- command(git, ["apply", patch], source) do
-      :ok
-    else
-      {:error, reason} -> {:error, {:worktree_apply_failed, reason}}
+  defp apply_patch_idempotent(git, source, patch, _diff) do
+    case command(git, ["apply", "--check", patch], source) do
+      {:ok, _output} ->
+        case command(git, ["apply", patch], source) do
+          {:ok, _output} -> :ok
+          {:error, reason} -> {:error, {:worktree_apply_failed, reason}}
+        end
+
+      {:error, reason} ->
+        case command(git, ["apply", "--reverse", "--check", patch], source) do
+          {:ok, _already_applied} -> :ok
+          {:error, _not_applied} -> {:error, {:worktree_apply_failed, reason}}
+        end
     end
   end
 

@@ -116,7 +116,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/rewind <sequence>`: branch the current Session at an earlier durable sequence
 - `/export`: write a deterministic Markdown Session export inside `.reycode/exports`
 - `/advise [brief]`: run an explicit review through the configured Advisor Participant
-- `/hub`: inspect and control delegated child Invocations
+- `/hub`: inspect and control delegated child Invocations; press `M` on an `awaits merge` child to Apply or Discard its isolated patch
 - `/home`: return to the session home
 - `/agent`: create a task agent
 - `/agents`: change an agent's provider/model
@@ -124,6 +124,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/model`: switch the Assistant model in one step
 - `/task`: delegate one task to one task agent
 - `/answer`: answer the newest waiting OperatorQuestion
+- `/artifacts`: inspect and page retained large ToolRun outputs
 - `/plan`: inspect the newest Invocation WorkPlan
 - `/tier`: configure Participant `smol`/`default`/`slow` tiers and future Invocation budgets
 - `/steer <correction>`: queue a correction for the active Invocation's next provider-round boundary
@@ -134,6 +135,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `@file` / `#file`: attach a file's content to the next message (workspace
   files only, 512 KB per file, 2 MB total)
 - `Tab`: move between the prompt and current transcript
+- `Ctrl+A`: open the newest waiting OperatorQuestion
 - `Ctrl+G`: configure agent runtimes and models
 - `Ctrl+T`: cycle the theme
 - `j` / `k`: scroll the focused transcript
@@ -150,9 +152,12 @@ distinct glyphs.
 
 Native agents that surface intermediate reasoning render dimmed activity lines
 under the message (`· note`), collapsed behind `+k more activity` when the
-trail grows past three lines. The header is the ambient status line:
-`ReyCode · model · ⑂ branch · workspace · tok 12.4k/200k`, followed by the
-highest-priority activity in durable invocation order.
+trail grows past three lines. Mermaid `flowchart` and `sequenceDiagram` fences
+render as bounded ASCII diagrams inside the timeline. The header is the ambient
+status line: `ReyCode · model · ⑂ branch · workspace · tok 12.4k/200k`,
+followed by the active Invocation tier meter and highest-priority activity in
+durable invocation order. A waiting-question badge opens with `Ctrl+A`; the
+budget meter and composer warn at 80 percent without stopping the Invocation.
 
 Set `REYCODE_TUI_REDUCED_MOTION=true` in a release environment (or
 `tui_reduced_motion: true` in application configuration) to use a static active
@@ -164,6 +169,17 @@ configured `context_budget_tokens` budget
 records a bounded extractive ContextSummary and a durable ContextBoundary.
 Future provider requests use that summary plus later Messages; the complete
 transcript and Events remain available for replay and rendering.
+
+Successful ToolRun output larger than 16 KB is retained in the bounded artifact
+spool instead of being copied wholesale into the transcript or provider
+context. The result includes a preview and `artifact://` identifier. Use
+`/artifacts` to inspect retained output; providers can request bounded byte
+windows with `artifact_read`. Retention defaults to 128 artifacts and 2 MB per
+artifact and is configurable with the `REYCODE_ARTIFACT_*` settings.
+
+OperatorQuestions may present two to five options with descriptions and bounded
+previews. `Space` toggles options in a multi-select question, `Enter` submits,
+and the Other row accepts bounded text when the question allows it.
 
 Submitting an ordinary message while the Session already has active or queued
 work records a durable FollowUp Turn. `/unqueue` cancels only the newest queued

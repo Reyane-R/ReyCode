@@ -575,6 +575,29 @@ defmodule ReyCode.EventContractTest do
       "model_tier" => "smol"
     }
 
+  defp valid_data(:delegation_merge_requested),
+    do: %{
+      "invocation_id" => "inv-child",
+      "message_id" => "msg-child",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "parent_invocation_id" => "inv-parent",
+      "tool_run_id" => "run-1",
+      "diff" => "@@ -1 +1 @@",
+      "workspace" => "/tmp/worktree",
+      "source_workspace" => "/tmp/source"
+    }
+
+  defp valid_data(:delegation_merge_resolved),
+    do: %{
+      "invocation_id" => "inv-child",
+      "message_id" => "msg-child",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "tool_run_id" => "run-1",
+      "decision" => "apply"
+    }
+
   defp valid_data(:operator_question_asked),
     do: %{
       "invocation_id" => "inv-1",

@@ -13,6 +13,7 @@ defmodule ReyCode.TUI.SlashPalette do
     Advisor,
     AgentHub,
     AgentProfile,
+    Artifacts,
     Cancellation,
     Completion,
     Delegation,
@@ -40,6 +41,7 @@ defmodule ReyCode.TUI.SlashPalette do
     "/new",
     "/resume",
     "/plan",
+    "/artifacts",
     "/help"
   ]
   @max_visible_row_count 12
@@ -363,6 +365,8 @@ defmodule ReyCode.TUI.SlashPalette do
 
   defp run_action(term, :settings, %{provider: provider, model: model}),
     do: {:noreply, Settings.open_at(term, provider, model)}
+
+  defp run_action(term, :artifacts, nil), do: {:noreply, Artifacts.open(term)}
 
   defp run_action(term, :model_tiers, nil), do: {:noreply, ModelTiers.open(term)}
   defp run_action(term, :operator_question, nil), do: {:noreply, OperatorQuestion.open(term)}

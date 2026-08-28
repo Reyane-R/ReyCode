@@ -26,7 +26,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **DelegationContract** — Frozen optional JSON output schema and workspace-isolation choice for one delegated child Invocation.
 
-**IsolationWorktree** — Temporary detached git worktree owned by one delegated child and either patch-applied on successful validation or removed without application.
+**IsolationWorktree** — Temporary detached git worktree owned by one delegated child. A successful non-empty patch pauses for an Owner Apply/Discard decision; Apply patch-checks and updates the source Workspace, while Discard removes the worktree without changing the source.
 
 **DelegationWave** — Bounded set of child Invocations opened atomically by one parent ToolRun from frozen shared context and ordered task contracts. Worker children enter admission together; an optional IntegrationOwner starts only after every worker is terminal; an attached parent resumes only after the full Wave is terminal.
 
@@ -67,10 +67,12 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **ToolCall** — Provider request to invoke a named tool with arguments.
 
 **ToolRun** — Durable authorization and execution lifecycle for one ToolCall.
+**ToolArtifact** — Bounded retained ToolRun output spooled outside the Event log when inline output crosses the configured byte threshold. Provider and Operator access is by opaque `artifact://` identifier and bounded byte windows.
+
 
 **ToolAsk** — Pending owner decision recorded when a ToolRun execution needs approval, addressed by request id.
 
-**OperatorQuestion** — Bounded durable question raised by an Invocation for the Operator, with two to five frozen options and at most one recommended option. It pauses only that Invocation until the Operator selects one option.
+**OperatorQuestion** — Bounded durable question raised by an Invocation for the Operator, with two to five frozen options, optional display-only previews, an optional recommended option, optional ordered multi-selection, and optional bounded free text through Other. It pauses only that Invocation until the Operator submits a valid answer.
 
 **WorkPlan** — Durable phased progress projection owned by one Invocation. Items have exactly one lifecycle status; after each update, at most one actionable item is in progress and the earliest pending item auto-promotes when none is running.
 
@@ -80,7 +82,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ModelTier** — Participant model-cost/capability designation: smol, default, or slow. The tier freezes a TokenBudget when an Invocation opens; it never changes that Invocation's provider/model identity.
 
-**TokenBudget** — Maximum provider-reported token count admitted for one Invocation. Unknown usage remains unknown; once known usage reaches the budget, no further ProviderRound starts.
+**TokenBudget** — Maximum provider-reported token count admitted for one Invocation. Unknown usage remains unknown; the TUI presents a soft warning at 80 percent, and once known usage reaches the budget no further ProviderRound starts.
 
 **spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant.
 
@@ -180,6 +182,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - A Steering belongs to one active Invocation and is recorded into exactly one ProviderRound when consumed.
 - A DelegationContract belongs to exactly one delegated child Invocation; its IsolationWorktree, when present, has the same owner.
 - An Invocation owns ordered ProviderRounds and ToolRuns.
+- A ToolArtifact belongs to one successful ToolRun output; it is retained by bounded count and bytes rather than projected as business state.
 - A Session has at most one current ContextBoundary; later boundaries supersede it for provider-context reconstruction without deleting Events.
 - A SessionFork has exactly one parent Session and one immutable fork sequence.
 - A BackgroundProcess is owned by ProcessHub and does not outlive it.

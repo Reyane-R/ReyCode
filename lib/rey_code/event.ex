@@ -50,7 +50,8 @@ defmodule ReyCode.Event do
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
     gate_review_requested gate_resolved squad_budget_extended tool_ask_requested tool_ask_resolved
     provider_round_recorded tool_run_requested tool_run_approval_resolved tool_run_started
-    tool_run_completed tool_run_failed tool_run_interrupted delegation_opened peer_message_sent
+    tool_run_completed tool_run_failed tool_run_interrupted delegation_opened
+    delegation_merge_requested delegation_merge_resolved peer_message_sent
     operator_question_asked operator_question_answered invocation_plan_updated participant_tier_configured
   )a
   @type type ::
@@ -94,6 +95,7 @@ defmodule ReyCode.Event do
   @participant_kinds ~w(primary task legacy)
   @input_kinds ~w(operator follow_up detached)
   @model_tiers ~w(smol default slow)
+  @merge_decisions ~w(apply discard)
   @retry_kinds ~w(provider_retry rework)
 
   @frame_kinds ~w(
@@ -245,7 +247,11 @@ defmodule ReyCode.Event do
           "question" => :text,
           "options" => :map_list
         }),
-      optional: %{"recommended_id" => :nullable_text}
+      optional: %{
+        "recommended_id" => :nullable_text,
+        "multi" => :boolean,
+        "allow_other" => :boolean
+      }
     },
     operator_question_answered: %{
       required:
@@ -256,7 +262,11 @@ defmodule ReyCode.Event do
           "selected_id" => :id,
           "selected_label" => :text
         }),
-      optional: %{}
+      optional: %{
+        "selected_ids" => :text_list,
+        "selected_labels" => :text_list,
+        "other" => :nullable_text
+      }
     },
     invocation_plan_updated: %{
       required:
@@ -481,6 +491,27 @@ defmodule ReyCode.Event do
           "delegation_depth" => :non_negative_integer
         }),
       optional: %{"suspend_parent" => :boolean}
+    },
+    delegation_merge_requested: %{
+      required:
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
+        |> Map.merge(%{
+          "parent_invocation_id" => :id,
+          "tool_run_id" => :id,
+          "diff" => :text,
+          "workspace" => :text,
+          "source_workspace" => :text
+        }),
+      optional: %{}
+    },
+    delegation_merge_resolved: %{
+      required:
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
+        |> Map.merge(%{
+          "tool_run_id" => :id,
+          "decision" => {:one_of, @merge_decisions}
+        }),
+      optional: %{}
     },
     peer_message_sent: %{
       required:

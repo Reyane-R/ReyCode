@@ -5,6 +5,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
   alias ReyCode.Orchestration.{Engine, WorkPlan}
   alias ReyCode.Provider.{Frame, Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
+  alias ReyCode.TUI.OperatorQuestion, as: QuestionModal
 
   @agent_registry __MODULE__.AgentRegistry
   @event_registry __MODULE__.EventRegistry
@@ -109,7 +110,14 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     end
 
     defp finish_after_answer(test_pid, request, emit) do
-      selected = request |> latest_tool_content() |> Jason.decode!() |> Map.fetch!("output")
+      answer =
+        request
+        |> latest_tool_content()
+        |> Jason.decode!()
+        |> Map.fetch!("output")
+        |> Jason.decode!()
+
+      selected = answer |> Map.fetch!("selected") |> hd()
       send(test_pid, {:selected_option, selected})
       :ok = emit.(Frame.text_delta(request.resume_from + 1, "finished with #{selected}"))
       {:ok, Response.new(text: "finished with #{selected}", usage: %{"total_tokens" => 100})}
@@ -216,7 +224,26 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
            ]
 
     question = invocation.coordination.pending_question
-    assert :ok = Engine.answer_question(invocation.id, question.id, "option-0", @engine)
+
+    term = %Breeze.Term{
+      assigns: %{
+        engine: @engine,
+        modal: :operator_question,
+        notice: nil,
+        operator_question: %{
+          QuestionModal.initial()
+          | invocation_id: invocation.id,
+            question_id: question.id,
+            selected_ids: ["option-0"]
+        },
+        projection: Engine.snapshot(@engine)
+      }
+    }
+
+    assert {:noreply, answered} = QuestionModal.handle_input("Enter", term)
+    assert answered.assigns.notice == "Answered: Safe"
+    assert {:noreply, stale} = QuestionModal.submit(term)
+    assert stale.assigns.notice =~ "Could not answer"
     Wait.terminal_turn(@engine, turn_id)
     assert_receive {:selected_option, "Safe"}, 5_000
 

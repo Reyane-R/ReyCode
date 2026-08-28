@@ -13,9 +13,11 @@ defmodule ReyCode.TUI.Components.Modals do
   alias ReyCode.TUI.{
     AgentHub,
     AgentProfile,
+    Artifacts,
     Cancellation,
     Delegation,
     Help,
+    MergeReview,
     ModelPicker,
     ModelTiers,
     OperatorQuestion,
@@ -30,10 +32,12 @@ defmodule ReyCode.TUI.Components.Modals do
   alias ReyCode.TUI.Components.SettingsModal
 
   @registry %{
+    artifacts: Artifacts,
     agent_hub: AgentHub,
     agent_profile: AgentProfile,
     delegation: Delegation,
     model_picker: ModelPicker,
+    merge_review: MergeReview,
     model_tiers: ModelTiers,
     operator_question: OperatorQuestion,
     session_picker: SessionPicker,
@@ -62,10 +66,13 @@ defmodule ReyCode.TUI.Components.Modals do
     dispatch(Map.get(term || %{}, :modal), Map.put(assigns, :term, term))
   end
 
+  defp dispatch(:artifacts, assigns), do: Artifacts.modal(assigns)
+
   defp dispatch(:agent_hub, assigns), do: AgentHub.modal(assigns)
   defp dispatch(:agent_profile, assigns), do: AgentProfile.modal(assigns)
   defp dispatch(:delegation, assigns), do: Delegation.modal(assigns)
   defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)
+  defp dispatch(:merge_review, assigns), do: MergeReview.modal(assigns)
   defp dispatch(:model_tiers, assigns), do: ModelTiers.modal(assigns)
   defp dispatch(:operator_question, assigns), do: OperatorQuestion.modal(assigns)
   defp dispatch(:session_picker, assigns), do: SessionPicker.modal(assigns)

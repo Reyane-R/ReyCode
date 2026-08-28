@@ -1,17 +1,33 @@
 defmodule ReyCode.Orchestration.OperatorQuestion do
   @moduledoc "A bounded durable multiple-choice question awaiting the Operator."
 
-  @fields [:id, :tool_run_id, :question, :options, :recommended_id, :asked_at]
-  @enforce_keys @fields
-  defstruct @fields
+  @fields [
+    :id,
+    :tool_run_id,
+    :question,
+    :options,
+    :recommended_id,
+    :multi?,
+    :allow_other?,
+    :asked_at
+  ]
+  @enforce_keys [:id, :tool_run_id, :question, :options, :recommended_id, :asked_at]
+  defstruct @enforce_keys ++ [multi?: false, allow_other?: false]
 
-  @type option :: %{id: String.t(), label: String.t(), description: String.t()}
+  @type option :: %{
+          id: String.t(),
+          label: String.t(),
+          description: String.t(),
+          preview: String.t()
+        }
   @type t :: %__MODULE__{
           id: String.t(),
           tool_run_id: String.t(),
           question: String.t(),
           options: [option()],
           recommended_id: String.t() | nil,
+          multi?: boolean(),
+          allow_other?: boolean(),
           asked_at: String.t()
         }
 
@@ -21,7 +37,13 @@ defmodule ReyCode.Orchestration.OperatorQuestion do
 
   def from_map(question) when is_map(question) do
     question = struct!(__MODULE__, Map.take(question, @fields))
-    %{question | options: Enum.map(question.options, &normalize_option/1)}
+
+    %{
+      question
+      | options: Enum.map(question.options, &normalize_option/1),
+        multi?: question.multi? == true,
+        allow_other?: question.allow_other? == true
+    }
   end
 
   @doc "Encodes a question as an event-safe wire map."
@@ -36,10 +58,13 @@ defmodule ReyCode.Orchestration.OperatorQuestion do
           %{
             "id" => option.id,
             "label" => option.label,
-            "description" => option.description
+            "description" => Map.get(option, :description, ""),
+            "preview" => Map.get(option, :preview, "")
           }
         end),
-      "recommended_id" => question.recommended_id
+      "recommended_id" => question.recommended_id,
+      "multi" => question.multi?,
+      "allow_other" => question.allow_other?
     }
   end
 
@@ -47,7 +72,8 @@ defmodule ReyCode.Orchestration.OperatorQuestion do
     %{
       id: Map.get(option, :id, Map.get(option, "id")),
       label: Map.get(option, :label, Map.get(option, "label")),
-      description: Map.get(option, :description, Map.get(option, "description", ""))
+      description: Map.get(option, :description, Map.get(option, "description", "")),
+      preview: Map.get(option, :preview, Map.get(option, "preview", ""))
     }
   end
 end

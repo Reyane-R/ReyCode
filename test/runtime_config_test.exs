@@ -189,6 +189,11 @@ defmodule ReyCode.RuntimeConfigTest do
 
   defp flatten(config) do
     %{
+      artifact_root: config.artifacts.root,
+      artifact_spool_threshold_bytes: config.artifacts.spool_threshold_bytes,
+      artifact_preview_bytes: config.artifacts.preview_bytes,
+      artifact_max_bytes: config.artifacts.max_artifact_bytes,
+      artifact_max_count: config.artifacts.max_artifact_count,
       context_budget_tokens: config.orchestration.context_budget_tokens,
       global_concurrency: config.orchestration.global_concurrency,
       workspace_concurrency: config.orchestration.workspace_concurrency,

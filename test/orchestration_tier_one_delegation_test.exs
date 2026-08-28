@@ -5,6 +5,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.{Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
+  alias ReyCode.TUI.MergeReview
 
   @agent_registry __MODULE__.AgentRegistry
   @event_registry __MODULE__.EventRegistry
@@ -53,7 +54,9 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
           parent_finish(test_pid, request, emit)
 
         {"delegated task", 0} ->
-          worker_peer(request)
+          if String.contains?(request.system_prompt, "isolated patch"),
+            do: isolated_patch(request, emit),
+            else: worker_peer(request)
 
         {"delegated task", round} when round in [1, 2] ->
           worker_continue_or_finish(test_pid, request, emit, round)
@@ -102,6 +105,19 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
                })
              ]
            )}
+
+        decision when decision in ["merge", "discard"] ->
+          {:ok,
+           Response.new(
+             tool_calls: [
+               ToolCall.new("merge-call", "spawn_task", %{
+                 "agent" => "Luna",
+                 "brief" => "isolated patch #{decision}",
+                 "output_schema" => @schema,
+                 "isolate" => true
+               })
+             ]
+           )}
       end
     end
 
@@ -122,6 +138,14 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
            })
          ]
        )}
+    end
+
+    defp isolated_patch(request, emit) do
+      value =
+        if String.contains?(request.system_prompt, "discard"), do: "discarded\n", else: "after\n"
+
+      File.write!(Path.join(request.workspace, "sample.txt"), value)
+      response_with_text(emit, request, Jason.encode!(%{"result" => String.trim(value)}))
     end
 
     defp worker_continue_or_finish(test_pid, request, emit, round) do
@@ -173,8 +197,12 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
 
     defp directive(request) do
       Enum.find_value(request.messages, fn
-        %{role: :user, content: content} when content in ["wave", "detach"] -> content
-        _other -> nil
+        %{role: :user, content: content}
+        when content in ["wave", "detach", "merge", "discard"] ->
+          content
+
+        _other ->
+          nil
       end)
     end
 
@@ -206,6 +234,16 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
     workspace = Path.join(System.tmp_dir!(), "tier_one_#{System.unique_integer([:positive])}")
     File.mkdir_p!(workspace)
     on_exit(fn -> File.rm_rf!(workspace) end)
+    git = System.find_executable("git")
+    File.write!(Path.join(workspace, "sample.txt"), "before\n")
+    {_output, 0} = System.cmd(git, ["init"], cd: workspace, stderr_to_stdout: true)
+
+    {_output, 0} =
+      System.cmd(git, ["config", "user.email", "reycode@example.invalid"], cd: workspace)
+
+    {_output, 0} = System.cmd(git, ["config", "user.name", "ReyCode Test"], cd: workspace)
+    {_output, 0} = System.cmd(git, ["add", "sample.txt"], cd: workspace)
+    {_output, 0} = System.cmd(git, ["commit", "-m", "initial"], cd: workspace)
 
     path =
       Path.join(
@@ -307,6 +345,68 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
     message = final_projection.messages[final_projection.invocations[child_id].message_id]
     assert message.body == ~s({"result":"detached done"})
     assert message.status == :completed
+  end
+
+  test "isolated child pauses for owner Apply before touching the source", %{
+    session_id: session_id
+  } do
+    {:ok, turn_id} = Engine.post_message(session_id, "merge", :direct, @engine)
+
+    child =
+      Wait.projection(@engine, fn projection ->
+        projection.turns[turn_id].invocation_order
+        |> Enum.map(&projection.invocations[&1])
+        |> Enum.find(
+          &match?(%{pending_tool_review: %{tool: "merge"}, status: :waiting_tool_approval}, &1)
+        )
+      end)
+
+    assert File.read!(
+             Path.join(Engine.snapshot(@engine).sessions[session_id].workspace, "sample.txt")
+           ) ==
+             "before\n"
+
+    assert child.pending_tool_review.arguments["diff"] =~ "+after"
+    assert {:noreply, resolved} = MergeReview.submit(merge_term(child))
+    assert resolved.assigns.notice == "Patch applied"
+    Wait.terminal_turn(@engine, turn_id)
+
+    assert File.read!(
+             Path.join(Engine.snapshot(@engine).sessions[session_id].workspace, "sample.txt")
+           ) ==
+             "after\n"
+  end
+
+  test "isolated child Discard removes the worktree and preserves the source", %{
+    session_id: session_id
+  } do
+    {:ok, turn_id} = Engine.post_message(session_id, "discard", :direct, @engine)
+
+    child =
+      Wait.projection(@engine, fn projection ->
+        projection.turns[turn_id].invocation_order
+        |> Enum.map(&projection.invocations[&1])
+        |> Enum.find(&match?(%{pending_tool_review: %{tool: "merge"}}, &1))
+      end)
+
+    assert {:noreply, resolved} = MergeReview.handle_input("D", merge_term(child))
+    assert resolved.assigns.notice == "Patch discarded"
+    Wait.terminal_turn(@engine, turn_id)
+    workspace = Engine.snapshot(@engine).sessions[session_id].workspace
+    assert File.read!(Path.join(workspace, "sample.txt")) == "before\n"
+    refute File.exists?(child.execution_context.isolation["workspace"])
+  end
+
+  defp merge_term(child) do
+    %Breeze.Term{
+      assigns: %{
+        engine: @engine,
+        merge_review: %{child_invocation_id: child.id, offset: 0},
+        modal: :merge_review,
+        notice: nil,
+        projection: Engine.snapshot(@engine)
+      }
+    }
   end
 
   defp configure_participants(session_id) do

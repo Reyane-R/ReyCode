@@ -15,7 +15,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert Enum.map(SlashPalette.matches("/exp"), & &1.command) == ["/export"]
 
     assert Enum.map(SlashPalette.matches("/"), & &1.command) ==
-             ~w(/task /agent /agents /model /connect /new /resume /plan /help)
+             ~w(/task /agent /agents /model /connect /new /resume /plan /artifacts /help)
   end
 
   test "the registry is the single consistent source of commands and actions" do

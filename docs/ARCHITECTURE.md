@@ -523,6 +523,12 @@ For each tool call, the Agent Loop calls `ToolRegistry.dispatch/2`:
   invocation's status becomes `waiting_tool_approval`. The Agent process exits,
   releasing its concurrency slot.
 
+Successful results cross `ArtifactStore.spool/4` before they become provider
+wire output. Small output stays inline. Large output is retained under a
+bounded count/byte policy, while the ToolRun receives a preview and opaque
+`artifact://` identifier. `artifact_read` pages that retained file without
+copying it into Events.
+
 ### Step 10a: Tool result → Next provider round
 
 If all tool calls auto-executed, the Agent Loop rebuilds the conversation
@@ -538,6 +544,16 @@ If a tool is awaiting approval, a banner appears in the TUI. The owner presses
 `tool_run_approval_resolved` event. If approved, the Engine re-enqueues the
 invocation, and a new Agent process picks up the loop — it sees the approved
 tool run, executes it, records the result, and continues.
+
+### Step 10c: Isolated delegation → Owner merge resolution
+
+When a delegated child with an IsolationWorktree finishes successfully, the
+Engine validates its output contract and renders a bounded patch preview.
+A non-empty patch records `delegation_merge_requested` and pauses the child;
+the source Workspace is still unchanged. AgentHub opens the merge review, and
+`Engine.resolve_merge/3` records Apply or Discard before the child and attached
+parent may complete. Apply is patch-check/idempotent; both resolutions clean up
+the worktree.
 
 ### Step 11: Turn completion
 

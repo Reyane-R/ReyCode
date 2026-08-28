@@ -15,6 +15,7 @@ defmodule ReyCode.Capabilities do
       description: "Answer a waiting Operator question",
       action: :operator_question
     },
+    %{command: "/artifacts", description: "Inspect spooled ToolRun outputs", action: :artifacts},
     %{command: "/cancel", description: "Cancel the current task", action: :cancel},
     %{command: "/connect", description: "Configure providers", action: :settings},
     %{command: "/export", description: "Export the current Session", action: :export},
