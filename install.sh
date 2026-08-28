@@ -55,8 +55,7 @@ if [ "$VERSION" = "latest" ]; then
     exit 1
   fi
 fi
-
-asset="reycode-${VERSION}-${os}-${arch}.tar.gz"
+asset="reycode-${VERSION#v}-${os}-${arch}.tar.gz"
 url="https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -67,7 +66,7 @@ download "$url" "${tmp}/${asset}"
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 tar -xzf "${tmp}/${asset}" -C "$tmp"
 rm -rf "$INSTALL_DIR"
-mv "${tmp}/reycode-${VERSION#${v}}" "$INSTALL_DIR"
+mv "${tmp}/reycode-${VERSION#v}" "$INSTALL_DIR"
 
 cat > "${BIN_DIR}/reycode" <<EOF
 #!/bin/sh
