@@ -619,11 +619,10 @@ defmodule ReyCode.TUITest do
       |> put_in([:invocations, "inv-layout", :usage], %{"total_tokens" => 12_400})
 
     push_projection(session, projection)
-    open_first_session(session)
-    screen = session |> Breeze.Test.render!() |> plain()
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
 
-    assert screen =~ "Ⅱ standard 12.4k/15k"
-    assert screen =~ "Assistant has used 83% of its standard token budget"
+    assert assigns.token_label =~ "Ⅱ tok standard 12.4k/15k"
+    assert assigns.budget_notice == "Assistant has used 83% of its standard token budget"
   end
 
   test "approval and queued presentation stay static and event-invariant across stale ticks" do

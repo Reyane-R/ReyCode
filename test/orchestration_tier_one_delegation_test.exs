@@ -5,6 +5,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.{Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
+  alias ReyCode.TUI.MergeReview
 
   @agent_registry __MODULE__.AgentRegistry
   @event_registry __MODULE__.EventRegistry
@@ -366,7 +367,8 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
              "before\n"
 
     assert child.pending_tool_review.arguments["diff"] =~ "+after"
-    assert :ok = Engine.resolve_merge(child.id, :apply, @engine)
+    assert {:noreply, resolved} = MergeReview.submit(merge_term(child))
+    assert resolved.assigns.notice == "Patch applied"
     Wait.terminal_turn(@engine, turn_id)
 
     assert File.read!(
@@ -387,11 +389,24 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
         |> Enum.find(&match?(%{pending_tool_review: %{tool: "merge"}}, &1))
       end)
 
-    assert :ok = Engine.resolve_merge(child.id, :discard, @engine)
+    assert {:noreply, resolved} = MergeReview.handle_input("D", merge_term(child))
+    assert resolved.assigns.notice == "Patch discarded"
     Wait.terminal_turn(@engine, turn_id)
     workspace = Engine.snapshot(@engine).sessions[session_id].workspace
     assert File.read!(Path.join(workspace, "sample.txt")) == "before\n"
     refute File.exists?(child.execution_context.isolation["workspace"])
+  end
+
+  defp merge_term(child) do
+    %Breeze.Term{
+      assigns: %{
+        engine: @engine,
+        merge_review: %{child_invocation_id: child.id, offset: 0},
+        modal: :merge_review,
+        notice: nil,
+        projection: Engine.snapshot(@engine)
+      }
+    }
   end
 
   defp configure_participants(session_id) do

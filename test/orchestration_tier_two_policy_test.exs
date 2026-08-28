@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.TierTwoPolicyTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.{ModelTier, OperatorQuestions, WorkPlan}
+  alias ReyCode.Orchestration.{ModelTier, OperatorQuestion, OperatorQuestions, WorkPlan}
 
   test "OperatorQuestion freezes two to five bounded options and recommendation" do
     assert {:ok, question} =
@@ -39,6 +39,29 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
 
     assert answer.labels == ["Safe", "Fast"]
     assert answer.other == "Keep a rollback"
+    assert {:ok, %{labels: ["Safe"]}} = OperatorQuestions.resolve(question, "option-0")
+    assert {:ok, ordered} = OperatorQuestions.resolve(question, ["option-1", "option-0"])
+    assert ordered.labels == ["Fast", "Safe"]
+    assert {:error, :invalid_question_selection} = OperatorQuestions.resolve(question, 42)
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, %{"option_ids" => [], "other" => 42})
+
+    wire = OperatorQuestion.to_wire(question)
+
+    decoded =
+      OperatorQuestion.from_map(%{
+        id: wire["question_id"],
+        tool_run_id: wire["tool_run_id"],
+        question: wire["question"],
+        options: wire["options"],
+        recommended_id: wire["recommended_id"],
+        multi?: wire["multi"],
+        allow_other?: wire["allow_other"],
+        asked_at: "now"
+      })
+
+    assert decoded == question
 
     assert {:error, :invalid_question_arguments} =
              OperatorQuestions.build(

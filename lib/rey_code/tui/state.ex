@@ -178,14 +178,13 @@ defmodule ReyCode.TUI.State do
     end
   end
 
-  defp token_label(session, projection, config, budget) do
+  defp token_label(session, projection, config, nil) do
     tokens = token_usage(session, projection)
 
-    context =
-      "#{meter_bar(session, projection, config)}  tok #{format_tokens(tokens)}/#{format_tokens(config.orchestration.context_budget_tokens)}"
-
-    context <> invocation_budget_label(budget)
+    "#{meter_bar(session, projection, config)}  tok #{format_tokens(tokens)}/#{format_tokens(config.orchestration.context_budget_tokens)}"
   end
+
+  defp token_label(_session, _projection, _config, budget), do: invocation_budget_label(budget)
 
   defp invocation_budget(nil, _projection), do: nil
 
@@ -214,12 +213,10 @@ defmodule ReyCode.TUI.State do
     end
   end
 
-  defp invocation_budget_label(nil), do: ""
-
   defp invocation_budget_label(budget) do
     used = if is_number(budget.used), do: format_tokens(budget.used), else: "?"
     warning = if is_number(budget.ratio) and budget.ratio >= 0.8, do: "Ⅱ ", else: ""
-    "  ·  #{warning}#{budget.tier} #{used}/#{format_tokens(budget.limit)}"
+    "#{warning}tok #{budget.tier} #{used}/#{format_tokens(budget.limit)}"
   end
 
   defp token_label_class(%{ratio: ratio}) when is_number(ratio) and ratio >= 0.8,

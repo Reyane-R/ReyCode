@@ -63,5 +63,30 @@ defmodule ReyCode.ArtifactStoreTest do
 
     assert ArtifactStore.spool(result, policy, "inv", "run") == result
     assert {:error, :invalid_artifact_id} = ArtifactStore.read(policy, "../escape", 0, 10)
+
+    assert {:error, :artifact_not_found} =
+             ArtifactStore.read(policy, String.duplicate("a", 32), 0, 10)
+
+    assert {:error, :invalid_artifact_window} =
+             ArtifactStore.read(policy, String.duplicate("a", 32), -1, 10)
+
+    blocked_root = root <> "-file"
+    File.write!(blocked_root, "not a directory")
+    blocked_policy = %{policy | root: blocked_root, spool_threshold_bytes: 1}
+    blocked_result = Result.ok("large")
+    assert ArtifactStore.spool(blocked_result, blocked_policy, "inv", "run") == blocked_result
+
+    missing =
+      Request.new(tool: "artifact_read", arguments: %{}, workspace: "/tmp")
+
+    invalid_window =
+      Request.new(
+        tool: "artifact_read",
+        arguments: %{"artifact_id" => String.duplicate("a", 32), "offset" => -1},
+        workspace: "/tmp"
+      )
+
+    assert %Result{ok: false} = ArtifactRead.run(missing, policy: policy)
+    assert %Result{ok: false} = ArtifactRead.run(invalid_window, policy: policy)
   end
 end
