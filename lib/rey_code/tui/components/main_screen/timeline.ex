@@ -26,38 +26,48 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
         <box class="font-bold text-primary">Start a conversation</box>
         <box class="pt-1 text-muted">Send a message to the Assistant or delegate with /task.</box>
       </box>
-      <box :for={message <- @messages} class={message_class(message)}>
-        <box class="inline w-full overflow-hidden">
-          <box class={author_name_class(message)}>{message.author.name}</box>
-          <box :if={message_metadata(message) != ""} class="text-muted">
-            {metadata_label(message)}
+      <box :for={item <- @messages} class="w-full">
+        <box :if={item.kind == :context_boundary} class="w-full py-1 text-warning">
+          ── Context compacted through sequence {item.created_sequence} · /context inspect ──
+          <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
+        </box>
+        <box :if={item.kind == :message} class={message_class(item)}>
+          <box class="inline w-full overflow-hidden">
+            <box class={author_name_class(item)}>{item.author.name}</box>
+            <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
+            <box class={message_status_class(item)}>{message_status(item)}</box>
           </box>
-          <box class={message_status_class(message)}>{message_status(message)}</box>
-        </box>
-        <box :if={message.body != ""} class="pl-2 w-full overflow-hidden">
-          <box :for={line <- render_message(message, @message_width)} class="w-full">{line}</box>
-        </box>
-        <box
-          :if={message.body == "" and message.status in [:queued, :streaming]}
-          class="pl-2 w-full text-muted"
-        >
-          {message_placeholder(message, @activity_frame)}
-        </box>
-        <box :if={message.error} class="pl-2 w-full overflow-hidden text-error">
-          Failed · {error_summary(message.error, @message_width)}
-        </box>
-        <box :if={note_overflow(message) > 0} class="pl-2 w-full text-muted">
-          +{note_overflow(message)} more activity
-        </box>
-        <box :for={row <- visible_notes(message)} class="pl-2 w-full overflow-hidden text-muted">
-          · {row}
-        </box>
-        <box :for={row <- message.tool_run_rows} class={tool_row_class(row)}>
-          Tool · {Activity.text(row, @activity_frame)}
+          <box :if={item.body != ""} class="pl-2 w-full overflow-hidden">
+            <box :for={line <- render_message(item, @message_width)} class="w-full">{line}</box>
+          </box>
+          <box
+            :if={item.body == "" and item.status in [:queued, :streaming]}
+            class="pl-2 w-full text-muted"
+          >
+            {message_placeholder(item, @activity_frame)}
+          </box>
+          <box :if={item.error} class="pl-2 w-full overflow-hidden text-error">
+            Failed · {error_summary(item.error, @message_width)}
+          </box>
+          <box :if={note_overflow(item) > 0} class="pl-2 w-full text-muted">
+            +{note_overflow(item)} more activity
+          </box>
+          <box :for={row <- visible_notes(item)} class="pl-2 w-full overflow-hidden text-muted">
+            · {row}
+          </box>
+          <box :for={row <- item.tool_run_rows} class={tool_row_class(row)}>
+            Tool · {Activity.text(row, @activity_frame)}
+          </box>
         </box>
       </box>
     </.scroll>
     """
+  end
+
+  defp boundary_preview(summary) do
+    summary
+    |> String.replace(~r/\s+/, " ")
+    |> String.slice(0, 120)
   end
 
   defp render_message(message, width) do

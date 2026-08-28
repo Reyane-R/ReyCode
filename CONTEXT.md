@@ -9,6 +9,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **Session** — Durable workspace-rooted conversation aggregate owning one title, Workspace, Participant roster, ordered Messages and Turns, context-compaction state, and active/queued Turn scheduling.
 
 **SessionFork** — Session whose inherited transcript references completed Messages from one parent Session through a recorded durable sequence; later Messages belong only to the fork.
+**SessionTree** — Bounded read-only arrangement of Sessions by their SessionFork parent relationship; selecting a node changes the active Session but does not change durable history.
+
 
 **Operator** — Human supplying ordinary Session input.
 
@@ -37,8 +39,10 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **DetachedDelegation** — Background Turn initiated by an Invocation and addressed to one Task Participant. The source Invocation receives a durable receipt immediately; the background Turn does not occupy the Session's active Turn slot, and its terminal Task Participant Message is delivered into the Session transcript.
 
 **Turn** — One durable orchestration request initiated by an Operator message or by a DetachedDelegation from an Invocation.
+**TurnRetry** — New Turn linked to one failed terminal Turn and initialized from the failed Turn's exact Operator message, mode, and Participant address. The failed Turn remains unchanged.
 
-**FollowUp** — Operator Turn queued behind existing Session work and cancellable before it starts.
+
+**FollowUp** — Operator Turn queued behind existing Session work. Before it starts, Dequeue cancels that Turn and returns its Message body to the Operator's transient composer draft.
 
 **Steering** — Bounded durable Operator correction attached to one active Invocation and consumed at the next provider-round boundary.
 
@@ -67,6 +71,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **ToolCall** — Provider request to invoke a named tool with arguments.
 
 **ToolRun** — Durable authorization and execution lifecycle for one ToolCall.
+**ToolRunInspector** — Bounded read-only presentation of ToolRuns, their owning Invocations, authorization, arguments, output, errors, and lifecycle timestamps.
+
 **ToolArtifact** — Bounded retained ToolRun output spooled outside the Event log when inline output crosses the configured byte threshold. Provider and Operator access is by opaque `artifact://` identifier and bounded byte windows.
 
 
@@ -185,6 +191,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - A ToolArtifact belongs to one successful ToolRun output; it is retained by bounded count and bytes rather than projected as business state.
 - A Session has at most one current ContextBoundary; later boundaries supersede it for provider-context reconstruction without deleting Events.
 - A SessionFork has exactly one parent Session and one immutable fork sequence.
+- A TurnRetry references exactly one earlier failed terminal Turn; it is independently scheduled and reaches its own TurnOutcome.
 - A BackgroundProcess is owned by ProcessHub and does not outlive it.
 - A ToolRun realizes exactly one ToolCall.
 - A squad Turn owns exactly one SquadRun.

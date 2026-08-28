@@ -465,12 +465,14 @@ synchronous `GenServer.call` to the Engine process.
 `Engine.Turns.post_message/4` validates the message isn't empty, checks that
 all session participants have configured providers, and verifies admission
 (concurrency limits aren't exceeded). Then it calls
-`Lifecycle.queue_message/5`.
+`Lifecycle.queue_message/6`.
 
-This function constructs three event entries:
+This function constructs two event entries:
 1. `message_posted` — the user's message itself
-2. `turn_queued` — a new turn for orchestration
-3. `assistant_message_opened` — a placeholder for the AI's response
+2. `turn_queued` — a new Turn for orchestration
+
+It then starts the Turn when admission permits; Turn startup records
+`assistant_message_opened` for each Invocation response.
 
 These entries are passed to `Persistence.append_and_apply!/2`, which:
 1. Writes them to SQLite in one transaction
@@ -485,10 +487,17 @@ The TUI subscribed to projection updates when it mounted
 message in `handle_info`, which triggers a re-render. The user sees their
 message appear in the timeline.
 
+Projection-first terminal surfaces reuse that same snapshot. SessionTree reads
+SessionFork parents; ToolRunInspector reads Invocation ToolRuns; AgentHub reads
+delegated Invocation lineage; the timeline inserts the latest ContextBoundary
+at its durable sequence. These are transient presentations and append no
+Events. TurnRetry and Dequeue remain Engine commands because they change
+durable Turn state.
+
 ### Step 5: Engine → Admission → Agent
 
-`Lifecycle.queue_message/5` also calls `Lifecycle.advance_room/2`, which
-starts the turn and tries to schedule work. `Admission.pump/1` checks the
+`Lifecycle.queue_message/6` calls `start_turn/2` when the Session has no active
+Turn, then tries to schedule work. `Admission.pump/1` checks the
 concurrency limits and, if there's capacity, spawns an Agent process.
 
 ### Step 6: Agent → Agent Loop → Provider
@@ -597,8 +606,8 @@ lib/rey_code/
 ├── tool_registry.ex            ← Tool dispatch, authorization, execution
 ├── tool/                       ← read, write, edit, bash, grep, glob, list
 ├── security/                   ← canonical_path, workspace, environment
-├── tui.ex                      ← Terminal UI (Breeze view)
-├── tui/                        ← Render, state, slash palette, modals, settings
+├── tui.ex                      ← Terminal UI, named action handlers
+├── tui/                        ← State, keybindings, SessionTree, inspectors, modals
 ├── diagnostics.ex              ← `mix rey_code.doctor` report
 ├── store_maintenance.ex        ← Database verify/checkpoint/backup/restore
 ├── retry.ex                    ← Retry policy

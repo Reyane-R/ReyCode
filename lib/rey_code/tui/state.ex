@@ -10,16 +10,21 @@ defmodule ReyCode.TUI.State do
     AgentProfile,
     AnimationClock,
     Artifacts,
+    ContextBoundary,
     Delegation,
+    Hotkeys,
     MergeReview,
     ModelPicker,
     ModelTiers,
     OperatorQuestion,
+    PromptHistory,
     SessionPicker,
+    SessionTree,
     Settings,
     SlashPalette,
     Spinner,
     TimeAgo,
+    ToolInspector,
     ToolReview
   }
 
@@ -31,6 +36,7 @@ defmodule ReyCode.TUI.State do
     config = Keyword.get_lazy(opts, :config, &ReyCode.RuntimeConfig.fresh/0)
     projection = Engine.subscribe(engine)
     catalog_snapshot = Catalog.subscribe(provider_catalog)
+    keybindings = ReyCode.TUI.resolved_keybindings(config)
 
     now_ms = System.system_time(:millisecond)
 
@@ -57,22 +63,28 @@ defmodule ReyCode.TUI.State do
         home: true,
         modal: nil,
         cancel_turn_id: nil,
+        context_boundary: ContextBoundary.initial(),
         artifacts: Artifacts.initial(),
         agent_profile: AgentProfile.initial(),
         delegation: Delegation.initial(),
+        hotkeys: Hotkeys.initial(),
         tool_review: ToolReview.initial(),
         operator_question: OperatorQuestion.initial(),
+        prompt_history: PromptHistory.initial(),
         work_plan_invocation_id: nil,
         merge_review: MergeReview.initial(),
         model_tiers: ModelTiers.initial(),
+        session_tree: SessionTree.initial(),
         slash: nil,
         model_picker: ModelPicker.initial(),
         session_picker: SessionPicker.initial(),
+        tool_inspector: ToolInspector.initial(),
         settings: Settings.initial(),
         workspace_preview_path: nil,
         animation_clock: clock,
         animation_now_ms: now_ms,
         animation_style: Keyword.get(opts, :animation_style, Spinner.style()),
+        keybindings: keybindings,
         notice: nil
       )
 
@@ -470,23 +482,42 @@ defmodule ReyCode.TUI.State do
   defp session_messages(nil, _projection, _activity, _now_ms, _target_graphemes), do: []
 
   defp session_messages(session, projection, activity, now_ms, target_graphemes) do
-    session.message_order
-    |> Enum.reverse()
-    |> Enum.map(fn message_id ->
-      message = projection.messages[message_id]
-      invocation = projection.invocations[message.invocation_id]
+    messages =
+      session.message_order
+      |> Enum.reverse()
+      |> Enum.map(fn message_id ->
+        message = projection.messages[message_id]
+        invocation = projection.invocations[message.invocation_id]
 
-      message
-      |> Map.put(:invocation, invocation)
-      |> Map.put(:activity, Activity.invocation(activity, message.invocation_id))
-      |> Map.put(
-        :tool_run_rows,
-        tool_run_rows(invocation, session.workspace, now_ms, target_graphemes)
-      )
-      |> Map.put(:note_rows, note_rows(invocation))
-      |> Map.put(:turn, projection.turns[message.turn_id])
-    end)
+        message
+        |> Map.put(:kind, :message)
+        |> Map.put(:invocation, invocation)
+        |> Map.put(:activity, Activity.invocation(activity, message.invocation_id))
+        |> Map.put(
+          :tool_run_rows,
+          tool_run_rows(invocation, session.workspace, now_ms, target_graphemes)
+        )
+        |> Map.put(:note_rows, note_rows(invocation))
+        |> Map.put(:turn, projection.turns[message.turn_id])
+      end)
+
+    append_context_boundary(messages, session)
   end
+
+  defp append_context_boundary(messages, %{context_boundary_sequence: sequence} = session)
+       when sequence > 0 do
+    boundary = %{
+      kind: :context_boundary,
+      created_sequence: sequence,
+      summary: session.context_summary || "Summary unavailable",
+      compacted_at: session.context_compacted_at
+    }
+
+    {before, after_boundary} = Enum.split_while(messages, &(&1.created_sequence <= sequence))
+    before ++ [boundary | after_boundary]
+  end
+
+  defp append_context_boundary(messages, _session), do: messages
 
   defp tool_run_rows(invocation, workspace, now_ms, target_graphemes)
        when is_map(invocation) do

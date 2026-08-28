@@ -79,7 +79,7 @@ defmodule ReyCode.Orchestration.EngineTest do
            end)
   end
 
-  test "messages submitted during active work are cancellable FollowUps" do
+  test "messages submitted during active work can be dequeued back to the Operator" do
     %{engine: engine} = start_isolated_engine(agent_delay_ms: 500)
     session_id = default_room_id(engine)
     assert {:ok, active_turn_id} = Engine.post_message(session_id, "First", :direct, engine)
@@ -92,7 +92,10 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     assert {:ok, follow_up_id} = Engine.post_message(session_id, "Second", :direct, engine)
     assert Engine.snapshot(engine).turns[follow_up_id].input_kind == :follow_up
-    assert :ok = Engine.cancel_latest_follow_up(session_id, engine)
+    assert {:error, :turn_not_found} = Engine.retry_turn("missing", engine)
+    assert {:error, :turn_not_retryable} = Engine.retry_turn(active_turn_id, engine)
+    assert {:ok, "Second"} = Engine.dequeue_latest_follow_up(session_id, engine)
+    assert {:error, :no_queued_follow_up} = Engine.dequeue_latest_follow_up(session_id, engine)
 
     follow_up = Engine.snapshot(engine).turns[follow_up_id]
     assert follow_up.status == :terminal
@@ -437,6 +440,11 @@ defmodule ReyCode.Orchestration.EngineTest do
     terminal = wait_until_terminal_on(engine, turn_id, 5_000)
     assert terminal.outcome == :failed
     assert Engine.snapshot(engine).invocations[invocation_id].error.category == :worker_exit
+    assert {:ok, retry_turn_id} = Engine.retry_turn(turn_id, engine)
+
+    assert Wait.projection(engine, fn projection ->
+             projection.turns[retry_turn_id].retry_of_turn_id == turn_id
+           end)
   end
 
   @tag capture_log: true

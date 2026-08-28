@@ -262,7 +262,10 @@ defmodule ReyCode.RuntimeConfig do
         max_artifact_bytes: values.artifact_max_bytes,
         max_artifact_count: values.artifact_max_count
       },
-      tui: %TUI{reduced_motion?: values.tui_reduced_motion},
+      tui: %TUI{
+        reduced_motion?: values.tui_reduced_motion,
+        keybindings_path: values.tui_keybindings_path
+      },
       workspace: %Workspace{roots: values.workspace_roots},
       logging: %Logging{enabled?: values.file_logging, log_dir: values.log_dir}
     }

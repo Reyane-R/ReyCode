@@ -10,6 +10,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     EventEntries,
     Mode,
     ToolRuns,
+    Turn,
     Validation
   }
 
@@ -78,7 +79,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     end
   end
 
-  def queue_message(state, session_id, body, mode, participant_id) do
+  def queue_message(state, session_id, body, mode, participant_id, retry_of_turn_id) do
     turn_id = Identity.new_id("turn")
     message_id = Identity.new_id("msg")
     context_sequence = state.projection.sequence + 1
@@ -87,17 +88,16 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     input_kind =
       if session.active_turn_id || session.queued_turn_ids != [], do: :follow_up, else: :operator
 
-    entries =
-      EventEntries.queue_turn(
-        session_id,
-        body,
-        mode,
-        turn_id,
-        message_id,
-        context_sequence,
-        input_kind,
-        participant_id
-      )
+    turn = %Turn{
+      id: turn_id,
+      session_id: session_id,
+      mode: mode,
+      participant_id: participant_id,
+      input_kind: input_kind,
+      retry_of_turn_id: retry_of_turn_id
+    }
+
+    entries = EventEntries.queue_turn(turn, body, message_id, context_sequence)
 
     next = Persistence.append_and_apply!(state, entries)
     session = next.projection.sessions[session_id]

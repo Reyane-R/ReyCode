@@ -10,13 +10,29 @@ defmodule ReyCode.Orchestration.Engine.Turns do
   @doc "Validates and queues one user message for orchestration."
   @spec post_message(map(), term(), term(), term()) :: response()
   def post_message(state, session_id, raw_body, mode) do
-    queue(state, session_id, raw_body, mode, nil)
+    queue(state, session_id, raw_body, mode, nil, nil)
   end
 
   @doc "Validates and queues one task addressed to a task participant."
   @spec delegate_task(map(), term(), term(), term()) :: response()
   def delegate_task(state, session_id, participant_id, raw_body) do
-    queue(state, session_id, raw_body, :delegate, participant_id)
+    queue(state, session_id, raw_body, :delegate, participant_id, nil)
+  end
+
+  @doc "Queues a new Turn linked to one failed terminal Turn."
+  @spec retry(map(), term()) :: response()
+  def retry(state, turn_id) do
+    case Map.get(state.projection.turns, turn_id) do
+      nil ->
+        {:reply, {:error, :turn_not_found}, state}
+
+      %{status: :terminal, outcome: :failed} = turn ->
+        message = state.projection.messages[turn.user_message_id]
+        queue(state, turn.session_id, message.body, turn.mode, turn.participant_id, turn.id)
+
+      _turn ->
+        {:reply, {:error, :turn_not_retryable}, state}
+    end
   end
 
   @doc "Queues one bounded correction for the next provider-round boundary."
@@ -45,9 +61,9 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     end
   end
 
-  @doc "Cancels the newest queued follow-up Turn in one Session."
-  @spec cancel_latest_follow_up(map(), term()) :: response()
-  def cancel_latest_follow_up(state, session_id) do
+  @doc "Cancels and returns the newest queued FollowUp body in one Session."
+  @spec dequeue_latest_follow_up(map(), term()) :: response()
+  def dequeue_latest_follow_up(state, session_id) do
     session = state.projection.sessions[session_id]
 
     if session do
@@ -57,13 +73,13 @@ defmodule ReyCode.Orchestration.Engine.Turns do
         |> Enum.map(&state.projection.turns[&1])
         |> Enum.find(&(&1.input_kind == :follow_up and &1.status == :queued))
 
-      cancel_follow_up(state, turn)
+      dequeue_follow_up(state, turn)
     else
       {:reply, {:error, :session_not_found}, state}
     end
   end
 
-  defp queue(state, session_id, raw_body, mode, participant_id) do
+  defp queue(state, session_id, raw_body, mode, participant_id, retry_of_turn_id) do
     cond do
       not Map.has_key?(state.projection.sessions, session_id) ->
         {:reply, {:error, :session_not_found}, state}
@@ -77,7 +93,7 @@ defmodule ReyCode.Orchestration.Engine.Turns do
         with {:ok, body} <- Validation.message(raw_body),
              :ok <- runtime_preflight(session, mode, participant_id, state),
              :ok <- Admission.admit_turn(session, state) do
-          Lifecycle.queue_message(state, session_id, body, mode, participant_id)
+          Lifecycle.queue_message(state, session_id, body, mode, participant_id, retry_of_turn_id)
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -107,11 +123,13 @@ defmodule ReyCode.Orchestration.Engine.Turns do
       else: {:error, :steering_queue_full}
   end
 
-  defp cancel_follow_up(state, nil), do: {:reply, {:error, :no_queued_follow_up}, state}
+  defp dequeue_follow_up(state, nil), do: {:reply, {:error, :no_queued_follow_up}, state}
 
-  defp cancel_follow_up(state, turn) do
-    case Lifecycle.cancel_turn(state, turn.id, "Queued follow-up cancelled by Operator") do
-      {:ok, next} -> {:reply, :ok, next}
+  defp dequeue_follow_up(state, turn) do
+    body = state.projection.messages[turn.user_message_id].body
+
+    case Lifecycle.cancel_turn(state, turn.id, "Queued FollowUp returned to Operator") do
+      {:ok, next} -> {:reply, {:ok, body}, next}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end

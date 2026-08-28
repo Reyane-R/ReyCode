@@ -22,6 +22,33 @@ not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
 
+### D34 — Session Cartography is a Projection-first control surface (Executed — 2026-08-28)
+
+ReyCode exposes the durable orchestration graph through six bounded terminal
+surfaces rather than introducing a parallel UI state model:
+
+- SessionTree arranges existing SessionFork relationships and switches the
+  active Session. Forking still enters through the single-writer Engine.
+- ToolRunInspector derives ordered ToolRun ownership, authorization, arguments,
+  output, and errors from the Projection. It never parses transcript prose.
+- AgentHub keeps its child control authority but adds flat/tree roster modes
+  and a responsive selected-Invocation inspector. Narrow terminals replace the
+  roster with the inspector; wide terminals show both.
+- Named keybinding actions resolve once from a bounded JSON file into Breeze
+  chords. `/hotkeys` displays the same resolved record, so runtime behavior and
+  documentation have one source of truth.
+- The latest ContextBoundary is inserted as a synthetic timeline presentation
+  item at its durable sequence. `/context` reads the projected ContextSummary;
+  neither surface appends Events.
+- Prompt history is derived from durable Operator Messages. Dequeue cancels a
+  queued FollowUp and returns its body to the transient composer. TurnRetry is
+  a new Turn linked to one failed terminal Turn; retry never rewrites failure.
+
+The signature is Session Cartography: Sessions, forks, Turns, retries,
+Invocations, ToolRuns, ContextBoundaries, and delegated children remain separate
+domain records but become navigable as one graph. All lists, searches, detail
+buffers, and configuration files are explicitly bounded.
+
 ### D33 — Advanced terminal depth stays bounded and owner-controlled (Executed — 2026-08-28)
 
 Five advanced surfaces extend the existing Invocation and ToolRun seams without

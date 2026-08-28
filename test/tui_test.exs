@@ -12,6 +12,7 @@ defmodule ReyCode.TUITest do
     OperatorQuestion,
     Participant,
     PeerMessage,
+    Session,
     ToolAsk,
     Turn,
     WorkPlan
@@ -111,7 +112,8 @@ defmodule ReyCode.TUITest do
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, ctrl("r"))
-
+    assert Breeze.Test.render!(session) =~ "Prompt history"
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
     assert wait_until_turn_status(engine, turn_id, :cancelled)
     assert Breeze.Test.render!(session) =~ "Task cancelled"
@@ -423,8 +425,8 @@ defmodule ReyCode.TUITest do
   test "exposes only session-level global shortcuts" do
     keys = Enum.map(ReyCode.TUI.global_keybindings(), &elem(&1, 0))
 
-    assert keys == ["Tab", "^N", "^P", "^S", "^A", "^G", "^T", "^Q"]
-    refute Enum.any?(keys, &(&1 in ["^O", "^R"]))
+    assert keys == ["Tab", "^N", "^P", "^S", "^A", "^B", "^O", "^R", "^G", "^T", "^Q"]
+    assert Enum.uniq(keys) == keys
   end
 
   test "wraps long responses without transcript rails or excess turn spacing" do
@@ -484,6 +486,93 @@ defmodule ReyCode.TUITest do
 
     assert screen =~ "Diagram · flowchart"
     assert screen =~ "Inspect ──▶ Implement"
+  end
+
+  test "Session Cartography navigates forks, ToolRuns, context, and prompt history" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection = long_response_projection(session)
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    %Session{} = source = projection.sessions[session_id]
+
+    fork = %Session{
+      source
+      | id: "session-fork",
+        title: "Layout experiment",
+        parent_session_id: session_id,
+        forked_from_sequence: max(projection.sequence, 1),
+        message_order: [],
+        active_turn_id: nil
+    }
+
+    projection =
+      projection
+      |> put_in([:sessions, session_id], %{
+        source
+        | context_boundary_sequence: max(projection.sequence, 1),
+          context_summary: "The layout discussion was compacted for the provider.",
+          context_compacted_at: "2026-08-28T00:00:00Z"
+      })
+      |> put_in([:sessions, fork.id], fork)
+      |> Map.update!(:session_order, &(&1 ++ [fork.id]))
+
+    push_projection(session, projection)
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, ctrl("b"))
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
+    tree_screen = Breeze.Test.render!(session)
+    assert tree_screen =~ "Session Tree"
+    assert tree_screen =~ "Layout experiment"
+    assert tree_screen =~ "Forked from"
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    prepared = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+    assert Enum.any?(prepared.messages, &(&1.kind == :context_boundary))
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, ctrl("o"))
+    runs_screen = Breeze.Test.render!(session)
+    assert runs_screen =~ "ToolRun Inspector"
+    assert runs_screen =~ "read · completed · Assistant"
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    run_screen = Breeze.Test.render!(session)
+    assert run_screen =~ "Arguments"
+    assert run_screen =~ "hello world"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Escape")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Escape")
+    type(session, "/runs")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.render!(session) =~ "ToolRun Inspector"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Escape")
+
+    type(session, "/context")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    context_screen = Breeze.Test.render!(session)
+    assert context_screen =~ "ContextBoundary"
+    assert context_screen =~ "layout discussion was compacted"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Escape")
+
+    type(session, "/history")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.render!(session) =~ "Prompt history"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Escape")
+
+    type(session, "/hotkeys")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    hotkeys_screen = Breeze.Test.render!(session)
+    assert hotkeys_screen =~ "Effective action bindings"
+    assert hotkeys_screen =~ "app.session.tree"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Escape")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, ctrl("r"))
+
+    assert Breeze.Test.render!(session) =~ "Prompt history"
+    type(session, "layout")
+    assert Breeze.Test.render!(session) =~ "Explain the layout"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "Explain the layout"
   end
 
   test "renders agent activity notes dimmed under the message with collapse" do
@@ -932,7 +1021,11 @@ defmodule ReyCode.TUITest do
 
     screen = Breeze.Test.render!(session)
     assert screen =~ "Agent Hub"
-    assert screen =~ "Luna · running · integration task · 2 peer messages"
+    assert screen =~ "Luna · running · 2 peer · integration task"
+    assert screen =~ "Invocation  child-wave"
+    assert screen =~ "Tokens"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "T")
+    assert Breeze.Test.render!(session) =~ "1 delegated · tree"
 
     review = %ToolAsk{
       request_id: "merge-review",

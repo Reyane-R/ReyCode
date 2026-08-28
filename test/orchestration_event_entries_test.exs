@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.EventEntriesTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.{EventEntries, Squad}
+  alias ReyCode.Orchestration.{EventEntries, Squad, Turn}
   alias ReyCode.Provider.Frame
 
   @turn_metadata [
@@ -34,14 +34,15 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
              }
 
     assert EventEntries.queue_turn(
-             "room-1",
+             %Turn{
+               id: "turn-1",
+               session_id: "room-1",
+               mode: :debate,
+               input_kind: :operator
+             },
              "Ship it",
-             :debate,
-             "turn-1",
              "msg-1",
-             7,
-             :operator,
-             nil
+             7
            ) == [
              {
                :message_posted,
@@ -68,7 +69,8 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "mode" => "debate",
                  "context_through_sequence" => 7,
                  "input_kind" => "operator",
-                 "participant_id" => nil
+                 "participant_id" => nil,
+                 "retry_of_turn_id" => nil
                },
                @turn_metadata
              }

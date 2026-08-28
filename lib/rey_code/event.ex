@@ -202,6 +202,7 @@ defmodule ReyCode.Event do
         "participant_id" => :nullable_text,
         "input_kind" => {:one_of, @input_kinds},
         "source_invocation_id" => :id,
+        "retry_of_turn_id" => :nullable_text,
         "task" => :text,
         "detached" => :boolean
       }

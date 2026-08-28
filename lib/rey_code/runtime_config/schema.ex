@@ -16,6 +16,8 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:workspace_queue_limit, fn -> 20 end, :queue_limit},
       # Terminal presentation policy
       {:tui_reduced_motion, fn -> false end, :boolean},
+      {:tui_keybindings_path, fn -> Path.join(ReyCode.Paths.data_home(), "keybindings.json") end,
+       :string},
       # Tool-output artifact policy
       {:artifact_root, fn -> Path.join(ReyCode.Paths.data_home(), "artifacts") end, :string},
       {:artifact_spool_threshold_bytes, fn -> 16_384 end, {:integer, 1}},

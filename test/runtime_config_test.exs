@@ -295,6 +295,7 @@ defmodule ReyCode.RuntimeConfigTest do
       web_search_max_bytes: config.tools.research.max_bytes,
       document_read_timeout_ms: config.tools.research.document_timeout_ms,
       tui_reduced_motion: config.tui.reduced_motion?,
+      tui_keybindings_path: config.tui.keybindings_path,
       workspace_roots: config.workspace.roots,
       file_logging: config.logging.enabled?,
       log_dir: config.logging.log_dir

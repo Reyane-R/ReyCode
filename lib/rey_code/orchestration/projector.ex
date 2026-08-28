@@ -192,6 +192,7 @@ defmodule ReyCode.Orchestration.Projector do
       mode: mode(data["mode"]),
       participant_id: data["participant_id"],
       source_invocation_id: data["source_invocation_id"],
+      retry_of_turn_id: data["retry_of_turn_id"],
       task: data["task"],
       detached?: data["detached"] == true,
       status: :queued,

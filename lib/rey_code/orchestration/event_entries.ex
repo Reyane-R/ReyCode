@@ -125,57 +125,40 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
-  @doc "Builds the user-message and queued-turn events for a new turn."
-  @spec queue_turn(
-          String.t(),
-          String.t(),
-          atom(),
-          String.t(),
-          String.t(),
-          non_neg_integer(),
-          atom(),
-          String.t() | nil
-        ) :: [event_entry()]
-  def queue_turn(
-        session_id,
-        body,
-        mode,
-        turn_id,
-        message_id,
-        context_sequence,
-        input_kind,
-        participant_id
-      ) do
+  @doc "Builds the user-message and queued-turn events for a new Turn."
+  @spec queue_turn(Turn.t(), String.t(), String.t(), non_neg_integer()) :: [event_entry()]
+  def queue_turn(turn, body, message_id, context_sequence) do
     [
       event(
         :message_posted,
         %{
           "message_id" => message_id,
-          "room_id" => session_id,
-          "turn_id" => turn_id,
+          "room_id" => turn.session_id,
+          "turn_id" => turn.id,
           "author_name" => "You",
           "body" => body
         },
         :room,
-        session_id,
-        session_id,
-        turn_id
+        turn.session_id,
+        turn.session_id,
+        turn.id
       ),
       event(
         :turn_queued,
         %{
-          "turn_id" => turn_id,
-          "room_id" => session_id,
+          "turn_id" => turn.id,
+          "room_id" => turn.session_id,
           "user_message_id" => message_id,
-          "mode" => Atom.to_string(mode),
+          "mode" => Atom.to_string(turn.mode),
           "context_through_sequence" => context_sequence,
-          "input_kind" => Atom.to_string(input_kind),
-          "participant_id" => participant_id
+          "input_kind" => Atom.to_string(turn.input_kind),
+          "participant_id" => turn.participant_id,
+          "retry_of_turn_id" => turn.retry_of_turn_id
         },
         :turn,
-        turn_id,
-        session_id,
-        turn_id
+        turn.id,
+        turn.session_id,
+        turn.id
       )
     ]
   end
