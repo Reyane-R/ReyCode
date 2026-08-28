@@ -118,8 +118,8 @@ defmodule ReyCode.TUI.SlashPaletteTest do
       |> SlashPalette.rows(40)
       |> Enum.map(fn {candidate, _index} -> candidate.label end)
 
-    assert Enum.take(labels, 5) == ~w(/tools /steer /cancel /unqueue /hub)
-    assert Enum.slice(labels, 5, 7) == ~w(/task /agent /agents /model /connect /new /resume)
+    assert Enum.take(labels, 4) == ~w(/steer /cancel /dequeue /hub)
+    assert Enum.slice(labels, 4, 7) == ~w(/task /agent /agents /model /connect /new /resume)
   end
 
   test "cancel/1 restores the original draft" do

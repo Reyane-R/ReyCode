@@ -51,7 +51,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
       kind: :primary
     }
 
-    turn = %Turn{id: turn_id, session_id: session_id}
+    turn = %Turn{id: turn_id, session_id: session_id, mode: :fan_out, input_kind: :operator}
 
     invocation = %Invocation{
       id: "inv-fanout",
@@ -76,14 +76,10 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
         )
       ] ++
         EventEntries.queue_turn(
-          session_id,
+          turn,
           "Explore three designs",
-          :fan_out,
-          turn_id,
           "msg-user-fanout",
-          2,
-          :operator,
-          nil
+          2
         ) ++
         [EventEntries.turn_started(turn)] ++
         EventEntries.open_invocations(
@@ -237,14 +233,10 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
       )
     ] ++
       EventEntries.queue_turn(
-        turn.session_id,
+        %{turn | mode: :fan_out, input_kind: :operator},
         "Explore #{suffix}",
-        :fan_out,
-        turn.id,
         "msg-user-#{suffix}",
-        2,
-        :operator,
-        nil
+        2
       )
   end
 

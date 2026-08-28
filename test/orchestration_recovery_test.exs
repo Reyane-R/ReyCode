@@ -105,14 +105,15 @@ defmodule ReyCode.Orchestration.RecoveryTest do
         )
       ] ++
         EventEntries.queue_turn(
-          session_id,
+          %Turn{
+            id: turn_id,
+            session_id: session_id,
+            mode: :compare,
+            input_kind: :operator
+          },
           "Recover this",
-          :compare,
-          turn_id,
           "msg-user",
-          2,
-          :operator,
-          nil
+          2
         ) ++
         [EventEntries.turn_started(%Turn{id: turn_id, session_id: session_id})] ++
         EventEntries.open_invocations(

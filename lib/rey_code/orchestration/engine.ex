@@ -106,10 +106,17 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:steer_turn, turn_id, body})
   end
 
-  @doc "Cancels the newest queued follow-up in one Session."
-  @spec cancel_latest_follow_up(term(), GenServer.server()) :: :ok | {:error, atom()}
-  def cancel_latest_follow_up(session_id, server \\ __MODULE__) do
-    GenServer.call(server, {:cancel_latest_follow_up, session_id})
+  @doc "Cancels and returns the newest queued FollowUp body in one Session."
+  @spec dequeue_latest_follow_up(term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, atom()}
+  def dequeue_latest_follow_up(session_id, server \\ __MODULE__) do
+    GenServer.call(server, {:dequeue_latest_follow_up, session_id})
+  end
+
+  @doc "Queues a new Turn linked to one failed terminal Turn."
+  @spec retry_turn(term(), GenServer.server()) :: {:ok, String.t()} | {:error, atom()}
+  def retry_turn(turn_id, server \\ __MODULE__) do
+    GenServer.call(server, {:retry_turn, turn_id})
   end
 
   @doc "Queues one explicit task for one task participant."
@@ -272,8 +279,10 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:steer_turn, turn_id, raw_body}, _from, state),
     do: Turns.steer(state, turn_id, raw_body)
 
-  def handle_call({:cancel_latest_follow_up, session_id}, _from, state),
-    do: Turns.cancel_latest_follow_up(state, session_id)
+  def handle_call({:dequeue_latest_follow_up, session_id}, _from, state),
+    do: Turns.dequeue_latest_follow_up(state, session_id)
+
+  def handle_call({:retry_turn, turn_id}, _from, state), do: Turns.retry(state, turn_id)
 
   def handle_call({:delegate_task, session_id, participant_id, task}, _from, state),
     do: Turns.delegate_task(state, session_id, participant_id, task)

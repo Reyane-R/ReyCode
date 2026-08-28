@@ -16,8 +16,8 @@ defmodule ReyCode.TUI.CommandActionsTest do
     def handle_call({:steer_turn, _turn_id, _body}, _from, state),
       do: {:reply, :ok, state}
 
-    def handle_call({:cancel_latest_follow_up, _room_id}, _from, state),
-      do: {:reply, :ok, state}
+    def handle_call({:dequeue_latest_follow_up, _room_id}, _from, state),
+      do: {:reply, {:ok, "Recovered follow-up"}, state}
   end
 
   test "Session commands fork, validate rewind, and export" do
@@ -43,7 +43,7 @@ defmodule ReyCode.TUI.CommandActionsTest do
     assert File.exists?(Path.join([workspace, ".reycode", "exports", "room-1.md"]))
   end
 
-  test "work commands steer active work and cancel the newest FollowUp" do
+  test "work commands steer active work and return the newest FollowUp to the composer" do
     workspace = System.tmp_dir!()
     engine = start_supervised!({EngineStub, []})
     term = term(engine, workspace, "turn-1")
@@ -51,8 +51,9 @@ defmodule ReyCode.TUI.CommandActionsTest do
     assert {:noreply, steered} = WorkCommand.run(term, "/steer", "use less code")
     assert steered.assigns.notice == "Steering queued for the next provider round"
 
-    assert {:noreply, unqueued} = WorkCommand.run(term, "/unqueue", nil)
-    assert unqueued.assigns.notice == "Newest follow-up cancelled"
+    assert {:noreply, dequeued} = WorkCommand.run(term, "/dequeue", nil)
+    assert dequeued.assigns.notice == "FollowUp returned to the composer"
+    assert dequeued.assigns.drafts["room-1"] == "Recovered follow-up"
   end
 
   defp term(engine, workspace, active_turn_id \\ nil) do
@@ -65,6 +66,7 @@ defmodule ReyCode.TUI.CommandActionsTest do
 
     %Breeze.Term{
       assigns: %{
+        drafts: %{session.id => ""},
         engine: engine,
         projection: %Projection{
           sequence: 12,

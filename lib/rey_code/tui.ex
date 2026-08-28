@@ -13,9 +13,19 @@ defmodule ReyCode.TUI do
 
   alias ReyCode.TUI.Components.Modals
 
-  alias ReyCode.TUI.Mentions
-
-  alias ReyCode.TUI.{OperatorQuestion, Render, Settings, SlashPalette, State}
+  alias ReyCode.TUI.{
+    Keybindings,
+    Mentions,
+    OperatorQuestion,
+    PromptHistory,
+    Recovery,
+    Render,
+    SessionTree,
+    Settings,
+    SlashPalette,
+    State,
+    ToolInspector
+  }
 
   # Mentions lives in lib/rey_code/tui/mentions.ex, which the parallel
   # compiler may not have finished when this view is compiled. Resolution
@@ -24,19 +34,44 @@ defmodule ReyCode.TUI do
 
   @shutdown_timeout_ms 5_000
 
-  @doc "Global keybindings shared by the application and tests."
-  def global_keybindings do
+  @doc "Named action definitions shared by configuration, runtime, and `/hotkeys`."
+  def binding_actions do
     [
-      {"Tab", "Move focus", &switch_focus/2},
-      {"^N", "New session", &new_session/2},
-      {"^P", "Commands", &open_command_palette/2},
-      {"^S", "Send", &submit/2},
-      {"^A", "Answer question", &open_operator_question/2},
-      {"^G", "Configure agents", &open_provider_settings/2},
-      {"^T", "Theme", &__MODULE__.cycle_theme/2},
-      {"^Q", "Quit", &quit/2}
+      action("app.focus.move", "Move focus", ["Tab"], &__MODULE__.switch_focus/2),
+      action("app.session.new", "New session", ["^N"], &__MODULE__.new_session/2),
+      action("app.commands.open", "Commands", ["^P"], &__MODULE__.open_command_palette/2),
+      action("app.composer.send", "Send", ["^S"], &__MODULE__.submit/2),
+      action(
+        "app.question.open",
+        "Answer question",
+        ["^A"],
+        &__MODULE__.open_operator_question/2
+      ),
+      action("app.session.tree", "Session Tree", ["^B"], &__MODULE__.open_session_tree/2),
+      action("app.tools.inspect", "ToolRun Inspector", ["^O"], &__MODULE__.open_tool_inspector/2),
+      action("app.history.search", "Prompt history", ["^R"], &__MODULE__.open_prompt_history/2),
+      action(
+        "app.agents.configure",
+        "Configure agents",
+        ["^G"],
+        &__MODULE__.open_provider_settings/2
+      ),
+      action("app.theme.cycle", "Theme", ["^T"], &__MODULE__.cycle_theme/2),
+      action("app.turn.retry", "Retry failed Turn", [], &__MODULE__.retry_latest/2),
+      action("app.quit", "Quit", ["^Q"], &__MODULE__.quit/2)
     ]
   end
+
+  @doc "Resolves effective action chords from one frozen RuntimeConfig."
+  def resolved_keybindings(config),
+    do: Keybindings.resolve(binding_actions(), config.tui.keybindings_path)
+
+  @doc "Global keybindings shared by the application and tests."
+  def global_keybindings,
+    do: binding_actions() |> Keybindings.defaults() |> Keybindings.breeze_bindings()
+
+  def global_keybindings(config),
+    do: config |> resolved_keybindings() |> Keybindings.breeze_bindings()
 
   def cycle_theme(event, term) do
     Breeze.View.cycle_theme(event, term,
@@ -77,6 +112,24 @@ defmodule ReyCode.TUI do
       do: {:noreply, term}
 
   def open_operator_question(_event, term), do: {:noreply, OperatorQuestion.open(term)}
+
+  def open_session_tree(_event, %{assigns: %{modal: nil}} = term),
+    do: {:noreply, SessionTree.open(term)}
+
+  def open_session_tree(_event, term), do: {:noreply, term}
+
+  def open_tool_inspector(_event, %{assigns: %{modal: nil}} = term),
+    do: {:noreply, ToolInspector.open(term)}
+
+  def open_tool_inspector(_event, term), do: {:noreply, term}
+
+  def open_prompt_history(_event, %{assigns: %{modal: nil}} = term),
+    do: {:noreply, PromptHistory.open(term)}
+
+  def open_prompt_history(_event, term), do: {:noreply, term}
+
+  def retry_latest(_event, %{assigns: %{modal: nil}} = term), do: Recovery.retry_latest(term)
+  def retry_latest(_event, term), do: {:noreply, term}
 
   def new_session(_event, %{assigns: %{modal: modal}} = term) when not is_nil(modal),
     do: {:noreply, term}
@@ -286,5 +339,9 @@ defmodule ReyCode.TUI do
       {:ok, next} -> {:noreply, next}
       :stale -> {:noreply, term}
     end
+  end
+
+  defp action(id, label, default_chords, handler) do
+    %{id: id, label: label, default_chords: default_chords, handler: handler}
   end
 end

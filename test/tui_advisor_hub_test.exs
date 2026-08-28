@@ -116,7 +116,8 @@ defmodule ReyCode.TUI.AdvisorHubTest do
       assigns: %{
         projection: projection,
         selected_session_id: "room",
-        agent_hub: %{index: 0},
+        agent_hub: AgentHub.initial(),
+        breeze: %{terminal: %{width: 80}},
         engine: self(),
         cancel_child: fn "turn", _reason, _engine ->
           send(self(), :cancelled)
@@ -129,6 +130,19 @@ defmodule ReyCode.TUI.AdvisorHubTest do
 
     assert {:noreply, next} = AgentHub.handle_input("ArrowDown", term)
     assert next.assigns.agent_hub.index == 0
+    assert {:noreply, inspected} = AgentHub.handle_input("Tab", term)
+    assert inspected.assigns.agent_hub.panel == :inspector
+    assert {:noreply, submitted} = AgentHub.submit(term)
+    assert submitted.assigns.agent_hub.panel == :inspector
+    assert {:noreply, scrolled} = AgentHub.handle_input("j", inspected)
+    assert scrolled.assigns.agent_hub.offset == 0
+    assert {:noreply, tree} = AgentHub.handle_input("T", term)
+    assert tree.assigns.agent_hub.tree?
+    assert {:noreply, roster} = AgentHub.handle_input("Escape", inspected)
+    assert roster.assigns.agent_hub.panel == :roster
+    assert {:noreply, ^term} = AgentHub.handle_input("unknown", term)
+    assert {:noreply, entered} = AgentHub.handle_input("Enter", term)
+    assert entered.assigns.agent_hub.panel == :inspector
     assert {:noreply, cancelled} = AgentHub.handle_input("c", term)
     assert cancelled.assigns.notice == "Child Invocation cancelled"
     assert_receive :cancelled

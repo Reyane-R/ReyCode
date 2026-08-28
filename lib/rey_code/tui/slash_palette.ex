@@ -16,14 +16,20 @@ defmodule ReyCode.TUI.SlashPalette do
     Artifacts,
     Cancellation,
     Completion,
+    ContextBoundary,
     Delegation,
     Help,
+    Hotkeys,
     ModelPicker,
     ModelTiers,
     OperatorQuestion,
+    PromptHistory,
+    Recovery,
     SessionCommand,
     SessionPicker,
+    SessionTree,
     Settings,
+    ToolInspector,
     ToolReview,
     WorkCommand,
     WorkPlan,
@@ -322,7 +328,7 @@ defmodule ReyCode.TUI.SlashPalette do
   end
 
   defp run_parsed(term, %{command: command} = parsed)
-       when command in ["/steer", "/unqueue"] do
+       when command in ["/steer", "/dequeue"] do
     term |> clear_draft() |> WorkCommand.run(command, parsed.argument)
   end
 
@@ -367,6 +373,12 @@ defmodule ReyCode.TUI.SlashPalette do
     do: {:noreply, Settings.open_at(term, provider, model)}
 
   defp run_action(term, :artifacts, nil), do: {:noreply, Artifacts.open(term)}
+  defp run_action(term, :context_boundary, nil), do: {:noreply, ContextBoundary.open(term)}
+  defp run_action(term, :hotkeys, nil), do: {:noreply, Hotkeys.open(term)}
+  defp run_action(term, :prompt_history, nil), do: {:noreply, PromptHistory.open(term)}
+  defp run_action(term, :retry, nil), do: Recovery.retry_latest(term)
+  defp run_action(term, :session_tree, nil), do: {:noreply, SessionTree.open(term)}
+  defp run_action(term, :tool_inspector, nil), do: {:noreply, ToolInspector.open(term)}
 
   defp run_action(term, :model_tiers, nil), do: {:noreply, ModelTiers.open(term)}
   defp run_action(term, :operator_question, nil), do: {:noreply, OperatorQuestion.open(term)}
@@ -420,21 +432,31 @@ defmodule ReyCode.TUI.SlashPalette do
         []
 
       session ->
-        [
-          if(Projection.pending_question_invocation(projection, session_id), do: "/answer"),
-          if(Projection.pending_tool_invocation(projection, session.active_turn_id),
-            do: "/tools"
-          ),
-          if(session.active_turn_id, do: "/steer"),
-          if(session.active_turn_id, do: "/cancel"),
-          if(queued_follow_up?(projection, session), do: "/unqueue"),
-          if(Projection.delegated_invocations(projection, session_id) != [], do: "/hub")
-        ]
-        |> Enum.reject(&is_nil/1)
+        active_command_names(session) ++
+          maybe_command(queued_follow_up?(projection, session), "/dequeue") ++
+          maybe_command(Projection.delegated_invocations(projection, session_id) != [], "/hub") ++
+          maybe_command(
+            not is_nil(
+              Recovery.latest_failed_turn(%{
+                projection: projection,
+                selected_session_id: session_id
+              })
+            ),
+            "/retry"
+          ) ++
+          maybe_command(Map.get(session, :context_boundary_sequence, 0) > 0, "/context") ++
+          maybe_command(
+            ToolInspector.rows(%{projection: projection, selected_session_id: session_id}) != [],
+            "/runs"
+          )
     end
   end
 
   defp contextual_command_names(_assigns), do: []
+  defp active_command_names(%{active_turn_id: nil}), do: []
+  defp active_command_names(_session), do: ["/steer", "/cancel"]
+  defp maybe_command(true, command), do: [command]
+  defp maybe_command(false, _command), do: []
 
   defp queued_follow_up?(projection, session) do
     Enum.any?(session.queued_turn_ids, fn turn_id ->

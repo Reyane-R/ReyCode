@@ -18,10 +18,22 @@ defmodule ReyCode.Capabilities do
     %{command: "/artifacts", description: "Inspect spooled ToolRun outputs", action: :artifacts},
     %{command: "/cancel", description: "Cancel the current task", action: :cancel},
     %{command: "/connect", description: "Configure providers", action: :settings},
+    %{
+      command: "/context",
+      description: "Inspect the latest ContextBoundary",
+      action: :context_boundary
+    },
+    %{
+      command: "/dequeue",
+      description: "Return the newest FollowUp to the composer",
+      action: :dequeue
+    },
     %{command: "/export", description: "Export the current Session", action: :export},
     %{command: "/fork", description: "Fork the current Session", action: :fork},
     %{command: "/help", description: "Explain what ReyCode can do", action: :help},
+    %{command: "/history", description: "Search prior Operator prompts", action: :prompt_history},
     %{command: "/home", description: "Open the session home", action: :home},
+    %{command: "/hotkeys", description: "Show effective keybindings", action: :hotkeys},
     %{
       command: "/hub",
       description: "Inspect and control delegated child Invocations",
@@ -46,12 +58,14 @@ defmodule ReyCode.Capabilities do
       action: :session_picker,
       argument: :session
     },
+    %{command: "/retry", description: "Retry the newest failed Turn", action: :retry},
     %{
       command: "/rewind",
       description: "Fork at a durable sequence",
       action: :rewind,
       argument: :text
     },
+    %{command: "/runs", description: "Inspect durable ToolRuns", action: :tool_inspector},
     %{
       command: "/steer",
       description: "Correct active work at the next provider round boundary",
@@ -67,7 +81,7 @@ defmodule ReyCode.Capabilities do
     %{command: "/theme", description: "Change theme", action: :theme},
     %{command: "/tier", description: "Configure Participant model tiers", action: :model_tiers},
     %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
-    %{command: "/unqueue", description: "Cancel the newest queued follow-up", action: :unqueue},
+    %{command: "/tree", description: "Navigate the SessionFork tree", action: :session_tree},
     %{
       command: "/workspace",
       description: "Show the workspace path",

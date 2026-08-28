@@ -114,9 +114,11 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/resume`: pick and reopen a previous Session
 - `/fork`: branch the current Session at its latest durable sequence
 - `/rewind <sequence>`: branch the current Session at an earlier durable sequence
+- `/tree` or `Ctrl+B`: navigate the durable SessionFork tree; `F` forks the selected node
 - `/export`: write a deterministic Markdown Session export inside `.reycode/exports`
 - `/advise [brief]`: run an explicit review through the configured Advisor Participant
 - `/hub`: inspect and control delegated child Invocations; press `M` on an `awaits merge` child to Apply or Discard its isolated patch
+- `/runs` or `Ctrl+O`: inspect durable ToolRun ownership, arguments, authorization, output, and errors
 - `/home`: return to the session home
 - `/agent`: create a task agent
 - `/agents`: change an agent's provider/model
@@ -125,10 +127,14 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/task`: delegate one task to one task agent
 - `/answer`: answer the newest waiting OperatorQuestion
 - `/artifacts`: inspect and page retained large ToolRun outputs
+- `/context`: inspect the latest provider-facing ContextSummary
+- `/history` or `Ctrl+R`: search prior Operator prompts and restore one to the composer
+- `/hotkeys`: show effective named action bindings and their configuration source
 - `/plan`: inspect the newest Invocation WorkPlan
 - `/tier`: configure Participant `smol`/`default`/`slow` tiers and future Invocation budgets
 - `/steer <correction>`: queue a correction for the active Invocation's next provider-round boundary
-- `/unqueue`: cancel the newest queued follow-up before it starts
+- `/retry`: create a new Turn linked to the newest failed terminal Turn
+- `/dequeue`: cancel the newest queued FollowUp and return its body to the composer
 
 │
 - `!cmd`: run a shell command in the workspace; output lands in the transcript
@@ -136,10 +142,26 @@ content digest and exact source paths so restart behavior cannot drift.
   files only, 512 KB per file, 2 MB total)
 - `Tab`: move between the prompt and current transcript
 - `Ctrl+A`: open the newest waiting OperatorQuestion
+- `Ctrl+B`: open Session Tree
+- `Ctrl+O`: open ToolRun Inspector
+- `Ctrl+R`: search prompt history
 - `Ctrl+G`: configure agent runtimes and models
 - `Ctrl+T`: cycle the theme
 - `j` / `k`: scroll the focused transcript
 - `Ctrl+Q`: exit
+
+Keybindings are named actions resolved at startup from the bounded JSON file
+shown by `/hotkeys`. Override its location with
+`REYCODE_TUI_KEYBINDINGS_PATH`. A string remaps one chord, an array adds
+alternates, and an empty array disables the action:
+
+```json
+{
+  "app.session.tree": ["M-T", "^B"],
+  "app.tools.inspect": "^O",
+  "app.quit": []
+}
+```
 
 Each message shows the work it produced as compact one-line activity blocks.
 Executing work uses a shared animated signal and specific verb, for example
@@ -166,9 +188,9 @@ glyph and one-second elapsed-time refresh instead of frame animation.
 Token usage is summed from durable provider usage records against the
 configured `context_budget_tokens` budget
 (`REYCODE_CONTEXT_BUDGET_TOKENS`). Before an over-budget Turn starts, ReyCode
-records a bounded extractive ContextSummary and a durable ContextBoundary.
-Future provider requests use that summary plus later Messages; the complete
-transcript and Events remain available for replay and rendering.
+records a bounded extractive ContextSummary and a durable ContextBoundary. The
+timeline keeps the complete transcript and inserts a visible compaction divider;
+`/context` shows the summary sent with later Messages.
 
 Successful ToolRun output larger than 16 KB is retained in the bounded artifact
 spool instead of being copied wholesale into the transcript or provider
@@ -182,12 +204,13 @@ previews. `Space` toggles options in a multi-select question, `Enter` submits,
 and the Other row accepts bounded text when the question allows it.
 
 Submitting an ordinary message while the Session already has active or queued
-work records a durable FollowUp Turn. `/unqueue` cancels only the newest queued
-FollowUp; it never cancels executing work. `/steer <correction>` records bounded
-Steering on the one active Invocation. The exact pending Steering IDs are
-included in the next provider request and moved into that ProviderRound only
-when its response is durably recorded; steering that arrives during a stream
-therefore forces another round instead of being lost.
+work records a durable FollowUp Turn. `/dequeue` cancels only the newest queued
+FollowUp and restores its body to the composer; it never cancels executing
+work. `/steer <correction>` records bounded Steering on the one active
+Invocation. The exact pending Steering IDs are included in the next provider
+request and moved into that ProviderRound only when its response is durably
+recorded; steering that arrives during a stream therefore forces another round
+instead of being lost.
 
 In the command palette, `/` shows common commands plus controls relevant to
 current work; typing searches the full registry. Arrow keys move the selection,
@@ -202,9 +225,12 @@ conflict-resolution operations, DAP debugger sessions, persistent Python and
 JavaScript evaluation kernels, web search, rich URL/PDF/HTML/JSON reading,
 project memory, and an opt-in Advisor review. Git commits, conflict resolution,
 debugger execution, evaluation, and memory mutation require owner approval.
-`/hub` opens the live delegated-child control surface; `C` cancels the selected
-child. `/advise` queues an explicit review through the Task Participant named
-`Advisor` and never enables background review implicitly.
+`/hub` opens the live delegated-child control surface. Wide terminals show a
+roster and selected-Invocation inspector together; narrow terminals use `Tab`
+to switch panels. `T` toggles flat/tree lineage, `M` reviews a pending patch,
+and `C` cancels the selected child. `/advise` queues an explicit review through
+the Task Participant named `Advisor` and never enables background review
+implicitly.
 
 On macOS, event data is stored transactionally in
 `~/Library/Application Support/ReyCode/rey_code.sqlite3`. On first launch, a
