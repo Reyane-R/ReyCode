@@ -8,7 +8,7 @@ defmodule ReyCode.TUI.SettingsTest do
              step: :participants,
              index: 0,
              participant_ids: [],
-             room_id: "room-1",
+             session_id: "room-1",
              query: "",
              provider: nil
            }
@@ -106,7 +106,7 @@ defmodule ReyCode.TUI.SettingsTest do
   end
 
   defp term(overrides \\ []) do
-    room = %{
+    session = %{
       participants: [
         %{id: "builder", name: "Builder", kind: :primary},
         %{id: "critic", name: "Critic", kind: :task}
@@ -117,8 +117,8 @@ defmodule ReyCode.TUI.SettingsTest do
       modal: :settings,
       notice: nil,
       mode: :compare,
-      selected_room_id: "room-1",
-      projection: %{rooms: %{"room-1" => room}},
+      selected_session_id: "room-1",
+      projection: %{sessions: %{"room-1" => session}},
       provider_catalog: nil,
       providers: providers(),
       settings: Settings.initial("room-1")

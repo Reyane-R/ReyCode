@@ -5,35 +5,35 @@ defmodule ReyCode.Orchestration.Workflow.Debate do
   alias ReyCode.Orchestration.Workflow
 
   @impl true
-  def plan(room, _turn, _projection) do
-    [proposal_spec(lead(room))]
+  def plan(session, _turn, _projection) do
+    [proposal_spec(lead(session))]
   end
 
   @impl true
-  def advance(room, turn, projection) do
+  def advance(session, turn, projection) do
     invocations = Workflow.invocations(turn, projection)
     proposal = Enum.filter(invocations, &(&1.phase_index == 0))
 
     if proposal == [] or not Enum.all?(proposal, &Workflow.terminal?/1) do
       :wait
     else
-      advance_after_proposal(room, invocations)
+      advance_after_proposal(session, invocations)
     end
   end
 
-  defp advance_after_proposal(room, invocations) do
+  defp advance_after_proposal(session, invocations) do
     critiques = Enum.filter(invocations, &(&1.phase_index == 1))
     revision = Enum.filter(invocations, &(&1.phase_index == 2))
 
     cond do
       critiques == [] and revision == [] ->
-        continue_with_critiques(room)
+        continue_with_critiques(session)
 
       critiques != [] and not Enum.all?(critiques, &Workflow.terminal?/1) ->
         :wait
 
       revision == [] ->
-        {:continue, [revision_spec(lead(room))]}
+        {:continue, [revision_spec(lead(session))]}
 
       Enum.all?(revision, &Workflow.terminal?/1) ->
         {:complete, Workflow.outcome(invocations)}
@@ -43,17 +43,17 @@ defmodule ReyCode.Orchestration.Workflow.Debate do
     end
   end
 
-  defp continue_with_critiques(room) do
-    critics = Enum.reject(room.participants, &(&1.id == lead(room).id))
+  defp continue_with_critiques(session) do
+    critics = Enum.reject(session.participants, &(&1.id == lead(session).id))
 
     if critics == [] do
-      {:continue, [revision_spec(lead(room))]}
+      {:continue, [revision_spec(lead(session))]}
     else
       {:continue, Enum.map(critics, &critique_spec/1)}
     end
   end
 
-  defp lead(room), do: hd(room.participants)
+  defp lead(session), do: hd(session.participants)
 
   defp proposal_spec(participant) do
     %{

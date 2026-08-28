@@ -125,7 +125,7 @@ defmodule ReyCode.SquadWaitTest do
   end
 
   defp baseline(sequence, turns) do
-    %{sequence: sequence, turns: turns, rooms: %{}, room_order: []}
+    %{sequence: sequence, turns: turns, sessions: %{}, session_order: []}
   end
 
   defp running_turn(phase) do
@@ -150,7 +150,7 @@ defmodule ReyCode.SquadWaitTest do
   end
 
   defp broadcast(registry, sequence, turns) do
-    snapshot = %{sequence: sequence, turns: turns, rooms: %{}, room_order: []}
+    snapshot = %{sequence: sequence, turns: turns, sessions: %{}, session_order: []}
 
     Registry.dispatch(registry, :orchestration, fn entries ->
       Enum.each(entries, fn {pid, _value} ->

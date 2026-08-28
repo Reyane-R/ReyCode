@@ -211,9 +211,9 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
        config: config}
     )
 
-    room_id = Engine.snapshot(@engine).room_order |> List.last()
-    primary = Engine.snapshot(@engine).rooms[room_id].participants |> List.first()
-    assert :ok = Engine.configure_participants(room_id, [primary.id], :simulator, nil, @engine)
+    session_id = Engine.snapshot(@engine).session_order |> List.last()
+    primary = Engine.snapshot(@engine).sessions[session_id].participants |> List.first()
+    assert :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
 
     test_pid = self()
 
@@ -272,8 +272,8 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
   end
 
   defp active_turn(projection) do
-    room = selected_room(projection)
-    if room.active_turn_id, do: projection, else: false
+    session = selected_room(projection)
+    if session.active_turn_id, do: projection, else: false
   end
 
   defp terminal_turn(projection) do
@@ -284,11 +284,11 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
   defp active_turn_record(projection), do: active_or_recent_turn(projection)
 
   defp active_or_recent_turn(projection) do
-    room = selected_room(projection)
+    session = selected_room(projection)
 
     turn_id =
-      room.active_turn_id ||
-        Enum.find_value(room.message_order, fn message_id ->
+      session.active_turn_id ||
+        Enum.find_value(session.message_order, fn message_id ->
           Map.fetch!(projection.messages, message_id).turn_id
         end)
 
@@ -299,8 +299,8 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
   defp assert_noreply({:noreply, _focused, _changed?}), do: :ok
 
   defp selected_room(projection) do
-    room_id = List.last(projection.room_order)
-    Map.fetch!(projection.rooms, room_id)
+    session_id = List.last(projection.session_order)
+    Map.fetch!(projection.sessions, session_id)
   end
 
   defp iso_ms(value) do

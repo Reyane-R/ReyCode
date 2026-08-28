@@ -7,7 +7,7 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
     base = %{
       projection: %{
         invocations: %{},
-        rooms: %{},
+        sessions: %{},
         turns: %{}
       },
       execution_queue: [],
@@ -55,10 +55,10 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
         state(
           projection: %{
             invocations: %{
-              "inv-1" => %{status: :queued, room_id: "room-1"},
-              "inv-2" => %{status: :queued, room_id: "room-1"}
+              "inv-1" => %{status: :queued, session_id: "room-1"},
+              "inv-2" => %{status: :queued, session_id: "room-1"}
             },
-            rooms: %{"room-1" => %{workspace: "/first"}}
+            sessions: %{"room-1" => %{workspace: "/first"}}
           }
         )
         |> Admission.enqueue("inv-1")
@@ -70,7 +70,7 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
     test "returns nil when the global limit is reached" do
       state =
         state(
-          projection: %{invocations: %{"inv-1" => %{status: :queued}}, rooms: %{}},
+          projection: %{invocations: %{"inv-1" => %{status: :queued}}, sessions: %{}},
           active_executions: %{"inv-0" => "/workspace"}
         )
         |> Admission.enqueue("inv-1")
@@ -82,8 +82,8 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
       state =
         state(
           projection: %{
-            invocations: %{"inv-1" => %{status: :queued, room_id: "room-1"}},
-            rooms: %{"room-1" => %{workspace: "/same"}}
+            invocations: %{"inv-1" => %{status: :queued, session_id: "room-1"}},
+            sessions: %{"room-1" => %{workspace: "/same"}}
           },
           active_executions: %{"inv-0" => "/same"}
         )
@@ -95,11 +95,11 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
 
   describe "admit_turn/2" do
     test "allows a turn that can start even when queue limits are zero" do
-      room = %{active_turn_id: nil, workspace: "/workspace"}
+      session = %{active_turn_id: nil, workspace: "/workspace"}
 
       state =
         state(
-          projection: %{invocations: %{}, rooms: %{}, turns: %{}},
+          projection: %{invocations: %{}, sessions: %{}, turns: %{}},
           limits: %{
             global_concurrency: 1,
             workspace_concurrency: 1,
@@ -108,18 +108,18 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
           }
         )
 
-      assert Admission.admit_turn(room, state) == :ok
+      assert Admission.admit_turn(session, state) == :ok
     end
 
     test "rejects a full global queue before a full workspace queue" do
-      room = %{active_turn_id: "turn-active", workspace: "/workspace"}
+      session = %{active_turn_id: "turn-active", workspace: "/workspace"}
 
       state =
         state(
           projection: %{
             invocations: %{},
-            rooms: %{"room-1" => room},
-            turns: %{"turn-queued" => %{status: :queued, room_id: "room-1"}}
+            sessions: %{"room-1" => session},
+            turns: %{"turn-queued" => %{status: :queued, session_id: "room-1"}}
           },
           limits: %{
             global_concurrency: 1,
@@ -129,21 +129,21 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
           }
         )
 
-      assert Admission.admit_turn(room, state) == {:error, :global_queue_full}
+      assert Admission.admit_turn(session, state) == {:error, :global_queue_full}
     end
 
     test "counts only waiting work in the room workspace for its queue limit" do
-      room = %{active_turn_id: "turn-active", workspace: "/workspace"}
+      session = %{active_turn_id: "turn-active", workspace: "/workspace"}
 
       state =
         state(
           projection: %{
             invocations: %{
-              "inv-same" => %{status: :queued, room_id: "room-1"},
-              "inv-other" => %{status: :queued, room_id: "room-2"}
+              "inv-same" => %{status: :queued, session_id: "room-1"},
+              "inv-other" => %{status: :queued, session_id: "room-2"}
             },
-            rooms: %{
-              "room-1" => room,
+            sessions: %{
+              "room-1" => session,
               "room-2" => %{workspace: "/other"}
             },
             turns: %{}
@@ -158,7 +158,7 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
           }
         )
 
-      assert Admission.admit_turn(room, state) == {:error, :workspace_queue_full}
+      assert Admission.admit_turn(session, state) == {:error, :workspace_queue_full}
     end
   end
 
@@ -199,8 +199,8 @@ defmodule ReyCode.Orchestration.Engine.AdmissionTest do
       state =
         state(
           projection: %{
-            invocations: %{"inv-1" => %{room_id: "room-1"}},
-            rooms: %{"room-1" => %{workspace: "/tmp/ws"}}
+            invocations: %{"inv-1" => %{session_id: "room-1"}},
+            sessions: %{"room-1" => %{workspace: "/tmp/ws"}}
           }
         )
 

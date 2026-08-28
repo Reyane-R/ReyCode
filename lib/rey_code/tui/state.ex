@@ -49,7 +49,7 @@ defmodule ReyCode.TUI.State do
         providers: catalog_snapshot.providers,
         providers_generation: catalog_snapshot.generation,
         projection: projection,
-        selected_room_id: List.last(projection.room_order),
+        selected_session_id: List.last(projection.session_order),
         drafts: %{},
         mode: :direct,
         home: true,
@@ -80,13 +80,13 @@ defmodule ReyCode.TUI.State do
   def prepare_render(assigns) do
     width = assigns.breeze.terminal.width
     height = assigns.breeze.terminal.height
-    room = assigns.projection.rooms[assigns.selected_room_id]
+    session = assigns.projection.sessions[assigns.selected_session_id]
     message_width = message_width(width)
     target_graphemes = target_graphemes(width)
 
     activity =
       Activity.present(
-        assigns.selected_room_id,
+        assigns.selected_session_id,
         assigns.projection,
         assigns.providers,
         assigns.animation_now_ms,
@@ -101,11 +101,11 @@ defmodule ReyCode.TUI.State do
       )
 
     Component.assign(assigns,
-      room: room,
-      rooms: Enum.map(assigns.projection.room_order, &assigns.projection.rooms[&1]),
+      session: session,
+      sessions: Enum.map(assigns.projection.session_order, &assigns.projection.sessions[&1]),
       messages:
-        room_messages(
-          room,
+        session_messages(
+          session,
           assigns.projection,
           activity,
           assigns.animation_now_ms,
@@ -113,11 +113,11 @@ defmodule ReyCode.TUI.State do
         ),
       activity: activity,
       activity_frame: frame,
-      draft: Map.get(assigns.drafts, assigns.selected_room_id, ""),
-      git_branch: git_branch(room && room.workspace),
-      token_label: token_label(room, assigns.projection, assigns.config),
+      draft: Map.get(assigns.drafts, assigns.selected_session_id, ""),
+      git_branch: git_branch(session && session.workspace),
+      token_label: token_label(session, assigns.projection, assigns.config),
       message_width: message_width,
-      timeline_id: timeline_id(room.id),
+      timeline_id: timeline_id(session.id),
       recent_session_rows: recent_session_rows(assigns),
       slash_rows: slash_rows(assigns, height),
       slash_style: SlashPalette.style(width, height, assigns),
@@ -126,9 +126,9 @@ defmodule ReyCode.TUI.State do
   end
 
   defp recent_session_rows(assigns) do
-    assigns.projection.room_order
+    assigns.projection.session_order
     |> Enum.reverse()
-    |> Enum.map(&assigns.projection.rooms[&1])
+    |> Enum.map(&assigns.projection.sessions[&1])
     |> Enum.filter(&(&1.message_order != []))
     |> Enum.take(3)
     |> Enum.map(fn session ->
@@ -149,14 +149,14 @@ defmodule ReyCode.TUI.State do
     end
   end
 
-  defp token_label(room, projection, config) do
-    tokens = token_usage(room, projection)
+  defp token_label(session, projection, config) do
+    tokens = token_usage(session, projection)
 
-    "#{meter_bar(room, projection, config)}  tok #{format_tokens(tokens)}/#{format_tokens(config.orchestration.context_budget_tokens)}"
+    "#{meter_bar(session, projection, config)}  tok #{format_tokens(tokens)}/#{format_tokens(config.orchestration.context_budget_tokens)}"
   end
 
-  defp meter_bar(room, projection, config) do
-    used = token_usage(room, projection)
+  defp meter_bar(session, projection, config) do
+    used = token_usage(session, projection)
     budget = config.orchestration.context_budget_tokens
     ratio = if budget > 0, do: used / budget, else: 0.0
     cells = 5
@@ -164,9 +164,9 @@ defmodule ReyCode.TUI.State do
     String.duplicate("■", filled) <> String.duplicate("□", cells - filled)
   end
 
-  defp token_usage(room, projection) do
+  defp token_usage(session, projection) do
     Enum.reduce(projection.invocations, 0, fn {_id, invocation}, acc ->
-      if invocation.room_id == room.id,
+      if invocation.session_id == session.id,
         do: acc + usage_tokens(invocation.usage),
         else: acc
     end)
@@ -245,14 +245,14 @@ defmodule ReyCode.TUI.State do
            sequence <= term.assigns.projection.sequence do
         term
       else
-        selected_room_id =
-          if Map.has_key?(projection.rooms, term.assigns.selected_room_id) do
-            term.assigns.selected_room_id
+        selected_session_id =
+          if Map.has_key?(projection.sessions, term.assigns.selected_session_id) do
+            term.assigns.selected_session_id
           else
-            List.last(projection.room_order)
+            List.last(projection.session_order)
           end
 
-        Component.assign(term, projection: projection, selected_room_id: selected_room_id)
+        Component.assign(term, projection: projection, selected_session_id: selected_session_id)
       end
 
     reconcile_animation(term)
@@ -313,7 +313,7 @@ defmodule ReyCode.TUI.State do
   @spec select_session(map(), String.t(), boolean()) :: map()
   def select_session(term, session_id, home? \\ false) do
     term
-    |> Component.assign(selected_room_id: session_id, home: home?)
+    |> Component.assign(selected_session_id: session_id, home: home?)
     |> reconcile_animation()
   end
 
@@ -327,7 +327,7 @@ defmodule ReyCode.TUI.State do
   @doc "Updates the selected session's composer draft."
   @spec assign_draft(map(), String.t()) :: map()
   def assign_draft(term, value) do
-    drafts = Map.put(term.assigns.drafts, term.assigns.selected_room_id, value)
+    drafts = Map.put(term.assigns.drafts, term.assigns.selected_session_id, value)
     Component.assign(term, drafts: drafts)
   end
 
@@ -335,7 +335,7 @@ defmodule ReyCode.TUI.State do
   @spec ensure_session(map(), String.t()) :: {:ok, map()} | {:error, term()}
   def ensure_session(%{assigns: %{home: true}} = term, first_input) do
     case Engine.create_session(
-           term.assigns.selected_room_id,
+           term.assigns.selected_session_id,
            session_title(first_input),
            term.assigns.engine
          ) do
@@ -375,7 +375,7 @@ defmodule ReyCode.TUI.State do
   @doc "Returns to a clean session home without creating persistence yet."
   @spec start_session(map()) :: map()
   def start_session(term) do
-    source_session_id = List.last(term.assigns.projection.room_order)
+    source_session_id = List.last(term.assigns.projection.session_order)
     drafts = Map.put(term.assigns.drafts, source_session_id, "")
 
     term
@@ -391,10 +391,10 @@ defmodule ReyCode.TUI.State do
   @spec timeline_id(term()) :: String.t()
   def timeline_id(session_id), do: "timeline-#{session_id}"
 
-  defp room_messages(nil, _projection, _activity, _now_ms, _target_graphemes), do: []
+  defp session_messages(nil, _projection, _activity, _now_ms, _target_graphemes), do: []
 
-  defp room_messages(room, projection, activity, now_ms, target_graphemes) do
-    room.message_order
+  defp session_messages(session, projection, activity, now_ms, target_graphemes) do
+    session.message_order
     |> Enum.reverse()
     |> Enum.map(fn message_id ->
       message = projection.messages[message_id]
@@ -405,7 +405,7 @@ defmodule ReyCode.TUI.State do
       |> Map.put(:activity, Activity.invocation(activity, message.invocation_id))
       |> Map.put(
         :tool_run_rows,
-        tool_run_rows(invocation, room.workspace, now_ms, target_graphemes)
+        tool_run_rows(invocation, session.workspace, now_ms, target_graphemes)
       )
       |> Map.put(:note_rows, note_rows(invocation))
       |> Map.put(:turn, projection.turns[message.turn_id])
@@ -438,7 +438,7 @@ defmodule ReyCode.TUI.State do
 
   defp current_activity(term, now_ms) do
     Activity.present(
-      term.assigns.selected_room_id,
+      term.assigns.selected_session_id,
       term.assigns.projection,
       term.assigns.providers,
       now_ms,

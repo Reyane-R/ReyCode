@@ -9,14 +9,14 @@ defmodule ReyCode.Orchestration.Engine.Turns do
 
   @doc "Validates and queues one user message for orchestration."
   @spec post_message(map(), term(), term(), term()) :: response()
-  def post_message(state, room_id, raw_body, mode) do
-    queue(state, room_id, raw_body, mode, nil)
+  def post_message(state, session_id, raw_body, mode) do
+    queue(state, session_id, raw_body, mode, nil)
   end
 
   @doc "Validates and queues one task addressed to a task participant."
   @spec delegate_task(map(), term(), term(), term()) :: response()
-  def delegate_task(state, room_id, participant_id, raw_body) do
-    queue(state, room_id, raw_body, :delegate, participant_id)
+  def delegate_task(state, session_id, participant_id, raw_body) do
+    queue(state, session_id, raw_body, :delegate, participant_id)
   end
 
   @doc "Queues one bounded correction for the next provider-round boundary."
@@ -45,39 +45,39 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     end
   end
 
-  @doc "Cancels the newest queued follow-up Turn in one Room."
+  @doc "Cancels the newest queued follow-up Turn in one Session."
   @spec cancel_latest_follow_up(map(), term()) :: response()
-  def cancel_latest_follow_up(state, room_id) do
-    room = state.projection.rooms[room_id]
+  def cancel_latest_follow_up(state, session_id) do
+    session = state.projection.sessions[session_id]
 
-    if room do
+    if session do
       turn =
-        room.queued_turn_ids
+        session.queued_turn_ids
         |> Enum.reverse()
         |> Enum.map(&state.projection.turns[&1])
         |> Enum.find(&(&1.input_kind == :follow_up and &1.status == :queued))
 
       cancel_follow_up(state, turn)
     else
-      {:reply, {:error, :room_not_found}, state}
+      {:reply, {:error, :session_not_found}, state}
     end
   end
 
-  defp queue(state, room_id, raw_body, mode, participant_id) do
+  defp queue(state, session_id, raw_body, mode, participant_id) do
     cond do
-      not Map.has_key?(state.projection.rooms, room_id) ->
-        {:reply, {:error, :room_not_found}, state}
+      not Map.has_key?(state.projection.sessions, session_id) ->
+        {:reply, {:error, :session_not_found}, state}
 
       not Mode.known?(mode) ->
         {:reply, {:error, :invalid_mode}, state}
 
       true ->
-        room = state.projection.rooms[room_id]
+        session = state.projection.sessions[session_id]
 
         with {:ok, body} <- Validation.message(raw_body),
-             :ok <- runtime_preflight(room, mode, participant_id, state),
-             :ok <- Admission.admit_turn(room, state) do
-          Lifecycle.queue_message(state, room_id, body, mode, participant_id)
+             :ok <- runtime_preflight(session, mode, participant_id, state),
+             :ok <- Admission.admit_turn(session, state) do
+          Lifecycle.queue_message(state, session_id, body, mode, participant_id)
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
@@ -157,8 +157,8 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     end
   end
 
-  defp runtime_preflight(room, :squad, _participant_id, state) do
-    configured = room.squad_seats
+  defp runtime_preflight(session, :squad, _participant_id, state) do
+    configured = session.squad_seats
 
     missing =
       Squad.roles()
@@ -173,30 +173,30 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     if missing == [], do: :ok, else: {:error, {:squad_seats_unconfigured, missing}}
   end
 
-  defp runtime_preflight(room, :direct, nil, state) do
-    room.participants
+  defp runtime_preflight(session, :direct, nil, state) do
+    session.participants
     |> Enum.find(&(&1.kind == :primary))
     |> participant_preflight(state)
   end
 
-  defp runtime_preflight(room, :delegate, participant_id, state) do
-    room.participants
+  defp runtime_preflight(session, :delegate, participant_id, state) do
+    session.participants
     |> Enum.find(&(&1.id == participant_id and &1.kind == :task))
     |> participant_preflight(state)
   end
 
   # Eval bypasses batch readiness preflight so unavailable runtimes become
   # per-participant rows, but an empty task subset would open no invocations
-  # and strand the room's active Turn forever.
-  defp runtime_preflight(room, :eval, _participant_id, _state) do
-    if Enum.any?(room.participants, &(&1.kind == :task)),
+  # and strand the session's active Turn forever.
+  defp runtime_preflight(session, :eval, _participant_id, _state) do
+    if Enum.any?(session.participants, &(&1.kind == :task)),
       do: :ok,
       else: {:error, :eval_participants_required}
   end
 
-  defp runtime_preflight(room, _mode, _participant_id, state) do
+  defp runtime_preflight(session, _mode, _participant_id, state) do
     missing =
-      room.participants
+      session.participants
       |> Enum.reject(&runtime_ready?(&1, state))
       |> Enum.map(& &1.id)
 

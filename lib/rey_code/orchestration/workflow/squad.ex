@@ -6,12 +6,12 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
   alias ReyCode.Orchestration.Workflow.Squad.Finalizer
 
   @impl true
-  def plan(room, turn, projection) do
-    specs_for_phase(planning_context(room, turn, projection), 0, 0)
+  def plan(session, turn, projection) do
+    specs_for_phase(planning_context(session, turn, projection), 0, 0)
   end
 
   @impl true
-  def advance(room, turn, projection) do
+  def advance(session, turn, projection) do
     phase = turn.squad.phase_index
     cycle = turn.squad.cycle
     invocations = current_invocations(turn, projection, phase, cycle)
@@ -27,7 +27,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
         :wait
 
       true ->
-        transition(room, turn, projection)
+        transition(session, turn, projection)
     end
   end
 
@@ -43,7 +43,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
     Enum.map(phase.role_ids, &invocation_spec(&1, spec_context))
   end
 
-  defp transition(room, turn, projection) do
+  defp transition(session, turn, projection) do
     state = fsm_from_turn(turn)
 
     result =
@@ -56,7 +56,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
 
     case result do
       {:continue, next} ->
-        context = planning_context(room, turn, projection)
+        context = planning_context(session, turn, projection)
         {:continue, specs_for_phase(context, next.phase_index, next.cycle)}
 
       {:complete, next} ->
@@ -152,13 +152,13 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
     Jason.encode!(%{"kind" => "artifacts", "artifacts" => envelopes})
   end
 
-  defp planning_context(room, turn, projection) do
-    %{room: room, turn: turn, projection: projection}
+  defp planning_context(session, turn, projection) do
+    %{session: session, turn: turn, projection: projection}
   end
 
   defp invocation_spec_context(context, phase, phase_index, cycle) do
     %{
-      room: context.room,
+      session: context.session,
       turn: context.turn,
       phase: phase,
       phase_index: phase_index,
@@ -170,7 +170,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
 
   defp invocation_spec(role_id, context) do
     role = Squad.role(role_id)
-    participant = Map.fetch!(context.room.squad_seats, role_id)
+    participant = Map.fetch!(context.session.squad_seats, role_id)
 
     %{
       participant_id: role_id,
@@ -188,7 +188,7 @@ defmodule ReyCode.Orchestration.Workflow.Squad do
 
   defp fsm_from_turn(turn) do
     %SquadFSM{
-      room_id: turn.room_id,
+      session_id: turn.session_id,
       phase_index: turn.squad.phase_index,
       cycle: turn.squad.cycle,
       rework_count: turn.squad.rework_count,

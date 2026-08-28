@@ -6,11 +6,9 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Workspace** — Canonical filesystem directory in which a Session's work is scoped.
 
-**Session** — Durable user-visible conversation with one Workspace, agent profiles, Messages, and ordered Turns.
+**Session** — Durable workspace-rooted conversation aggregate owning one title, Workspace, Participant roster, ordered Messages and Turns, context-compaction state, and active/queued Turn scheduling.
 
 **SessionFork** — Session whose inherited transcript references completed Messages from one parent Session through a recorded durable sequence; later Messages belong only to the fork.
-
-**Room** — Internal orchestration aggregate backing one Session. Never shown in the user interface.
 
 **Operator** — Human supplying ordinary Session input.
 
@@ -133,7 +131,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Role** — Stable squad responsibility definition.
 
-**Seat** — Assignment of a Role to a provider/model capability in a Room.
+**Seat** — Assignment of a Role to a provider/model capability in a Session.
 
 **SquadRun** — Leader-supervised workflow state attached to a squad Turn.
 
@@ -174,7 +172,6 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 ## Relationships
 
 - A Workspace contains zero or more Sessions.
-- Every Session is backed by one internal Room aggregate.
 - A Session owns ordered Messages and Turns.
 - A Session has exactly one Primary Participant, zero or more Task Participants, and may have Squad Seats.
 - An ordinary Turn invokes only the Session's Primary Participant.

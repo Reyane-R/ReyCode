@@ -14,7 +14,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
   test "builds room creation and queued turn entries with exact metadata and ordering" do
     participants = [%{"id" => "builder"}]
 
-    assert EventEntries.room_created(
+    assert EventEntries.session_created(
              "room-1",
              "room",
              "Room",
@@ -110,13 +110,13 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
   end
 
   test "builds turn and invocation lifecycle entries" do
-    turn = %{id: "turn-1", room_id: "room-1"}
+    turn = %{id: "turn-1", session_id: "room-1"}
 
     invocation = %{
       id: "inv-1",
       message_id: "msg-1",
       turn_id: "turn-1",
-      room_id: "room-1"
+      session_id: "room-1"
     }
 
     assert EventEntries.turn_started(turn) ==
@@ -160,7 +160,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
   test "builds squad directive and gate resolution entries" do
     turn = %{
       id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       squad: %{phase: "release_gate", cycle: 2}
     }
 
@@ -203,11 +203,11 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
   end
 
   test "builds cancellation entries in invocation order followed by the turn completion" do
-    turn = %{id: "turn-1", room_id: "room-1"}
+    turn = %{id: "turn-1", session_id: "room-1"}
 
     invocations = [
-      %{id: "inv-1", message_id: "msg-1", turn_id: "turn-1", room_id: "room-1"},
-      %{id: "inv-2", message_id: "msg-2", turn_id: "turn-1", room_id: "room-1"}
+      %{id: "inv-1", message_id: "msg-1", turn_id: "turn-1", session_id: "room-1"},
+      %{id: "inv-2", message_id: "msg-2", turn_id: "turn-1", session_id: "room-1"}
     ]
 
     assert [first, second, completed] =
@@ -237,7 +237,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
   end
 
   test "builds squad start entries with supplied configuration" do
-    turn = %{id: "turn-1", room_id: "room-1"}
+    turn = %{id: "turn-1", session_id: "room-1"}
 
     assert [configured, entered] =
              EventEntries.squad_start(turn,
@@ -277,7 +277,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
   test "builds squad rework and stage transition entries" do
     turn = %{
       id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       squad: %{cycle: 1, phase_index: 4, phase: "specification", rework_count: 2}
     }
 
@@ -339,7 +339,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
       kind: :task
     }
 
-    room = %{id: "room-1", participants: [participant]}
+    session = %{id: "room-1", participants: [participant]}
     turn = %{id: "turn-1"}
 
     spec = %{
@@ -349,7 +349,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
       system_prompt: "Respond independently"
     }
 
-    assert EventEntries.open_invocations(room, turn, [spec], [{"inv-1", "msg-1"}]) == [
+    assert EventEntries.open_invocations(session, turn, [spec], [{"inv-1", "msg-1"}]) == [
              {
                :assistant_message_opened,
                %{
@@ -390,7 +390,7 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
   end
 
   test "rejects generated IDs that do not match invocation specs" do
-    room = %{id: "room-1", participants: []}
+    session = %{id: "room-1", participants: []}
     turn = %{id: "turn-1"}
 
     spec = %{
@@ -408,14 +408,14 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
     }
 
     assert_raise ArgumentError, ~r/got 1 specs and 0 ID pairs/, fn ->
-      EventEntries.open_invocations(room, turn, [spec], [])
+      EventEntries.open_invocations(session, turn, [spec], [])
     end
 
     assert_raise ArgumentError, ~r/got 0 specs and 1 ID pairs/, fn ->
-      EventEntries.open_invocations(room, turn, [], [{"inv-1", "msg-1"}])
+      EventEntries.open_invocations(session, turn, [], [{"inv-1", "msg-1"}])
     end
 
-    assert EventEntries.open_invocations(room, turn, [], []) == []
+    assert EventEntries.open_invocations(session, turn, [], []) == []
   end
 
   defp invocation_metadata(invocation_id) do

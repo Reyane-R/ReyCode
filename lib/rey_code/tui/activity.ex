@@ -61,20 +61,20 @@ defmodule ReyCode.TUI.Activity do
           }
   end
 
-  @doc "Presents activity for exactly one selected Session's internal Room ID."
+  @doc "Presents activity for exactly one selected Session's internal Session ID."
   @spec present(String.t() | nil, Projection.t(), map(), integer(), keyword()) :: View.t()
-  def present(room_id, projection, providers, now_ms, opts \\ [])
+  def present(session_id, projection, providers, now_ms, opts \\ [])
 
   def present(nil, _projection, _providers, _now_ms, _opts), do: %View{}
 
-  def present(room_id, projection, providers, now_ms, opts) do
-    case Map.get(projection.rooms, room_id) do
+  def present(session_id, projection, providers, now_ms, opts) do
+    case Map.get(projection.sessions, session_id) do
       nil ->
         %View{}
 
-      room ->
+      session ->
         target_graphemes = Keyword.get(opts, :target_graphemes, @default_target_graphemes)
-        {visible_ids, truncated?} = selected_invocation_ids(room, projection)
+        {visible_ids, truncated?} = selected_invocation_ids(session, projection)
 
         items =
           Map.new(visible_ids, fn invocation_id ->
@@ -85,14 +85,14 @@ defmodule ReyCode.TUI.Activity do
              invocation_item(
                invocation,
                turn,
-               room.workspace,
+               session.workspace,
                projection,
                now_ms,
                target_graphemes
              )}
           end)
 
-        header = header_item(room, projection, providers, items, now_ms, target_graphemes)
+        header = header_item(session, projection, providers, items, now_ms, target_graphemes)
 
         %View{
           active?: Enum.any?(Map.values(items), & &1.active?) or active_item?(header),
@@ -153,9 +153,9 @@ defmodule ReyCode.TUI.Activity do
   def badge(%Item{state: :terminal, label: label}), do: String.downcase(label)
   def badge(_item), do: ""
 
-  defp selected_invocation_ids(room, projection) do
+  defp selected_invocation_ids(session, projection) do
     {ids, _seen, truncated?} =
-      room.message_order
+      session.message_order
       |> Enum.reduce_while({[], MapSet.new(), false}, fn message_id, {ids, seen, _truncated?} ->
         invocation_id = invocation_id(projection, message_id)
 
@@ -436,22 +436,22 @@ defmodule ReyCode.TUI.Activity do
     end
   end
 
-  defp header_item(room, projection, providers, items, now_ms, target_graphemes) do
+  defp header_item(session, projection, providers, items, now_ms, target_graphemes) do
     cond do
-      room.active_turn_id ->
-        turn = Map.get(projection.turns, room.active_turn_id)
+      session.active_turn_id ->
+        turn = Map.get(projection.turns, session.active_turn_id)
         active_turn_header(turn, items)
 
-      room.queued_turn_ids != [] ->
-        item("room:#{room.id}", :turn, :queued, "Queued", nil, nil, nil, 20)
+      session.queued_turn_ids != [] ->
+        item("session:#{session.id}", :turn, :queued, "Queued", nil, nil, nil, 20)
 
-      turn = recent_turn(room, projection) ->
+      turn = recent_turn(session, projection) ->
         if turn.status == :terminal,
           do: terminal_item(turn.id, :turn, turn.outcome),
-          else: provider_item(room, providers, now_ms, target_graphemes)
+          else: provider_item(session, providers, now_ms, target_graphemes)
 
       true ->
-        provider_item(room, providers, now_ms, target_graphemes)
+        provider_item(session, providers, now_ms, target_graphemes)
     end
   end
 
@@ -467,8 +467,8 @@ defmodule ReyCode.TUI.Activity do
     |> elem(0)
   end
 
-  defp recent_turn(room, projection) do
-    room.message_order
+  defp recent_turn(session, projection) do
+    session.message_order
     |> Enum.find_value(fn message_id ->
       case Map.get(projection.messages, message_id) do
         %{turn_id: turn_id} when not is_nil(turn_id) -> Map.get(projection.turns, turn_id)
@@ -477,23 +477,42 @@ defmodule ReyCode.TUI.Activity do
     end)
   end
 
-  defp provider_item(room, providers, _now_ms, target_graphemes) do
-    primary = Enum.find(room.participants, &(&1.kind == :primary))
+  defp provider_item(session, providers, _now_ms, target_graphemes) do
+    primary = Enum.find(session.participants, &(&1.kind == :primary))
     provider = primary && Map.get(providers, primary.provider)
 
     cond do
       primary == nil ->
-        item("room:#{room.id}", :provider, :blocked, "Model required", nil, nil, nil, 40)
+        item("session:#{session.id}", :provider, :blocked, "Model required", nil, nil, nil, 40)
 
       provider && provider.status == :checking ->
         target = primary.name |> single_line() |> truncate(target_graphemes)
-        item("room:#{room.id}", :provider, :active, "Checking provider", target, nil, nil, 40)
+
+        item(
+          "session:#{session.id}",
+          :provider,
+          :active,
+          "Checking provider",
+          target,
+          nil,
+          nil,
+          40
+        )
 
       Presentation.ready?(provider, primary) ->
-        item("room:#{room.id}", :provider, :idle, "Ready", nil, nil, nil, 0)
+        item("session:#{session.id}", :provider, :idle, "Ready", nil, nil, nil, 0)
 
       true ->
-        item("room:#{room.id}", :provider, :blocked, "Provider unavailable", nil, nil, nil, 40)
+        item(
+          "session:#{session.id}",
+          :provider,
+          :blocked,
+          "Provider unavailable",
+          nil,
+          nil,
+          nil,
+          40
+        )
     end
   end
 

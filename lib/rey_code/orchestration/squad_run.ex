@@ -4,7 +4,7 @@ defmodule ReyCode.Orchestration.SquadRun do
   alias ReyCode.Orchestration.Squad.{Artifact, Directive, GateResolution, GateReview, Retry}
 
   @fields [
-    :room_id,
+    :session_id,
     :workflow_version,
     :release_authority,
     :phase_index,
@@ -24,7 +24,7 @@ defmodule ReyCode.Orchestration.SquadRun do
     :pending_review
   ]
 
-  defstruct room_id: nil,
+  defstruct session_id: nil,
             workflow_version: nil,
             release_authority: :owner,
             phase_index: 0,
@@ -45,7 +45,7 @@ defmodule ReyCode.Orchestration.SquadRun do
 
   @type release_authority :: :owner | :squad_leader
   @type t :: %__MODULE__{
-          room_id: String.t(),
+          session_id: String.t(),
           workflow_version: String.t(),
           release_authority: release_authority(),
           phase_index: non_neg_integer(),

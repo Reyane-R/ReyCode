@@ -23,7 +23,7 @@ defmodule ReyCode.Orchestration.Engine.Options do
     }
   end
 
-  @doc "Builds the room's single primary participant with the configured default provider."
+  @doc "Builds the session's single primary participant with the configured default provider."
   @spec default_participants(Providers.t()) :: [map()]
   def default_participants(policy \\ RuntimeConfig.fresh().providers) do
     [Map.put(@primary_participant, "provider", Atom.to_string(policy.default_provider))]

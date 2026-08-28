@@ -88,7 +88,7 @@ defmodule ReyCode.TUI.ModelTiers do
     tier = Enum.at(ModelTier.all(), term.assigns.model_tiers.index)
 
     case Engine.configure_participant_tier(
-           term.assigns.selected_room_id,
+           term.assigns.selected_session_id,
            term.assigns.model_tiers.participant_id,
            tier,
            term.assigns.engine
@@ -110,7 +110,7 @@ defmodule ReyCode.TUI.ModelTiers do
   end
 
   defp participants(term) do
-    term.projection.rooms[term.selected_room_id].participants
+    term.projection.sessions[term.selected_session_id].participants
   end
 
   defp option_count(%{assigns: %{model_tiers: %{step: :participants}}} = term),

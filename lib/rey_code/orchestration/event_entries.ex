@@ -8,7 +8,7 @@ defmodule ReyCode.Orchestration.EventEntries do
     ModelTier,
     OperatorQuestion,
     Participant,
-    Room,
+    Session,
     Squad,
     ToolRun,
     Turn,
@@ -20,29 +20,29 @@ defmodule ReyCode.Orchestration.EventEntries do
 
   @type event_entry :: {atom(), map(), keyword()}
 
-  @doc "Builds the event that creates a room."
-  @spec room_created(String.t(), String.t(), String.t(), String.t(), [map()]) :: event_entry()
-  def room_created(room_id, slug, title, workspace, participants) do
+  @doc "Builds the storage-compatible `room_created` event for one Session."
+  @spec session_created(String.t(), String.t(), String.t(), String.t(), [map()]) :: event_entry()
+  def session_created(session_id, slug, title, workspace, participants) do
     {
       :room_created,
       %{
-        "room_id" => room_id,
+        "room_id" => session_id,
         "slug" => slug,
         "title" => title,
         "workspace" => workspace,
-        "participants" => Enum.map(participants, &room_participant/1)
+        "participants" => Enum.map(participants, &session_participant/1)
       },
-      [aggregate_type: :room, aggregate_id: room_id, room_id: room_id]
+      [aggregate_type: :room, aggregate_id: session_id, room_id: session_id]
     }
   end
 
-  @doc "Builds the durable context-compaction boundary for one Room."
-  @spec context_compacted(Room.t(), non_neg_integer(), String.t(), map()) :: event_entry()
-  def context_compacted(room, through_sequence, summary, metrics) do
+  @doc "Builds the durable context-compaction boundary for one Session."
+  @spec context_compacted(Session.t(), non_neg_integer(), String.t(), map()) :: event_entry()
+  def context_compacted(session, through_sequence, summary, metrics) do
     event(
       :context_compacted,
       %{
-        "room_id" => room.id,
+        "room_id" => session.id,
         "through_sequence" => through_sequence,
         "summary" => summary,
         "source_message_count" => metrics.source_message_count,
@@ -51,32 +51,32 @@ defmodule ReyCode.Orchestration.EventEntries do
         "generator" => "extractive-v1"
       },
       :room,
-      room.id,
-      room.id,
-      room.id
+      session.id,
+      session.id,
+      session.id
     )
   end
 
   @doc "Builds the durable parent link and inherited transcript for a forked Session."
-  @spec session_forked(String.t(), Room.t(), non_neg_integer(), [String.t()]) ::
+  @spec session_forked(String.t(), Session.t(), non_neg_integer(), [String.t()]) ::
           event_entry()
-  def session_forked(room_id, parent, through_sequence, inherited_message_ids) do
+  def session_forked(session_id, parent, through_sequence, inherited_message_ids) do
     event(
       :session_forked,
       %{
-        "room_id" => room_id,
+        "room_id" => session_id,
         "parent_room_id" => parent.id,
         "through_sequence" => through_sequence,
         "inherited_message_ids" => inherited_message_ids
       },
       :room,
-      room_id,
-      room_id,
-      room_id
+      session_id,
+      session_id,
+      session_id
     )
   end
 
-  @doc "Builds the event that adds one durable room participant."
+  @doc "Builds the event that adds one durable Session Participant."
   @spec participant_added(
           String.t(),
           String.t(),
@@ -87,11 +87,11 @@ defmodule ReyCode.Orchestration.EventEntries do
           String.t() | nil
         ) ::
           event_entry()
-  def participant_added(room_id, participant_id, name, responsibility, kind, provider, model) do
+  def participant_added(session_id, participant_id, name, responsibility, kind, provider, model) do
     event(
       :participant_added,
       %{
-        "room_id" => room_id,
+        "room_id" => session_id,
         "participant_id" => participant_id,
         "name" => name,
         "responsibility" => responsibility,
@@ -100,28 +100,28 @@ defmodule ReyCode.Orchestration.EventEntries do
         "model" => model
       },
       :room,
-      room_id,
-      room_id,
-      room_id
+      session_id,
+      session_id,
+      session_id
     )
   end
 
   @doc "Builds the transcript message recorded for one owner-typed shell command."
   @spec owner_command_posted(String.t(), String.t(), String.t()) :: event_entry()
-  def owner_command_posted(room_id, message_id, body) do
+  def owner_command_posted(session_id, message_id, body) do
     event(
       :message_posted,
       %{
         "message_id" => message_id,
-        "room_id" => room_id,
+        "room_id" => session_id,
         "turn_id" => nil,
         "author_name" => "You",
         "body" => body
       },
       :room,
-      room_id,
-      room_id,
-      room_id
+      session_id,
+      session_id,
+      session_id
     )
   end
 
@@ -137,7 +137,7 @@ defmodule ReyCode.Orchestration.EventEntries do
           String.t() | nil
         ) :: [event_entry()]
   def queue_turn(
-        room_id,
+        session_id,
         body,
         mode,
         turn_id,
@@ -151,21 +151,21 @@ defmodule ReyCode.Orchestration.EventEntries do
         :message_posted,
         %{
           "message_id" => message_id,
-          "room_id" => room_id,
+          "room_id" => session_id,
           "turn_id" => turn_id,
           "author_name" => "You",
           "body" => body
         },
         :room,
-        room_id,
-        room_id,
+        session_id,
+        session_id,
         turn_id
       ),
       event(
         :turn_queued,
         %{
           "turn_id" => turn_id,
-          "room_id" => room_id,
+          "room_id" => session_id,
           "user_message_id" => message_id,
           "mode" => Atom.to_string(mode),
           "context_through_sequence" => context_sequence,
@@ -174,7 +174,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         },
         :turn,
         turn_id,
-        room_id,
+        session_id,
         turn_id
       )
     ]
@@ -195,7 +195,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         :message_posted,
         %{
           "message_id" => message_id,
-          "room_id" => parent.room_id,
+          "room_id" => parent.session_id,
           "turn_id" => turn_id,
           "author_name" => parent.participant.name,
           "author_id" => parent.participant.id,
@@ -203,15 +203,15 @@ defmodule ReyCode.Orchestration.EventEntries do
           "body" => task
         },
         :room,
-        parent.room_id,
-        parent.room_id,
+        parent.session_id,
+        parent.session_id,
         turn_id
       ),
       event(
         :turn_queued,
         %{
           "turn_id" => turn_id,
-          "room_id" => parent.room_id,
+          "room_id" => parent.session_id,
           "user_message_id" => message_id,
           "mode" => "delegate",
           "context_through_sequence" => context_sequence,
@@ -223,61 +223,61 @@ defmodule ReyCode.Orchestration.EventEntries do
         },
         :turn,
         turn_id,
-        parent.room_id,
+        parent.session_id,
         turn_id
       )
     ]
   end
 
-  @doc "Builds room participant configuration events in participant order."
+  @doc "Builds Session Participant configuration events in Participant order."
   @spec participant_configuration(String.t(), [String.t()], atom(), String.t() | nil) ::
           [event_entry()]
-  def participant_configuration(room_id, participant_ids, provider, model) do
+  def participant_configuration(session_id, participant_ids, provider, model) do
     Enum.map(participant_ids, fn participant_id ->
       event(
         :participant_configured,
         %{
-          "room_id" => room_id,
+          "room_id" => session_id,
           "participant_id" => participant_id,
           "provider" => Atom.to_string(provider),
           "model" => model
         },
         :room,
-        room_id,
-        room_id,
-        room_id
+        session_id,
+        session_id,
+        session_id
       )
     end)
   end
 
   @doc "Builds one Participant ModelTier configuration event."
   @spec participant_tier_configured(String.t(), String.t(), ModelTier.t()) :: event_entry()
-  def participant_tier_configured(room_id, participant_id, tier) do
+  def participant_tier_configured(session_id, participant_id, tier) do
     event(
       :participant_tier_configured,
       %{
-        "room_id" => room_id,
+        "room_id" => session_id,
         "participant_id" => participant_id,
         "model_tier" => Atom.to_string(tier)
       },
       :room,
-      room_id,
-      room_id,
-      room_id
+      session_id,
+      session_id,
+      session_id
     )
   end
 
   @doc "Builds squad role configuration events in role order."
   @spec squad_role_configuration(String.t(), [String.t()], atom(), String.t() | nil) ::
           [event_entry()]
-  def squad_role_configuration(room_id, role_ids, provider, model) do
+  def squad_role_configuration(session_id, role_ids, provider, model) do
     Enum.map(role_ids, fn role_id ->
       role = Squad.role(role_id)
 
       event(
         :squad_role_configured,
         %{
-          "room_id" => room_id,
+          "room_id" => session_id,
           "role_id" => role.id,
           "name" => role.name,
           "perspective" => role.perspective,
@@ -285,9 +285,9 @@ defmodule ReyCode.Orchestration.EventEntries do
           "model" => model
         },
         :room,
-        room_id,
-        room_id,
-        room_id
+        session_id,
+        session_id,
+        session_id
       )
     end)
   end
@@ -295,7 +295,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   @doc "Builds the event that marks a turn as running."
   @spec turn_started(Turn.t()) :: event_entry()
   def turn_started(turn) do
-    data = %{"turn_id" => turn.id, "room_id" => turn.room_id}
+    data = %{"turn_id" => turn.id, "room_id" => turn.session_id}
     data = if Map.get(turn, :detached?, false), do: Map.put(data, "detached", true), else: data
 
     event(
@@ -303,7 +303,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       data,
       :turn,
       turn.id,
-      turn.room_id,
+      turn.session_id,
       turn.id
     )
   end
@@ -315,12 +315,12 @@ defmodule ReyCode.Orchestration.EventEntries do
       :turn_completed,
       %{
         "turn_id" => turn.id,
-        "room_id" => turn.room_id,
+        "room_id" => turn.session_id,
         "outcome" => Atom.to_string(outcome)
       },
       :turn,
       turn.id,
-      turn.room_id,
+      turn.session_id,
       turn.id
     )
   end
@@ -331,10 +331,10 @@ defmodule ReyCode.Orchestration.EventEntries do
     turn_entry =
       event(
         :turn_completed,
-        %{"turn_id" => turn.id, "room_id" => turn.room_id, "outcome" => "cancelled"},
+        %{"turn_id" => turn.id, "room_id" => turn.session_id, "outcome" => "cancelled"},
         :turn,
         turn.id,
-        turn.room_id,
+        turn.session_id,
         turn.id
       )
 
@@ -351,7 +351,7 @@ defmodule ReyCode.Orchestration.EventEntries do
           "invocation_id" => invocation.id,
           "message_id" => invocation.message_id,
           "turn_id" => invocation.turn_id,
-          "room_id" => invocation.room_id,
+          "room_id" => invocation.session_id,
           "reason" => reason
         },
         invocation
@@ -368,7 +368,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id
+        "room_id" => invocation.session_id
       },
       invocation
     )
@@ -383,7 +383,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "steering_id" => steering_id,
         "body" => body
       },
@@ -399,7 +399,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id
+        "room_id" => invocation.session_id
       })
 
     invocation_event(:provider_frame_recorded, data, invocation)
@@ -412,14 +412,14 @@ defmodule ReyCode.Orchestration.EventEntries do
       :squad_directive_added,
       %{
         "turn_id" => turn.id,
-        "room_id" => turn.room_id,
+        "room_id" => turn.session_id,
         "text" => directive,
         "phase" => turn.squad.phase,
         "cycle" => turn.squad.cycle
       },
       :turn,
       turn.id,
-      turn.room_id,
+      turn.session_id,
       turn.id
     )
   end
@@ -432,7 +432,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       :gate_resolved,
       %{
         "turn_id" => turn.id,
-        "room_id" => turn.room_id,
+        "room_id" => turn.session_id,
         "seat_id" => "human_owner",
         "decision" => Atom.to_string(decision),
         "phase" => review.phase,
@@ -442,7 +442,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       },
       :turn,
       turn.id,
-      turn.room_id,
+      turn.session_id,
       turn.id
     )
   end
@@ -456,7 +456,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "round_index" => round_index,
         "text" => round_data["text"],
         "tool_calls" => round_data["tool_calls"],
@@ -476,7 +476,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "tool_run_id" => run.id,
         "tool_call_id" => run.tool_call_id,
         "round_index" => run.round_index,
@@ -499,7 +499,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "tool_run_id" => run.id,
         "tool" => run.tool,
         "decision" => Atom.to_string(decision)
@@ -517,7 +517,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "tool_run_id" => run.id,
         "tool" => run.tool
       },
@@ -534,7 +534,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "tool_run_id" => run.id,
         "tool" => run.tool,
         "result" => result
@@ -552,7 +552,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "tool_run_id" => run.id,
         "tool" => run.tool,
         "error" => error,
@@ -571,7 +571,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "tool_run_id" => run.id,
         "tool" => run.tool,
         "reason" => reason
@@ -606,7 +606,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => parent_invocation.id,
         "message_id" => parent_invocation.message_id,
         "turn_id" => parent_invocation.turn_id,
-        "room_id" => parent_invocation.room_id,
+        "room_id" => parent_invocation.session_id,
         "tool_run_id" => run.id,
         "child_invocation_id" => child_invocation_id,
         "child_message_id" => child_message_id,
@@ -629,7 +629,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       :peer_message_sent,
       %{
         "turn_id" => sender.turn_id,
-        "room_id" => sender.room_id,
+        "room_id" => sender.session_id,
         "peer_message_id" => peer_message_id,
         "sender_invocation_id" => sender.id,
         "sender_name" => sender.participant.name,
@@ -650,7 +650,7 @@ defmodule ReyCode.Orchestration.EventEntries do
           "invocation_id" => invocation.id,
           "message_id" => invocation.message_id,
           "turn_id" => invocation.turn_id,
-          "room_id" => invocation.room_id
+          "room_id" => invocation.session_id
         },
         OperatorQuestion.to_wire(question)
       ),
@@ -671,7 +671,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "question_id" => question.id,
         "tool_run_id" => question.tool_run_id,
         "selected_id" => option.id,
@@ -690,7 +690,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "plan" => WorkPlan.to_wire(plan)
       },
       invocation
@@ -704,12 +704,12 @@ defmodule ReyCode.Orchestration.EventEntries do
       :squad_budget_extended,
       %{
         "turn_id" => turn.id,
-        "room_id" => turn.room_id,
+        "room_id" => turn.session_id,
         "budget" => budget
       },
       :turn,
       turn.id,
-      turn.room_id,
+      turn.session_id,
       turn.id
     )
   end
@@ -726,7 +726,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   def squad_gate(invocation, output, type) do
     data = %{
       "turn_id" => invocation.turn_id,
-      "room_id" => invocation.room_id,
+      "room_id" => invocation.session_id,
       "seat_id" => invocation.participant.id,
       "decision" => output["decision"],
       "phase" => invocation.phase,
@@ -735,7 +735,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       "reasons" => output["reasons"]
     }
 
-    event(type, data, :turn, invocation.turn_id, invocation.room_id, invocation.turn_id)
+    event(type, data, :turn, invocation.turn_id, invocation.session_id, invocation.turn_id)
   end
 
   @doc "Builds the event recording one squad role's structured artifact output."
@@ -743,7 +743,7 @@ defmodule ReyCode.Orchestration.EventEntries do
   def squad_artifact(invocation, output, digest) do
     data = %{
       "turn_id" => invocation.turn_id,
-      "room_id" => invocation.room_id,
+      "room_id" => invocation.session_id,
       "seat_id" => invocation.participant.id,
       "kind" => output["artifact_type"],
       "phase" => invocation.phase,
@@ -756,20 +756,20 @@ defmodule ReyCode.Orchestration.EventEntries do
     }
 
     {:squad_artifact_recorded, data,
-     aggregate_metadata(:turn, invocation.turn_id, invocation.room_id, invocation.turn_id)}
+     aggregate_metadata(:turn, invocation.turn_id, invocation.session_id, invocation.turn_id)}
   end
 
   @doc "Builds the configuration and initial-stage events for a squad turn."
   @spec squad_start(Turn.t(), keyword()) :: [event_entry()]
   def squad_start(turn, config) do
-    metadata = aggregate_metadata(:turn, turn.id, turn.room_id, turn.id)
+    metadata = aggregate_metadata(:turn, turn.id, turn.session_id, turn.id)
 
     [
       {
         :squad_configured,
         %{
           "turn_id" => turn.id,
-          "room_id" => turn.room_id,
+          "room_id" => turn.session_id,
           "seats" => Enum.map(Squad.roles(), & &1.id),
           "rework_budget" => Keyword.fetch!(config, :rework_budget),
           "release_authority" =>
@@ -783,7 +783,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         :squad_stage_entered,
         %{
           "turn_id" => turn.id,
-          "room_id" => turn.room_id,
+          "room_id" => turn.session_id,
           "stage" => 0,
           "phase" => Squad.phase_label(0),
           "cycle" => 0
@@ -811,9 +811,9 @@ defmodule ReyCode.Orchestration.EventEntries do
   end
 
   @doc "Builds assistant-message events that establish planned provider invocations."
-  @spec open_invocations(Room.t(), Turn.t(), [map()], [{String.t(), String.t()}]) ::
+  @spec open_invocations(Session.t(), Turn.t(), [map()], [{String.t(), String.t()}]) ::
           [event_entry()]
-  def open_invocations(room, turn, specs, generated_ids) do
+  def open_invocations(session, turn, specs, generated_ids) do
     if length(specs) != length(generated_ids) do
       raise ArgumentError,
             "expected one generated ID pair per invocation spec, got #{length(specs)} specs and #{length(generated_ids)} ID pairs"
@@ -821,10 +821,10 @@ defmodule ReyCode.Orchestration.EventEntries do
 
     specs
     |> Enum.zip(generated_ids)
-    |> Enum.map(&open_invocation_entry(room, turn, &1))
+    |> Enum.map(&open_invocation_entry(session, turn, &1))
   end
 
-  @doc "Builds an event entry correlated to an invocation's turn and room."
+  @doc "Builds an event entry correlated to an Invocation's Turn and Session."
   @spec invocation_event(atom(), map(), Invocation.t()) :: event_entry()
   def invocation_event(type, data, invocation) do
     event(
@@ -832,7 +832,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       data,
       :invocation,
       invocation.id,
-      invocation.room_id,
+      invocation.session_id,
       invocation.turn_id
     )
   end
@@ -847,7 +847,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "metadata" => metadata
       },
       invocation
@@ -861,7 +861,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation.id,
         "message_id" => invocation.message_id,
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "error" => Failure.to_wire(error)
       },
       invocation
@@ -875,7 +875,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       :squad_retry_scheduled,
       %{
         "turn_id" => invocation.turn_id,
-        "room_id" => invocation.room_id,
+        "room_id" => invocation.session_id,
         "seat_id" => invocation.participant.id,
         "attempt" => invocation.attempt + 1,
         "kind" => "provider_retry",
@@ -885,27 +885,27 @@ defmodule ReyCode.Orchestration.EventEntries do
       },
       :turn,
       invocation.turn_id,
-      invocation.room_id,
+      invocation.session_id,
       invocation.turn_id
     )
   end
 
   @doc "Builds the aggregate and correlation metadata required by durable events."
   @spec aggregate_metadata(atom(), String.t(), String.t(), String.t()) :: keyword()
-  def aggregate_metadata(type, aggregate_id, room_id, correlation_id) do
+  def aggregate_metadata(type, aggregate_id, session_id, correlation_id) do
     [
       aggregate_type: type,
       aggregate_id: aggregate_id,
-      room_id: room_id,
+      room_id: session_id,
       correlation_id: correlation_id
     ]
   end
 
-  defp event(type, data, aggregate_type, aggregate_id, room_id, correlation_id) do
+  defp event(type, data, aggregate_type, aggregate_id, session_id, correlation_id) do
     {
       type,
       data,
-      aggregate_metadata(aggregate_type, aggregate_id, room_id, correlation_id)
+      aggregate_metadata(aggregate_type, aggregate_id, session_id, correlation_id)
     }
   end
 
@@ -914,7 +914,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       :squad_retry_scheduled,
       %{
         "turn_id" => turn.id,
-        "room_id" => turn.room_id,
+        "room_id" => turn.session_id,
         "seat_id" => "squad_leader",
         "attempt" => turn.squad.rework_count + 1,
         "kind" => "rework",
@@ -926,7 +926,7 @@ defmodule ReyCode.Orchestration.EventEntries do
       },
       :turn,
       turn.id,
-      turn.room_id,
+      turn.session_id,
       turn.id
     )
   end
@@ -936,21 +936,21 @@ defmodule ReyCode.Orchestration.EventEntries do
       :squad_stage_entered,
       %{
         "turn_id" => turn.id,
-        "room_id" => turn.room_id,
+        "room_id" => turn.session_id,
         "stage" => spec.phase_index,
         "phase" => spec.phase,
         "cycle" => spec.cycle
       },
       :turn,
       turn.id,
-      turn.room_id,
+      turn.session_id,
       turn.id
     )
   end
 
-  defp open_invocation_entry(room, turn, {spec, {invocation_id, message_id}}) do
+  defp open_invocation_entry(session, turn, {spec, {invocation_id, message_id}}) do
     participant =
-      Enum.find(room.participants, &(&1.id == spec.participant_id)) ||
+      Enum.find(session.participants, &(&1.id == spec.participant_id)) ||
         Map.get(spec, :participant)
 
     model_tier = Map.get(spec, :model_tier, Map.get(participant, :model_tier, :default))
@@ -964,7 +964,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "invocation_id" => invocation_id,
         "message_id" => message_id,
         "turn_id" => turn.id,
-        "room_id" => room.id,
+        "room_id" => session.id,
         "participant" => wire_participant(participant),
         "stage" => spec.phase_index,
         "phase" => Map.get(spec, :phase, spec.label),
@@ -980,14 +980,14 @@ defmodule ReyCode.Orchestration.EventEntries do
         "model_tier" => Atom.to_string(model_tier),
         "token_budget_tokens" => token_budget_tokens,
         "output_schema" => Map.get(spec, :output_schema),
-        "workspace" => Map.get(spec, :workspace) || Map.get(room, :workspace) || "",
+        "workspace" => Map.get(spec, :workspace) || Map.get(session, :workspace) || "",
         "workspace_roots" => Map.get(spec, :workspace_roots, []),
         "isolation" => Map.get(spec, :isolation)
       }
       |> Map.merge(delegation_origin(spec)),
       %Invocation{
         id: invocation_id,
-        room_id: room.id,
+        session_id: session.id,
         turn_id: turn.id
       }
     )
@@ -1008,8 +1008,8 @@ defmodule ReyCode.Orchestration.EventEntries do
     end)
   end
 
-  defp room_participant(%Participant{} = participant), do: wire_participant(participant)
-  defp room_participant(participant) when is_map(participant), do: participant
+  defp session_participant(%Participant{} = participant), do: wire_participant(participant)
+  defp session_participant(participant) when is_map(participant), do: participant
 
   defp wire_participant(%Seat{} = seat) do
     seat

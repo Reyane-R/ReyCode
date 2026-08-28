@@ -11,17 +11,17 @@ defmodule ReyCode.Orchestration.ContextCompactionTest do
     Message,
     Projection,
     Projector,
-    Room,
+    Session,
     Turn
   }
 
   test "emits a bounded append-only compaction boundary when context exceeds budget" do
     body = String.duplicate("history ", 1_000)
-    room = %Room{id: "room-1", message_order: ["message-1"]}
+    session = %Session{id: "room-1", message_order: ["message-1"]}
 
     message = %Message{
       id: "message-1",
-      room_id: room.id,
+      session_id: session.id,
       author: Author.user("You"),
       role: :user,
       status: :completed,
@@ -31,47 +31,47 @@ defmodule ReyCode.Orchestration.ContextCompactionTest do
 
     projection = %Projection{
       sequence: 4,
-      rooms: %{room.id => room},
-      room_order: [room.id],
+      sessions: %{session.id => session},
+      session_order: [session.id],
       messages: %{message.id => message}
     }
 
     assert {:compact, {:context_compacted, data, metadata}} =
-             ContextCompaction.entry(room, projection, 100)
+             ContextCompaction.entry(session, projection, 100)
 
     assert data["through_sequence"] == 4
     assert data["source_message_count"] == 1
     assert data["source_bytes"] == byte_size(body)
     assert data["summary_bytes"] <= 400
     assert String.valid?(data["summary"])
-    assert metadata[:aggregate_id] == room.id
+    assert metadata[:aggregate_id] == session.id
   end
 
   test "provider context replaces boundary history with the durable summary" do
-    room = %Room{
+    session = %Session{
       id: "room-1",
       message_order: ["old", "new"],
       context_boundary_sequence: 3,
       context_summary: "You asked about the release."
     }
 
-    old = message("old", room.id, "old text", 2)
-    new = message("new", room.id, "new text", 4)
+    old = message("old", session.id, "old text", 2)
+    new = message("new", session.id, "new text", 4)
 
     projection = %Projection{
       sequence: 5,
-      rooms: %{room.id => room},
-      room_order: [room.id],
+      sessions: %{session.id => session},
+      session_order: [session.id],
       messages: %{old.id => old, new.id => new}
     }
 
-    turn = %Turn{id: "turn-1", room_id: room.id, mode: :direct, context_through_sequence: 5}
-    invocation = %Invocation{id: "inv-1", room_id: room.id, turn_id: turn.id, rounds: []}
+    turn = %Turn{id: "turn-1", session_id: session.id, mode: :direct, context_through_sequence: 5}
+    invocation = %Invocation{id: "inv-1", session_id: session.id, turn_id: turn.id, rounds: []}
 
-    assert [summary, current] = Context.messages(room, turn, invocation, projection)
+    assert [summary, current] = Context.messages(session, turn, invocation, projection)
     assert summary.role == :user
     assert summary.content =~ "durable extractive summary"
-    assert summary.content =~ room.context_summary
+    assert summary.content =~ session.context_summary
     assert current.content == "new text"
   end
 
@@ -111,17 +111,17 @@ defmodule ReyCode.Orchestration.ContextCompactionTest do
       )
 
     projection = Projector.replay([room_event, compacted])
-    room = projection.rooms["room-1"]
+    session = projection.sessions["room-1"]
 
-    assert room.context_boundary_sequence == 1
-    assert room.context_summary == "summary"
+    assert session.context_boundary_sequence == 1
+    assert session.context_summary == "summary"
     assert projection.sequence == 2
   end
 
-  defp message(id, room_id, body, sequence) do
+  defp message(id, session_id, body, sequence) do
     %Message{
       id: id,
-      room_id: room_id,
+      session_id: session_id,
       author: Author.user("You"),
       role: :user,
       status: :completed,

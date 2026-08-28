@@ -9,16 +9,16 @@ defmodule ReyCode.Orchestration.ValidationTest do
     workspace = temporary_directory("valid")
     on_exit(fn -> File.rm_rf(workspace) end)
 
-    assert {:ok, "Room", canonical} = Validation.room("  Room  ", workspace)
+    assert {:ok, "Room", canonical} = Validation.session("  Room  ", workspace)
     assert {:ok, ^canonical} = CanonicalPath.resolve(workspace)
     assert {:ok, "message"} = Validation.message("  message  ")
     assert {:ok, "openai/gpt-5"} = Validation.model(" openai/gpt-5 ")
   end
 
   test "rejects malformed values without raising" do
-    assert {:error, :invalid_title} = Validation.room(nil, "/tmp")
-    assert {:error, :empty_title} = Validation.room("  ", "/tmp")
-    assert {:error, :invalid_workspace} = Validation.room("Room", nil)
+    assert {:error, :invalid_title} = Validation.session(nil, "/tmp")
+    assert {:error, :empty_title} = Validation.session("  ", "/tmp")
+    assert {:error, :invalid_workspace} = Validation.session("Room", nil)
     assert {:error, :invalid_message} = Validation.message(%{})
     assert {:error, :model_required} = Validation.model(" ")
   end
@@ -28,10 +28,10 @@ defmodule ReyCode.Orchestration.ValidationTest do
     File.write!(file, "not a directory")
     on_exit(fn -> File.rm(file) end)
 
-    assert {:error, :invalid_workspace} = Validation.room("Room", file)
-    assert {:error, :invalid_workspace} = Validation.room("Room", file <> "-missing")
-    assert {:error, :invalid_workspace} = Validation.room("Room", "/")
-    assert {:error, :invalid_workspace} = Validation.room("Room", "bad" <> <<0>> <> "path")
+    assert {:error, :invalid_workspace} = Validation.session("Room", file)
+    assert {:error, :invalid_workspace} = Validation.session("Room", file <> "-missing")
+    assert {:error, :invalid_workspace} = Validation.session("Room", "/")
+    assert {:error, :invalid_workspace} = Validation.session("Room", "bad" <> <<0>> <> "path")
   end
 
   test "resolves workspace symlinks and enforces injectable policy roots" do
@@ -49,11 +49,11 @@ defmodule ReyCode.Orchestration.ValidationTest do
       File.rm_rf(outside)
     end)
 
-    assert {:ok, "Room", canonical} = Validation.room("Room", link, roots: [root])
+    assert {:ok, "Room", canonical} = Validation.session("Room", link, roots: [root])
     assert {:ok, ^canonical} = CanonicalPath.resolve(workspace)
 
     assert {:error, :invalid_workspace} =
-             Validation.room("Room", outside, roots: [root])
+             Validation.session("Room", outside, roots: [root])
   end
 
   describe "cancellation/2" do

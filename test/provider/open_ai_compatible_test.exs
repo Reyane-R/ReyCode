@@ -1015,7 +1015,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     %Request{
       invocation_id: "inv-1",
       turn_id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       mode: :compare,
       participant: %{
         id: "builder",

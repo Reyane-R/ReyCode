@@ -2,13 +2,13 @@ defmodule Mix.Tasks.ReyCode.Eval do
   @shortdoc "Auditions named task agents against the same task"
 
   @moduledoc """
-  Runs one compare-style, headless model audition in a fresh room.
+  Runs one compare-style, headless model audition in a fresh session.
 
       mix rey_code.eval --agent Luna --agent Review --task "Run the focused tests"
       mix rey_code.eval --agent Luna --task "Summarize the diff" --json
 
   Names resolve exactly against task Participants in existing sessions. Their
-  provider/model profiles are copied into the fresh room; missing or unavailable
+  provider/model profiles are copied into the fresh session; missing or unavailable
   profiles become per-agent failure rows without aborting healthy candidates.
   """
 

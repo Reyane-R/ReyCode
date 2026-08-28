@@ -15,7 +15,7 @@ defmodule ReyCode.TUI.Render do
       home={@home}
       recent_session_rows={@recent_session_rows}
       mode={@mode}
-      room={@room}
+      session={@session}
       projection={@projection}
       providers={@providers}
       messages={@messages}

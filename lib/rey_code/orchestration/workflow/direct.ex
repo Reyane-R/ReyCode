@@ -5,8 +5,8 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
   alias ReyCode.Orchestration.Workflow
 
   @impl true
-  def plan(room, turn, _projection) do
-    participant = participant!(room, turn.participant_id)
+  def plan(session, turn, _projection) do
+    participant = participant!(session, turn.participant_id)
     delegated? = not is_nil(turn.participant_id)
     detached? = Map.get(turn, :detached?, false)
 
@@ -25,20 +25,20 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
   end
 
   @impl true
-  def advance(room, turn, projection), do: Workflow.advance_parallel(room, turn, projection)
+  def advance(session, turn, projection), do: Workflow.advance_parallel(session, turn, projection)
 
-  defp participant!(room, nil) do
-    Enum.find(room.participants, &(&1.kind == :primary)) ||
-      raise "room #{room.id} has no primary participant"
+  defp participant!(session, nil) do
+    Enum.find(session.participants, &(&1.kind == :primary)) ||
+      raise "session #{session.id} has no primary participant"
   end
 
-  defp participant!(room, participant_id) do
-    Enum.find(room.participants, &(&1.id == participant_id)) ||
-      raise "room #{room.id} has no participant #{participant_id}"
+  defp participant!(session, participant_id) do
+    Enum.find(session.participants, &(&1.id == participant_id)) ||
+      raise "session #{session.id} has no participant #{participant_id}"
   end
 
   defp system_prompt(participant, false, false, _task) do
-    "You are #{participant.name}, the room's primary coding assistant. " <>
+    "You are #{participant.name}, the session's primary coding assistant. " <>
       "Responsibility: #{participant.perspective}."
   end
 

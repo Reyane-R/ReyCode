@@ -16,7 +16,7 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
     Participant,
     Projection,
     ProviderRound,
-    Room,
+    Session,
     SquadRun,
     ToolRun,
     Turn
@@ -55,7 +55,7 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
       }
 
       squad = %SquadRun{
-        room_id: "room-1",
+        session_id: "room-1",
         workflow_version: "squad-v3",
         phase_index: 14,
         phase: "release_gate",
@@ -68,22 +68,22 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
 
       projection = %Projection{
         sequence: 12,
-        rooms: %{
-          "room-1" => %Room{
+        sessions: %{
+          "room-1" => %Session{
             id: "room-1",
             slug: "alpha",
             participants: [participant],
             squad_seats: %{"analyst" => seat}
           }
         },
-        room_order: ["room-1"],
+        session_order: ["room-1"],
         messages: %{
-          "msg-1" => %Message{id: "msg-1", room_id: "room-1", body: "Hello", error: failure}
+          "msg-1" => %Message{id: "msg-1", session_id: "room-1", body: "Hello", error: failure}
         },
         turns: %{
           "turn-1" => %Turn{
             id: "turn-1",
-            room_id: "room-1",
+            session_id: "room-1",
             status: :terminal,
             outcome: :completed,
             squad: squad
@@ -120,9 +120,30 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
                  1_000_000
                )
 
-      refute Map.has_key?(decoded.rooms["room-1"], :__struct__)
+      refute Map.has_key?(decoded.sessions["room-1"], :__struct__)
       refute Map.has_key?(decoded.invocations["inv-1"].tool_runs["run-1"], :__struct__)
       assert Projection.from_map(decoded) == projection
+    end
+
+    test "normalizes projection-version-2 room keys into Session keys" do
+      legacy = %{
+        sequence: 4,
+        rooms: %{"room-legacy" => Map.from_struct(%Session{id: "room-legacy"})},
+        room_order: ["room-legacy"],
+        messages: %{},
+        turns: %{},
+        invocations: %{}
+      }
+
+      payload = Jason.encode!(Checkpoint.encode_term(legacy))
+
+      assert {:ok, decoded} =
+               Checkpoint.decode(payload, 2, 4, Hashing.sha256_hex(payload), 1_000_000)
+
+      refute Map.has_key?(decoded, :rooms)
+      refute Map.has_key?(decoded, :room_order)
+      assert decoded.session_order == ["room-legacy"]
+      assert %Session{id: "room-legacy"} = Projection.from_map(decoded).sessions["room-legacy"]
     end
 
     test "rejects unsupported versions, size caps, and checksum mismatches" do
@@ -156,8 +177,8 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
 
       valid_shape = %{
         sequence: 7,
-        rooms: %{},
-        room_order: [],
+        sessions: %{},
+        session_order: [],
         messages: [],
         turns: %{},
         invocations: %{}
@@ -174,7 +195,7 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
                  1_000_000
                )
 
-      missing_keys = valid_shape |> Map.delete(:rooms) |> then(&Checkpoint.encode_term/1)
+      missing_keys = valid_shape |> Map.delete(:sessions) |> then(&Checkpoint.encode_term/1)
       encoded_missing = Jason.encode!(missing_keys)
 
       assert {:error, :invalid_checkpoint} =

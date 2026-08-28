@@ -2,18 +2,18 @@ defmodule ReyCode.Orchestration.Context do
   @moduledoc """
   Selects the durable message context visible to a provider round.
 
-  Room messages are followed by the invocation's recorded provider rounds:
+  Session messages are followed by the invocation's recorded provider rounds:
   each round contributes its assistant message (text plus tool calls) and one
   tool-result message per terminal tool run, so continuation never depends on
   provider-local state.
   """
 
-  alias ReyCode.Orchestration.{Invocation, Projection, Room, ToolRuns, Turn}
+  alias ReyCode.Orchestration.{Invocation, Projection, Session, ToolRuns, Turn}
   alias ReyCode.Provider.{Message, ToolCall}
 
-  @spec messages(Room.t(), Turn.t(), Invocation.t(), Projection.t()) :: [Message.t()]
-  def messages(room, turn, invocation, projection) do
-    room_messages(room, turn, invocation, projection) ++
+  @spec messages(Session.t(), Turn.t(), Invocation.t(), Projection.t()) :: [Message.t()]
+  def messages(session, turn, invocation, projection) do
+    session_messages(session, turn, invocation, projection) ++
       round_messages(invocation) ++
       steering_messages(invocation.pending_steering) ++
       peer_messages(invocation.coordination.peer_messages)
@@ -28,7 +28,7 @@ defmodule ReyCode.Orchestration.Context do
   # A delegation child receives its self-contained brief through the system
   # prompt. The current parent user message often says "delegate to <name>";
   # exposing it again makes the child repeat spawn_task and hit the depth
-  # guard instead of doing the delegated work. Earlier completed room history
+  # guard instead of doing the delegated work. Earlier completed session history
   # remains visible.
   def include?(message, turn, %{delegated_from_invocation_id: parent_id} = invocation, projection)
       when not is_nil(parent_id) do
@@ -64,15 +64,15 @@ defmodule ReyCode.Orchestration.Context do
     message.created_sequence <= turn.context_through_sequence and message.status == :completed
   end
 
-  defp room_messages(room, turn, invocation, projection) do
-    summary = summary_message(room)
+  defp session_messages(session, turn, invocation, projection) do
+    summary = summary_message(session)
 
     messages =
-      room.message_order
+      session.message_order
       |> Enum.reverse()
       |> Enum.map(&projection.messages[&1])
       |> Enum.filter(
-        &(&1.created_sequence > room.context_boundary_sequence and
+        &(&1.created_sequence > session.context_boundary_sequence and
             include?(&1, turn, invocation, projection))
       )
       |> Enum.map(&Message.new(role: &1.role, content: &1.body, author: &1.author))
@@ -80,9 +80,9 @@ defmodule ReyCode.Orchestration.Context do
     summary ++ messages
   end
 
-  defp summary_message(%Room{context_summary: nil}), do: []
+  defp summary_message(%Session{context_summary: nil}), do: []
 
-  defp summary_message(%Room{context_summary: summary}) do
+  defp summary_message(%Session{context_summary: summary}) do
     [
       Message.new(
         role: :user,

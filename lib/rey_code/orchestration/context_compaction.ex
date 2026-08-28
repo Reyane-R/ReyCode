@@ -1,6 +1,6 @@
 defmodule ReyCode.Orchestration.ContextCompaction do
   @moduledoc """
-  Builds bounded, extractive context summaries at durable Room boundaries.
+  Builds bounded, extractive context summaries at durable Session boundaries.
 
   The full transcript remains in the event log and Projection. Only provider
   context changes: messages at or before the recorded boundary are replaced by
@@ -8,7 +8,7 @@ defmodule ReyCode.Orchestration.ContextCompaction do
   provider work inside the Engine.
   """
 
-  alias ReyCode.Orchestration.{EventEntries, Projection, Room}
+  alias ReyCode.Orchestration.{EventEntries, Projection, Session}
 
   @bytes_per_token 4
   @summary_fraction 4
@@ -17,33 +17,34 @@ defmodule ReyCode.Orchestration.ContextCompaction do
   @summary_prefix "Earlier conversation context (extractive summary):\n"
 
   @doc "Returns one compaction event when estimated context exceeds its token budget."
-  @spec entry(Room.t(), Projection.t(), pos_integer()) ::
+  @spec entry(Session.t(), Projection.t(), pos_integer()) ::
           :unchanged | {:compact, EventEntries.event_entry()}
-  def entry(%Room{} = room, %Projection{} = projection, context_budget_tokens) do
-    messages = source_messages(room, projection)
-    source_bytes = source_bytes(room.context_summary, messages)
+  def entry(%Session{} = session, %Projection{} = projection, context_budget_tokens) do
+    messages = source_messages(session, projection)
+    source_bytes = source_bytes(session.context_summary, messages)
     budget_bytes = context_budget_tokens * @bytes_per_token
 
     if source_bytes > budget_bytes do
       summary_bytes = summary_bytes(budget_bytes)
-      summary = summarize(room.context_summary, messages, summary_bytes)
+      summary = summarize(session.context_summary, messages, summary_bytes)
 
       metrics = %{
         source_message_count: length(messages),
         source_bytes: source_bytes
       }
 
-      {:compact, EventEntries.context_compacted(room, projection.sequence, summary, metrics)}
+      {:compact, EventEntries.context_compacted(session, projection.sequence, summary, metrics)}
     else
       :unchanged
     end
   end
 
-  defp source_messages(room, projection) do
-    room.message_order
+  defp source_messages(session, projection) do
+    session.message_order
     |> Enum.map(&projection.messages[&1])
     |> Enum.filter(fn message ->
-      message.status == :completed and message.created_sequence > room.context_boundary_sequence
+      message.status == :completed and
+        message.created_sequence > session.context_boundary_sequence
     end)
   end
 

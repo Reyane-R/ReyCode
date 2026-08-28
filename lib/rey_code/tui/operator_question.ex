@@ -15,7 +15,7 @@ defmodule ReyCode.TUI.OperatorQuestion do
     invocation =
       Projection.pending_question_invocation(
         term.assigns.projection,
-        term.assigns.selected_room_id
+        term.assigns.selected_session_id
       )
 
     if invocation do

@@ -23,7 +23,7 @@ defmodule ReyCode.TUITest do
     session = start_session({120, 32}, engine: tui_engine_1)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
-    source_session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    source_session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     screen = Breeze.Test.render!(session)
     assert screen =~ "Welcome to ReyCode"
     assert screen =~ "One assistant by default"
@@ -41,9 +41,9 @@ defmodule ReyCode.TUITest do
     assert eventually_renders?(session, "Handle this directly", baseline_sequence)
 
     metadata = Breeze.Test.metadata(session)
-    assert metadata.assigns.selected_room_id != source_session_id
+    assert metadata.assigns.selected_session_id != source_session_id
 
-    session_room = Engine.snapshot(engine).rooms[metadata.assigns.selected_room_id]
+    session_room = Engine.snapshot(engine).sessions[metadata.assigns.selected_session_id]
     assert session_room.title == "Handle this directly"
     session_screen = Breeze.Test.render!(session)
     assert session_screen =~ "ReyCode"
@@ -60,7 +60,7 @@ defmodule ReyCode.TUITest do
     type(session, "First session message")
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, ctrl("s"))
     assert eventually_renders_on?(session, engine, "First session message", first_baseline)
-    first_session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    first_session_id = Breeze.Test.metadata(session).assigns.selected_session_id
 
     type(session, "/new")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
@@ -72,7 +72,7 @@ defmodule ReyCode.TUITest do
     assert eventually_renders_on?(session, engine, "Second session message", second_baseline)
 
     metadata = Breeze.Test.metadata(session)
-    assert metadata.assigns.selected_room_id != first_session_id
+    assert metadata.assigns.selected_session_id != first_session_id
 
     screen = Breeze.Test.render!(session)
     assert screen =~ "Second session message"
@@ -90,19 +90,19 @@ defmodule ReyCode.TUITest do
 
     assert eventually_renders_on?(session, engine, "tier-one-owner", baseline)
 
-    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
-    room = Engine.snapshot(engine).rooms[room_id]
-    assert room.title == "echo tier-one-owner"
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    session_record = Engine.snapshot(engine).sessions[session_id]
+    assert session_record.title == "echo tier-one-owner"
 
-    assert Enum.any?(room.message_order, fn id ->
+    assert Enum.any?(session_record.message_order, fn id ->
              String.contains?(Engine.snapshot(engine).messages[id].body, "! echo tier-one-owner")
            end)
   end
 
   test "Escape cancels the running turn" do
-    %{engine: engine, room_id: room_id} = start_isolated_stack(agent_delay_ms: 5_000)
+    %{engine: engine, session_id: session_id} = start_isolated_stack(agent_delay_ms: 5_000)
 
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Escape me", :direct, engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Escape me", :direct, engine)
     assert wait_until_turn_status(engine, turn_id, :running)
 
     session = start_session({120, 32}, engine: engine)
@@ -133,10 +133,10 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
     assert Breeze.Test.render!(session) =~ "Model set to Simulator"
 
-    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
 
     primary =
-      Enum.find(Engine.snapshot(engine).rooms[room_id].participants, &(&1.kind == :primary))
+      Enum.find(Engine.snapshot(engine).sessions[session_id].participants, &(&1.kind == :primary))
 
     assert primary.provider == :simulator
   end
@@ -160,7 +160,7 @@ defmodule ReyCode.TUITest do
     metadata = Breeze.Test.metadata(session)
 
     expected_workspace =
-      metadata.assigns.projection.rooms[metadata.assigns.selected_room_id].workspace
+      metadata.assigns.projection.sessions[metadata.assigns.selected_session_id].workspace
 
     type(session, "/workspace")
 
@@ -175,10 +175,10 @@ defmodule ReyCode.TUITest do
   end
 
   test "confirms and cancels the current session task" do
-    %{engine: engine, room_id: room_id} = start_isolated_stack(agent_delay_ms: 5_000)
+    %{engine: engine, session_id: session_id} = start_isolated_stack(agent_delay_ms: 5_000)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Cancel this owner run", :compare, engine)
+             Engine.post_message(session_id, "Cancel this owner run", :compare, engine)
 
     assert wait_until_turn_status(engine, turn_id, :running)
 
@@ -258,7 +258,7 @@ defmodule ReyCode.TUITest do
   end
 
   test "creates a task agent before selecting its provider and model" do
-    %{engine: engine, room_id: room_id} = start_isolated_stack([])
+    %{engine: engine, session_id: session_id} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
@@ -278,7 +278,8 @@ defmodule ReyCode.TUITest do
     [participant_id] = Breeze.Test.metadata(session).assigns.settings.participant_ids
 
     participant =
-      Engine.snapshot(engine).rooms[room_id].participants |> Enum.find(&(&1.id == participant_id))
+      Engine.snapshot(engine).sessions[session_id].participants
+      |> Enum.find(&(&1.id == participant_id))
 
     assert participant.name == "Release"
     assert participant.perspective == "Commit, push, and deploy approved changes"
@@ -286,18 +287,18 @@ defmodule ReyCode.TUITest do
   end
 
   test "delegates one task to one configured task agent" do
-    %{engine: engine, room_id: room_id} = start_isolated_stack([])
+    %{engine: engine, session_id: session_id} = start_isolated_stack([])
 
     assert {:ok, participant_id} =
              Engine.add_task_participant(
-               room_id,
+               session_id,
                "Tests",
                "Run the relevant tests and report failures",
                engine
              )
 
     assert :ok =
-             Engine.configure_participants(room_id, participant_id, :simulator, nil, engine)
+             Engine.configure_participants(session_id, participant_id, :simulator, nil, engine)
 
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
@@ -410,7 +411,7 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, ctrl("s"))
     assert eventually_renders?(session, "Focus this session", baseline_sequence)
 
-    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     timeline_id = State.timeline_id(session_id)
     assert {:noreply, ^timeline_id, true} = Breeze.Test.input(session, "Tab")
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Tab")
@@ -609,10 +610,10 @@ defmodule ReyCode.TUITest do
     assert Engine.snapshot(tui_engine_activity_static).sequence == engine_sequence
     assert Breeze.Test.metadata(session).assigns.projection.sequence == projection_sequence
 
-    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
 
-    room = %{
-      Map.fetch!(approval.rooms, room_id)
+    session_record = %{
+      Map.fetch!(approval.sessions, session_id)
       | active_turn_id: nil,
         queued_turn_ids: ["turn-layout"]
     }
@@ -628,7 +629,7 @@ defmodule ReyCode.TUITest do
 
     queued = %{
       approval
-      | rooms: Map.put(approval.rooms, room_id, room),
+      | sessions: Map.put(approval.sessions, session_id, session_record),
         turns: Map.put(approval.turns, "turn-layout", turn),
         invocations: Map.put(approval.invocations, "inv-layout", invocation)
     }
@@ -666,10 +667,10 @@ defmodule ReyCode.TUITest do
         body: ""
     }
 
-    room_id = first.room_id
+    session_id = first.session_id
 
-    room = %{
-      Map.fetch!(projection.rooms, room_id)
+    session_record = %{
+      Map.fetch!(projection.sessions, session_id)
       | message_order: [second_message_id, "msg-layout-assistant", "msg-layout-user"]
     }
 
@@ -680,7 +681,7 @@ defmodule ReyCode.TUITest do
 
     projection = %{
       projection
-      | rooms: Map.put(projection.rooms, room_id, room),
+      | sessions: Map.put(projection.sessions, session_id, session_record),
         turns: Map.put(projection.turns, "turn-layout", turn),
         invocations: Map.put(projection.invocations, second_id, second),
         messages: Map.put(projection.messages, second_message_id, second_message)
@@ -762,7 +763,7 @@ defmodule ReyCode.TUITest do
   end
 
   test "hides prior transcript history until the user explicitly resumes" do
-    %{engine: engine, room_id: session_id} = start_isolated_stack([])
+    %{engine: engine, session_id: session_id} = start_isolated_stack([])
 
     assert {:ok, turn_id} =
              Engine.post_message(session_id, "Previous session message", :direct, engine)
@@ -792,7 +793,7 @@ defmodule ReyCode.TUITest do
     %{engine: tui_engine_12} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_12)
     on_exit(fn -> Breeze.Test.stop(session) end)
-    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
 
     type(session, "Keep this draft")
 
@@ -816,8 +817,8 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     projection = Engine.snapshot(engine)
-    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
-    room = projection.rooms[room_id]
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    session_record = projection.sessions[session_id]
 
     peer_messages =
       Enum.map(1..2, fn index ->
@@ -833,7 +834,7 @@ defmodule ReyCode.TUITest do
 
     child = %Invocation{
       id: "child-wave",
-      room_id: room_id,
+      session_id: session_id,
       turn_id: "turn-wave",
       message_id: "message-wave",
       delegated_from_invocation_id: "parent-wave",
@@ -846,7 +847,7 @@ defmodule ReyCode.TUITest do
 
     message = %Message{
       id: "message-wave",
-      room_id: room_id,
+      session_id: session_id,
       turn_id: "turn-wave",
       invocation_id: child.id,
       role: :assistant,
@@ -855,7 +856,7 @@ defmodule ReyCode.TUITest do
 
     turn = %Turn{
       id: "turn-wave",
-      room_id: room_id,
+      session_id: session_id,
       input_kind: :detached,
       mode: :delegate,
       participant_id: child.participant.id,
@@ -867,7 +868,10 @@ defmodule ReyCode.TUITest do
 
     projection =
       projection
-      |> put_in([:rooms, room_id], %{room | message_order: room.message_order ++ [message.id]})
+      |> put_in([:sessions, session_id], %{
+        session_record
+        | message_order: session_record.message_order ++ [message.id]
+      })
       |> put_in([:messages, message.id], message)
       |> put_in([:invocations, child.id], child)
       |> put_in([:turns, turn.id], turn)
@@ -887,9 +891,9 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     projection = Engine.snapshot(engine)
-    room_id = Breeze.Test.metadata(session).assigns.selected_room_id
-    room = projection.rooms[room_id]
-    primary = Enum.find(room.participants, &(&1.kind == :primary))
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    session_record = projection.sessions[session_id]
+    primary = Enum.find(session_record.participants, &(&1.kind == :primary))
 
     question = %OperatorQuestion{
       id: "question-tui",
@@ -918,7 +922,7 @@ defmodule ReyCode.TUITest do
 
     invocation = %Invocation{
       id: "invocation-tier-two",
-      room_id: room_id,
+      session_id: session_id,
       turn_id: "turn-tier-two",
       message_id: "message-tier-two",
       participant: primary,
@@ -929,7 +933,7 @@ defmodule ReyCode.TUITest do
 
     message = %Message{
       id: invocation.message_id,
-      room_id: room_id,
+      session_id: session_id,
       turn_id: invocation.turn_id,
       invocation_id: invocation.id,
       role: :assistant,
@@ -938,7 +942,7 @@ defmodule ReyCode.TUITest do
 
     turn = %Turn{
       id: invocation.turn_id,
-      room_id: room_id,
+      session_id: session_id,
       mode: :direct,
       status: :running,
       invocation_order: [invocation.id],
@@ -947,7 +951,10 @@ defmodule ReyCode.TUITest do
 
     projection =
       projection
-      |> put_in([:rooms, room_id], %{room | message_order: room.message_order ++ [message.id]})
+      |> put_in([:sessions, session_id], %{
+        session_record
+        | message_order: session_record.message_order ++ [message.id]
+      })
       |> put_in([:messages, message.id], message)
       |> put_in([:invocations, invocation.id], invocation)
       |> put_in([:turns, turn.id], turn)
@@ -983,7 +990,7 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
 
     configured_primary =
-      Engine.snapshot(engine).rooms[room_id].participants
+      Engine.snapshot(engine).sessions[session_id].participants
       |> Enum.find(&(&1.id == primary.id))
 
     assert configured_primary.model_tier == :smol
@@ -1002,7 +1009,7 @@ defmodule ReyCode.TUITest do
     screen = Breeze.Test.render!(session)
     assert screen =~ "Unknown command"
     refute screen =~ "No matching commands"
-    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     assert Breeze.Test.metadata(session).assigns.drafts[session_id] == ""
   end
 
@@ -1090,9 +1097,9 @@ defmodule ReyCode.TUITest do
     start_supervised!(Supervisor.child_spec({Engine, opts}, restart: :temporary))
 
     projection = Engine.subscribe(engine)
-    room_id = List.first(projection.room_order)
+    session_id = List.first(projection.session_order)
 
-    %{engine: engine, store: store, room_id: room_id}
+    %{engine: engine, store: store, session_id: session_id}
   end
 
   defp open_first_session(session) do
@@ -1141,9 +1148,9 @@ defmodule ReyCode.TUITest do
 
   defp long_response_projection(session) do
     engine = Breeze.Test.metadata(session).assigns.engine
-    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     projection = Engine.snapshot(engine)
-    room = projection.rooms[session_id]
+    session_record = projection.sessions[session_id]
     turn_id = "turn-layout"
     invocation_id = "inv-layout"
     user_message_id = "msg-layout-user"
@@ -1151,7 +1158,7 @@ defmodule ReyCode.TUITest do
 
     user = %{
       id: user_message_id,
-      room_id: session_id,
+      session_id: session_id,
       turn_id: turn_id,
       invocation_id: nil,
       author: %{kind: :user, id: "user", name: "You"},
@@ -1165,7 +1172,7 @@ defmodule ReyCode.TUITest do
 
     assistant = %{
       id: assistant_message_id,
-      room_id: session_id,
+      session_id: session_id,
       turn_id: turn_id,
       invocation_id: invocation_id,
       author: %{kind: :agent, id: "assistant", name: "Assistant"},
@@ -1189,7 +1196,7 @@ defmodule ReyCode.TUITest do
         provider: :opencode,
         model: "openai/gpt-5.4-mini"
       },
-      room_id: session_id,
+      session_id: session_id,
       turn_id: turn_id,
       status: :running,
       attempt: 1,
@@ -1224,8 +1231,8 @@ defmodule ReyCode.TUITest do
     }
 
     projection
-    |> put_in([:rooms, session_id], %{
-      room
+    |> put_in([:sessions, session_id], %{
+      session_record
       | message_order: [assistant_message_id, user_message_id],
         active_turn_id: turn_id,
         workspace: File.cwd!()

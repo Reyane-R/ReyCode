@@ -17,37 +17,37 @@ defmodule ReyCode.Orchestration.Engine.OwnerCommand do
   @doc "Validates and asynchronously starts one owner shell command."
   @spec run(map(), term(), term()) :: {:reply, :ok | {:error, atom()}, map()}
 
-  def run(state, room_id, raw_command) do
-    with %{} = room <- state.projection.rooms[room_id],
+  def run(state, session_id, raw_command) do
+    with %{} = session <- state.projection.sessions[session_id],
          {:ok, command} <- Validation.owner_command(raw_command),
-         :ok <- dispatch(state, room, command) do
+         :ok <- dispatch(state, session, command) do
       {:reply, :ok, state}
     else
-      nil -> {:reply, {:error, :room_not_found}, state}
+      nil -> {:reply, {:error, :session_not_found}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
 
   @doc "Appends the durable transcript message for one finished owner command."
   @spec finish(map(), term(), String.t(), String.t(), map()) :: {:noreply, map()}
-  def finish(state, room_id, message_id, command, result) do
-    if is_nil(state.projection.rooms[room_id]) do
+  def finish(state, session_id, message_id, command, result) do
+    if is_nil(state.projection.sessions[session_id]) do
       {:noreply, state}
     else
-      entry = EventEntries.owner_command_posted(room_id, message_id, body(command, result))
+      entry = EventEntries.owner_command_posted(session_id, message_id, body(command, result))
       {:noreply, Persistence.append_and_apply!(state, [entry])}
     end
   end
 
-  defp dispatch(state, room, command) do
+  defp dispatch(state, session, command) do
     message_id = Identity.new_id("msg")
     parent = self()
     config = state.config
-    workspace = room.workspace
+    workspace = session.workspace
 
     task = fn ->
       result = execute(command, workspace, config)
-      send(parent, {:owner_command_result, room.id, message_id, command, result})
+      send(parent, {:owner_command_result, session.id, message_id, command, result})
     end
 
     case Task.Supervisor.start_child(state.task_supervisor, task) do

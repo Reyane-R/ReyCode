@@ -27,12 +27,12 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     end)
   end
 
-  def ensure_default_room(%{projection: %{room_order: []}} = state) do
-    room_id = "room-reycode"
+  def ensure_default_session(%{projection: %{session_order: []}} = state) do
+    session_id = "session-reycode"
 
     {type, payload, metadata} =
-      EventEntries.room_created(
-        room_id,
+      EventEntries.session_created(
+        session_id,
         "reycode",
         "ReyCode",
         File.cwd!(),
@@ -42,28 +42,29 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     Persistence.append_and_project!(state, [{type, payload, metadata}])
   end
 
-  def ensure_default_room(state), do: state
+  def ensure_default_session(state), do: state
 
-  @doc "Adds one primary participant to rooms created before the single-assistant policy."
+  @doc "Adds one primary participant to sessions created before the single-assistant policy."
   def ensure_primary_participants(state) do
-    Enum.reduce(state.projection.room_order, state, &ensure_primary_participant(&2, &1))
+    Enum.reduce(state.projection.session_order, state, &ensure_primary_participant(&2, &1))
   end
 
-  defp ensure_primary_participant(state, room_id) do
-    room = state.projection.rooms[room_id]
+  defp ensure_primary_participant(state, session_id) do
+    session = state.projection.sessions[session_id]
 
-    if Enum.any?(room.participants, &(&1.kind == :primary)) do
+    if Enum.any?(session.participants, &(&1.kind == :primary)) do
       state
     else
       source =
-        Enum.find(room.participants, &(not is_nil(&1.model))) || List.first(room.participants)
+        Enum.find(session.participants, &(not is_nil(&1.model))) ||
+          List.first(session.participants)
 
       provider = if source, do: source.provider, else: state.config.providers.default_provider
       model = if source, do: source.model, else: nil
 
       entry =
         EventEntries.participant_added(
-          room.id,
+          session.id,
           "assistant",
           "Assistant",
           "general coding assistance",
@@ -76,18 +77,18 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     end
   end
 
-  def queue_message(state, room_id, body, mode, participant_id) do
+  def queue_message(state, session_id, body, mode, participant_id) do
     turn_id = Identity.new_id("turn")
     message_id = Identity.new_id("msg")
     context_sequence = state.projection.sequence + 1
-    room = state.projection.rooms[room_id]
+    session = state.projection.sessions[session_id]
 
     input_kind =
-      if room.active_turn_id || room.queued_turn_ids != [], do: :follow_up, else: :operator
+      if session.active_turn_id || session.queued_turn_ids != [], do: :follow_up, else: :operator
 
     entries =
       EventEntries.queue_turn(
-        room_id,
+        session_id,
         body,
         mode,
         turn_id,
@@ -98,8 +99,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
       )
 
     next = Persistence.append_and_apply!(state, entries)
-    room = next.projection.rooms[room_id]
-    next = if room.active_turn_id == nil, do: start_turn(next, turn_id), else: next
+    session = next.projection.sessions[session_id]
+    next = if session.active_turn_id == nil, do: start_turn(next, turn_id), else: next
     {:reply, {:ok, turn_id}, next}
   end
 
@@ -122,7 +123,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
       |> persist_turn_cancellation(turn, invocations, reason)
       |> Admission.drop_executions(invocation_ids)
       |> kill_cancelled_executions(invocation_ids)
-      |> start_next_queued_turn(turn.room_id)
+      |> start_next_queued_turn(turn.session_id)
       |> pump_admission()
 
     {:ok, next}
@@ -179,22 +180,22 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     state
   end
 
-  defp start_next_queued_turn(state, room_id) do
-    room = state.projection.rooms[room_id]
+  defp start_next_queued_turn(state, session_id) do
+    session = state.projection.sessions[session_id]
 
-    if room.active_turn_id == nil and room.queued_turn_ids != [] do
-      start_turn(state, hd(room.queued_turn_ids))
+    if session.active_turn_id == nil and session.queued_turn_ids != [] do
+      start_turn(state, hd(session.queued_turn_ids))
     else
       state
     end
   end
 
-  def recover_room(state, room_id) do
-    room = state.projection.rooms[room_id]
+  def recover_session(state, session_id) do
+    session = state.projection.sessions[session_id]
 
     cond do
-      room.active_turn_id != nil -> recover_active_turn(state, room.active_turn_id)
-      room.queued_turn_ids != [] -> start_turn(state, hd(room.queued_turn_ids))
+      session.active_turn_id != nil -> recover_active_turn(state, session.active_turn_id)
+      session.queued_turn_ids != [] -> start_turn(state, hd(session.queued_turn_ids))
       true -> state
     end
   end
@@ -210,9 +211,9 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   defp start_initial_invocations(state, turn) do
-    room = state.projection.rooms[turn.room_id]
+    session = state.projection.sessions[turn.session_id]
     workflow = WorkflowDispatcher.for_mode(turn.mode)
-    open_invocations(state, turn, workflow.plan(room, turn, state.projection))
+    open_invocations(state, turn, workflow.plan(session, turn, state.projection))
   end
 
   def recover_invocations(state) do
@@ -311,14 +312,14 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   defp start_supported_turn(state, turn) do
-    room = state.projection.rooms[turn.room_id]
-    specs = WorkflowDispatcher.for_mode(turn.mode).plan(room, turn, state.projection)
-    invocation_entries = build_invocation_entries(room, turn, specs)
+    session = state.projection.sessions[turn.session_id]
+    specs = WorkflowDispatcher.for_mode(turn.mode).plan(session, turn, state.projection)
+    invocation_entries = build_invocation_entries(session, turn, specs)
     turn_entry = EventEntries.turn_started(turn)
 
     context_entries =
       case ContextCompaction.entry(
-             room,
+             session,
              state.projection,
              state.config.orchestration.context_budget_tokens
            ) do
@@ -362,14 +363,14 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     |> Persistence.append_and_apply!(entries)
     |> Admission.drop_executions(invocation_ids)
     |> kill_cancelled_executions(invocation_ids)
-    |> start_next_queued_turn(turn.room_id)
+    |> start_next_queued_turn(turn.session_id)
   end
 
   def advance_turn(state, turn_id) do
     turn = state.projection.turns[turn_id]
-    room = state.projection.rooms[turn.room_id]
+    session = state.projection.sessions[turn.session_id]
 
-    case WorkflowDispatcher.for_mode(turn.mode).advance(room, turn, state.projection) do
+    case WorkflowDispatcher.for_mode(turn.mode).advance(session, turn, state.projection) do
       :wait ->
         state
 
@@ -392,24 +393,24 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
           |> Admission.drop_executions(invocation_ids)
           |> kill_cancelled_executions(invocation_ids)
 
-        room = state.projection.rooms[turn.room_id]
+        session = state.projection.sessions[turn.session_id]
 
         cond do
           turn.detached? ->
             state
 
-          room.queued_turn_ids == [] ->
+          session.queued_turn_ids == [] ->
             state
 
           true ->
-            start_turn(state, hd(room.queued_turn_ids))
+            start_turn(state, hd(session.queued_turn_ids))
         end
     end
   end
 
   defp open_invocations(state, turn, specs) do
-    room = state.projection.rooms[turn.room_id]
-    entries = build_invocation_entries(room, turn, specs)
+    session = state.projection.sessions[turn.session_id]
+    entries = build_invocation_entries(session, turn, specs)
 
     state =
       if turn.mode == :squad do
@@ -421,8 +422,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     start_invocation_workers(state, entries)
   end
 
-  defp build_invocation_entries(room, turn, specs) do
-    capture = ProjectInstructions.capture(room.workspace)
+  defp build_invocation_entries(session, turn, specs) do
+    capture = ProjectInstructions.capture(session.workspace)
 
     specs =
       Enum.map(specs, fn spec ->
@@ -435,7 +436,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     generated_ids =
       Enum.map(specs, fn _spec -> {Identity.new_id("inv"), Identity.new_id("msg")} end)
 
-    EventEntries.open_invocations(room, turn, specs, generated_ids)
+    EventEntries.open_invocations(session, turn, specs, generated_ids)
   end
 
   defp start_invocation_workers(state, entries) do
@@ -776,8 +777,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
   defp apply_finalization({:retry, entries, retry_spec}, state, invocation, prepend) do
     turn = state.projection.turns[invocation.turn_id]
-    room = state.projection.rooms[invocation.room_id]
-    invocation_entries = build_invocation_entries(room, turn, [retry_spec])
+    session = state.projection.sessions[invocation.session_id]
+    invocation_entries = build_invocation_entries(session, turn, [retry_spec])
 
     next = Persistence.append_and_apply!(state, prepend ++ entries ++ invocation_entries)
     start_invocation_workers(next, invocation_entries)

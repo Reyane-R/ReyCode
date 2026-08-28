@@ -246,7 +246,7 @@ defmodule ReyCode.StoreMaintenanceTest do
   end
 
   defp metadata do
-    [aggregate_type: :room, aggregate_id: "room-1", room_id: "room-1"]
+    [aggregate_type: :room, aggregate_id: "room-1", session_id: "room-1"]
   end
 
   defp tmp_path(filename) do

@@ -13,7 +13,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     Message,
     Participant,
     Projector,
-    Room,
+    Session,
     SquadRun,
     ToolAsk,
     Turn
@@ -98,14 +98,14 @@ defmodule ReyCode.Orchestration.ProjectorTest do
 
     state = Projector.replay(events)
 
-    assert %Room{} = state.rooms["room-1"]
-    assert %Participant{} = hd(state.rooms["room-1"].participants)
+    assert %Session{} = state.sessions["room-1"]
+    assert %Participant{} = hd(state.sessions["room-1"].participants)
     assert %Message{} = state.messages["msg-agent"]
     assert %Turn{} = state.turns["turn-1"]
     assert %Invocation{} = state.invocations["inv-1"]
     assert state.sequence == 10
-    assert state.room_order == ["room-1"]
-    assert state.rooms["room-1"].message_order == ["msg-agent", "msg-user"]
+    assert state.session_order == ["room-1"]
+    assert state.sessions["room-1"].message_order == ["msg-agent", "msg-user"]
     assert state.messages["msg-agent"].body == "Hello world"
     assert state.messages["msg-agent"].status == :completed
     assert state.turns["turn-1"].status == :terminal
@@ -197,7 +197,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     ]
 
     state = Projector.replay(events)
-    [configured] = state.rooms["room-1"].participants
+    [configured] = state.sessions["room-1"].participants
 
     assert configured.provider == :opencode
     assert configured.model == "openai/gpt-5.6-sol"
@@ -528,7 +528,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     test "legacy snapshots normalize nested maps into typed records" do
       legacy_invocation = %{
         id: "inv-1",
-        room_id: "room-1",
+        session_id: "room-1",
         turn_id: "turn-1",
         message_id: "msg-assistant",
         pending_tool_review: %{

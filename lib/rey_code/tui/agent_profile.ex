@@ -66,7 +66,7 @@ defmodule ReyCode.TUI.AgentProfile do
     profile = term.assigns.agent_profile
 
     case Engine.add_task_participant(
-           term.assigns.selected_room_id,
+           term.assigns.selected_session_id,
            profile.name,
            profile.responsibility,
            term.assigns.engine

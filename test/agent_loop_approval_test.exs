@@ -195,8 +195,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
     out_path = Path.join(workspace, "out.txt")
     store = start_engine(ask_scenario_opts())
 
-    assert {:ok, room_id} = Engine.create_room("Approve Loop", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Approve Loop", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write it", :compare, @engine)
 
     turn = resolve_all_waiting(turn_id, :approve)
 
@@ -234,11 +234,13 @@ defmodule ReyCode.AgentLoopApprovalTest do
     ]
 
     store = start_engine(simulator_opts: simulator_opts)
-    assert {:ok, room_id} = Engine.create_room("Failed Squad Approval", workspace, @engine)
+
+    assert {:ok, session_id} =
+             Engine.create_blank_session("Failed Squad Approval", workspace, @engine)
 
     role_ids = Enum.map(Squad.roles(), & &1.id)
-    assert :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Fail safely", :squad, @engine)
+    assert :ok = Engine.configure_squad_roles(session_id, role_ids, :simulator, nil, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Fail safely", :squad, @engine)
 
     _turn = approve_until_phase(turn_id, "specification")
     turn = Wait.terminal_turn(@engine, turn_id)
@@ -260,8 +262,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
     out_path = Path.join(workspace, "out.txt")
     store = start_engine(ask_scenario_opts())
 
-    assert {:ok, room_id} = Engine.create_room("Deny Loop", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Deny Loop", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write it", :compare, @engine)
 
     _turn = resolve_all_waiting(turn_id, :deny)
 
@@ -291,8 +293,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
     out_path = Path.join(workspace, "out.txt")
     store = start_engine(ask_scenario_opts())
 
-    assert {:ok, room_id} = Engine.create_room("Restart Approve", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Restart Approve", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write it", :compare, @engine)
 
     projection =
       Wait.projection(@engine, fn value ->
@@ -328,8 +330,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
     out_path = Path.join(workspace, "out.txt")
     store = start_engine(ask_scenario_opts())
 
-    assert {:ok, room_id} = Engine.create_room("Cancel Loop", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Write it", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Cancel Loop", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write it", :compare, @engine)
 
     projection =
       Wait.projection(@engine, fn value ->
@@ -382,8 +384,8 @@ defmodule ReyCode.AgentLoopApprovalTest do
     store =
       start_engine([global_concurrency: 1, workspace_concurrency: 1] ++ ask_scenario_opts())
 
-    assert {:ok, room_a} = Engine.create_room("Room A", workspace_a, @engine)
-    assert {:ok, room_b} = Engine.create_room("Room B", workspace_b, @engine)
+    assert {:ok, room_a} = Engine.create_blank_session("Room A", workspace_a, @engine)
+    assert {:ok, room_b} = Engine.create_blank_session("Room B", workspace_b, @engine)
 
     assert {:ok, turn_a} = Engine.post_message(room_a, "Write it", :compare, @engine)
 

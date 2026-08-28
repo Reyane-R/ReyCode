@@ -11,9 +11,9 @@ defmodule ReyCode.TUI.Workspace do
   @spec open(map(), String.t() | nil) :: map()
   def open(term, relative_path \\ nil) do
     projection = Map.get(term.assigns, :projection)
-    room_id = Map.get(term.assigns, :selected_room_id)
-    room = projection && Map.get(projection.rooms, room_id)
-    workspace = room && Map.get(room, :workspace)
+    session_id = Map.get(term.assigns, :selected_session_id)
+    session = projection && Map.get(projection.sessions, session_id)
+    workspace = session && Map.get(session, :workspace)
 
     path =
       if relative_path && workspace,

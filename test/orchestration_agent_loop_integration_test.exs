@@ -128,8 +128,8 @@ defmodule ReyCode.Orchestration.AgentLoopIntegrationTest do
        config: config}
     )
 
-    assert {:ok, room_id} = Engine.create_room("Loop Room", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Read hello.txt", :direct, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Loop Room", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Read hello.txt", :direct, @engine)
 
     assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 

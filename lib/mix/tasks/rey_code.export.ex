@@ -17,33 +17,34 @@ defmodule Mix.Tasks.ReyCode.Export do
     if rest != [] or invalid != [], do: Mix.raise(usage())
 
     projection = Engine.snapshot()
-    room = select_room(projection, opts[:session])
+    session = select_session(projection, opts[:session])
     format = parse_format(opts[:format] || "markdown")
     extension = if format == :html, do: ".html", else: ".md"
-    output = opts[:output] || Path.join(File.cwd!(), room.id <> extension)
+    output = opts[:output] || Path.join(File.cwd!(), session.id <> extension)
 
-    case SessionExport.write(projection, room.id, output, format) do
-      :ok -> Mix.shell().info("Exported #{room.id} to #{output}")
+    case SessionExport.write(projection, session.id, output, format) do
+      :ok -> Mix.shell().info("Exported #{session.id} to #{output}")
       {:error, reason} -> Mix.raise("Session export failed: #{inspect(reason)}")
     end
   end
 
-  defp select_room(projection, nil) do
-    case List.last(projection.room_order) do
+  defp select_session(projection, nil) do
+    case List.last(projection.session_order) do
       nil -> Mix.raise("No Sessions exist")
-      room_id -> projection.rooms[room_id]
+      session_id -> projection.sessions[session_id]
     end
   end
 
-  defp select_room(projection, selector) do
-    projection.room_order
-    |> Enum.map(&projection.rooms[&1])
-    |> Enum.find(fn room ->
-      room.id == selector or String.starts_with?(room.id, selector) or room.title == selector
+  defp select_session(projection, selector) do
+    projection.session_order
+    |> Enum.map(&projection.sessions[&1])
+    |> Enum.find(fn session ->
+      session.id == selector or String.starts_with?(session.id, selector) or
+        session.title == selector
     end)
     |> case do
       nil -> Mix.raise("Session not found: #{selector}")
-      room -> room
+      session -> session
     end
   end
 

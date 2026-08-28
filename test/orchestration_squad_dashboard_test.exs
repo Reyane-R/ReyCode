@@ -61,7 +61,7 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
   end
 
   test "returns nil when the room has no squad turn" do
-    regular_turn = %{id: "regular", room_id: "room-1", mode: :compare, squad: nil}
+    regular_turn = %{id: "regular", session_id: "room-1", mode: :compare, squad: nil}
     projection = %{turns: %{"regular" => regular_turn}, invocations: %{}}
 
     assert Dashboard.data(%{id: "room-1", active_turn_id: "regular"}, projection) == nil
@@ -165,7 +165,7 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
            }) == "15 tokens / 1 measured invocations / $0.0025"
   end
 
-  defp squad_turn(id, room_id, created_at, overrides \\ %{}) do
+  defp squad_turn(id, session_id, created_at, overrides \\ %{}) do
     status = Map.get(overrides, :status, :terminal)
     outcome = Map.get(overrides, :outcome, if(status == :terminal, do: :completed))
 
@@ -173,14 +173,14 @@ defmodule ReyCode.Orchestration.Squad.DashboardTest do
       struct!(
         SquadRun,
         Map.merge(
-          %{room_id: room_id, phase_index: 0, resolutions: [], artifacts: [], retries: []},
+          %{session_id: session_id, phase_index: 0, resolutions: [], artifacts: [], retries: []},
           Map.drop(overrides, [:status, :outcome])
         )
       )
 
     %{
       id: id,
-      room_id: room_id,
+      session_id: session_id,
       mode: :squad,
       status: status,
       outcome: outcome,

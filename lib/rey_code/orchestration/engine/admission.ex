@@ -37,17 +37,17 @@ defmodule ReyCode.Orchestration.Engine.Admission do
 
   @doc "Checks whether a turn can start now or wait within configured queue limits."
   @spec admit_turn(map(), map()) :: :ok | {:error, :global_queue_full | :workspace_queue_full}
-  def admit_turn(room, state) do
+  def admit_turn(session, state) do
     global_waiting = length(state.execution_queue) + queued_turn_count(state.projection)
-    workspace_waiting = workspace_waiting_count(room.workspace, state)
+    workspace_waiting = workspace_waiting_count(session.workspace, state)
 
     workspace_active =
       Enum.count(state.active_executions, fn {_id, workspace} ->
-        workspace == Path.expand(room.workspace)
+        workspace == Path.expand(session.workspace)
       end)
 
     can_start? =
-      room.active_turn_id == nil and
+      session.active_turn_id == nil and
         limit_available?(map_size(state.active_executions), state.limits.global_concurrency) and
         limit_available?(workspace_active, state.limits.workspace_concurrency)
 
@@ -105,7 +105,7 @@ defmodule ReyCode.Orchestration.Engine.Admission do
   @spec workspace(map(), String.t()) :: String.t()
   def workspace(state, invocation_id) do
     invocation = state.projection.invocations[invocation_id]
-    room = invocation && state.projection.rooms[invocation.room_id]
+    session = invocation && state.projection.sessions[invocation.session_id]
     execution_context = invocation && Map.get(invocation, :execution_context)
     execution_workspace = execution_context && Map.get(execution_context, :workspace)
 
@@ -113,8 +113,8 @@ defmodule ReyCode.Orchestration.Engine.Admission do
       execution_workspace ->
         Path.expand(execution_workspace)
 
-      room ->
-        Path.expand(room.workspace)
+      session ->
+        Path.expand(session.workspace)
 
       true ->
         "unknown"
@@ -148,8 +148,8 @@ defmodule ReyCode.Orchestration.Engine.Admission do
 
     queued_turns =
       Enum.count(state.projection.turns, fn {_id, turn} ->
-        room = state.projection.rooms[turn.room_id]
-        (turn.status == :queued and room) && Path.expand(room.workspace) == workspace
+        session = state.projection.sessions[turn.session_id]
+        (turn.status == :queued and session) && Path.expand(session.workspace) == workspace
       end)
 
     queued_executions =

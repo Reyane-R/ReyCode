@@ -21,8 +21,8 @@ defmodule ReyCode.TUI.ToolReview do
 
   @spec open(map()) :: map()
   def open(term) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
-    invocation = pending_invocation(term.assigns.projection, room && room.active_turn_id)
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+    invocation = pending_invocation(term.assigns.projection, session && session.active_turn_id)
 
     if invocation do
       Component.assign(term,

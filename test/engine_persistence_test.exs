@@ -147,42 +147,42 @@ defmodule ReyCode.Orchestration.Engine.PersistenceTest do
     }
   end
 
-  defp turn_batch(room_id) do
+  defp turn_batch(session_id) do
     [
-      message_entry("msg-1", room_id, "turn-1", 0),
+      message_entry("msg-1", session_id, "turn-1", 0),
       {:turn_queued,
        %{
          "turn_id" => "turn-1",
-         "room_id" => room_id,
+         "room_id" => session_id,
          "user_message_id" => "msg-1",
          "mode" => "compare",
          "context_through_sequence" => 0,
          "participant_id" => nil
-       }, aggregate_type: :turn, aggregate_id: "turn-1", room_id: room_id}
+       }, aggregate_type: :turn, aggregate_id: "turn-1", room_id: session_id}
     ]
   end
 
-  defp message_entries(room_id, count, opts \\ []) do
+  defp message_entries(session_id, count, opts \\ []) do
     offset = Keyword.get(opts, :offset, 0)
 
     Enum.map(1..count//1, fn index ->
       sequence = offset + index
-      message_entry("msg-#{sequence}", room_id, nil, sequence - 1)
+      message_entry("msg-#{sequence}", session_id, nil, sequence - 1)
     end)
   end
 
-  defp message_entry(message_id, room_id, turn_id, context_sequence) do
+  defp message_entry(message_id, session_id, turn_id, context_sequence) do
     {:message_posted,
      %{
        "message_id" => message_id,
-       "room_id" => room_id,
+       "room_id" => session_id,
        "turn_id" => turn_id,
        "body" => "hello",
        "author_name" => "You"
      },
      aggregate_type: :room,
-     aggregate_id: room_id,
-     room_id: room_id,
+     aggregate_id: session_id,
+     room_id: session_id,
      correlation_id: "#{context_sequence}"}
   end
 

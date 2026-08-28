@@ -22,8 +22,8 @@ defmodule ReyCode.TUI.ToolReviewTest do
 
     snapshot = Engine.snapshot(engine)
 
-    room_id = Enum.find(snapshot.room_order, &(snapshot.rooms[&1].slug == "reycode"))
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Review this write", :compare, engine)
+    session_id = Enum.find(snapshot.session_order, &(snapshot.sessions[&1].slug == "reycode"))
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Review this write", :compare, engine)
     wait_until_waiting(engine, turn_id)
     out_path = Path.join(File.cwd!(), "out.txt")
     # The engine's default room roots the workspace at the repository, so the
@@ -41,7 +41,7 @@ defmodule ReyCode.TUI.ToolReviewTest do
       engine: engine,
       config: config,
       store: store,
-      room_id: room_id,
+      session_id: session_id,
       turn_id: turn_id,
       out_path: out_path
     }

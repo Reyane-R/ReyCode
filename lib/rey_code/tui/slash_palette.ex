@@ -107,12 +107,12 @@ defmodule ReyCode.TUI.SlashPalette do
   @doc "Opens the command palette while preserving the current draft."
   @spec open(map()) :: map()
   def open(term) do
-    room_id = term.assigns.selected_room_id
-    original_draft = Map.get(term.assigns.drafts, room_id, "")
+    session_id = term.assigns.selected_session_id
+    original_draft = Map.get(term.assigns.drafts, session_id, "")
 
     term
     |> Component.assign(
-      drafts: Map.put(term.assigns.drafts, room_id, "/"),
+      drafts: Map.put(term.assigns.drafts, session_id, "/"),
       modal: :slash,
       slash: %{
         query: "/",
@@ -138,7 +138,7 @@ defmodule ReyCode.TUI.SlashPalette do
   @spec start(map(), String.t()) :: map()
   def start(term, value) do
     Component.assign(term,
-      drafts: Map.put(term.assigns.drafts, term.assigns.selected_room_id, value),
+      drafts: Map.put(term.assigns.drafts, term.assigns.selected_session_id, value),
       modal: :slash,
       slash: %{
         query: value,
@@ -224,7 +224,7 @@ defmodule ReyCode.TUI.SlashPalette do
 
   def set_query(%{assigns: %{slash: slash}} = term, query, cursor, accepted_id) do
     Component.assign(term,
-      drafts: Map.put(term.assigns.drafts, term.assigns.selected_room_id, query),
+      drafts: Map.put(term.assigns.drafts, term.assigns.selected_session_id, query),
       slash: %{
         slash
         | query: query,
@@ -250,7 +250,7 @@ defmodule ReyCode.TUI.SlashPalette do
 
     term
     |> Component.assign(
-      drafts: Map.put(term.assigns.drafts, term.assigns.selected_room_id, draft),
+      drafts: Map.put(term.assigns.drafts, term.assigns.selected_session_id, draft),
       modal: nil,
       slash: nil,
       notice: nil
@@ -265,7 +265,7 @@ defmodule ReyCode.TUI.SlashPalette do
   @doc "Clears the current session draft."
   @spec clear_draft(map()) :: map()
   def clear_draft(term) do
-    drafts = Map.put(term.assigns.drafts, term.assigns.selected_room_id, "")
+    drafts = Map.put(term.assigns.drafts, term.assigns.selected_session_id, "")
     Component.assign(term, drafts: drafts)
   end
 
@@ -381,7 +381,7 @@ defmodule ReyCode.TUI.SlashPalette do
     slash = Map.get(assigns, :slash)
     draft = draft || slash_query(slash)
     cursor = cursor || slash_cursor(slash, draft)
-    {participants, workspace} = room_completion_context(assigns)
+    {participants, workspace} = session_completion_context(assigns)
     sessions = completion_sessions(Map.get(assigns, :projection))
 
     Completion.new(
@@ -410,19 +410,21 @@ defmodule ReyCode.TUI.SlashPalette do
 
   defp commands_for(_assigns, _draft), do: @commands
 
-  defp contextual_command_names(%{projection: projection, selected_room_id: room_id}) do
-    case Map.get(projection.rooms, room_id) do
+  defp contextual_command_names(%{projection: projection, selected_session_id: session_id}) do
+    case Map.get(projection.sessions, session_id) do
       nil ->
         []
 
-      room ->
+      session ->
         [
-          if(Projection.pending_question_invocation(projection, room_id), do: "/answer"),
-          if(Projection.pending_tool_invocation(projection, room.active_turn_id), do: "/tools"),
-          if(room.active_turn_id, do: "/steer"),
-          if(room.active_turn_id, do: "/cancel"),
-          if(queued_follow_up?(projection, room), do: "/unqueue"),
-          if(Projection.delegated_invocations(projection, room_id) != [], do: "/hub")
+          if(Projection.pending_question_invocation(projection, session_id), do: "/answer"),
+          if(Projection.pending_tool_invocation(projection, session.active_turn_id),
+            do: "/tools"
+          ),
+          if(session.active_turn_id, do: "/steer"),
+          if(session.active_turn_id, do: "/cancel"),
+          if(queued_follow_up?(projection, session), do: "/unqueue"),
+          if(Projection.delegated_invocations(projection, session_id) != [], do: "/hub")
         ]
         |> Enum.reject(&is_nil/1)
     end
@@ -430,8 +432,8 @@ defmodule ReyCode.TUI.SlashPalette do
 
   defp contextual_command_names(_assigns), do: []
 
-  defp queued_follow_up?(projection, room) do
-    Enum.any?(room.queued_turn_ids, fn turn_id ->
+  defp queued_follow_up?(projection, session) do
+    Enum.any?(session.queued_turn_ids, fn turn_id ->
       case Map.get(projection.turns, turn_id) do
         %{input_kind: :follow_up, status: :queued} -> true
         _other -> false
@@ -444,20 +446,20 @@ defmodule ReyCode.TUI.SlashPalette do
   defp slash_cursor(nil, draft), do: String.length(draft)
   defp slash_cursor(slash, draft), do: Map.get(slash, :cursor, String.length(draft))
 
-  defp room_completion_context(%{projection: projection, selected_room_id: room_id}) do
-    case Map.get(projection.rooms, room_id) do
+  defp session_completion_context(%{projection: projection, selected_session_id: session_id}) do
+    case Map.get(projection.sessions, session_id) do
       nil -> {[], nil}
-      room -> {room.participants, room.workspace}
+      session -> {session.participants, session.workspace}
     end
   end
 
-  defp room_completion_context(_assigns), do: {[], nil}
+  defp session_completion_context(_assigns), do: {[], nil}
   defp completion_sessions(nil), do: []
 
   defp completion_sessions(projection) do
-    projection.room_order
+    projection.session_order
     |> Enum.reverse()
-    |> Enum.map(&projection.rooms[&1])
+    |> Enum.map(&projection.sessions[&1])
   end
 
   defp command_notice(:unknown_command), do: "Unknown command. Type / to see available commands."

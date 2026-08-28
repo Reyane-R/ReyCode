@@ -83,7 +83,7 @@ defmodule ReyCode.Orchestration.Delegation do
   Validates one `spawn_task` call against addressing rules and bounds.
 
   Arguments must be `%{"agent" => binary, "brief" => binary}`; the agent name
-  matches exactly one room participant of kind `:task`. Primary participants
+  matches exactly one session participant of kind `:task`. Primary participants
   and unknown names reject without spawning.
   """
   @spec authorize(Invocation.t(), term(), Projection.t(), bounds()) ::
@@ -96,7 +96,7 @@ defmodule ReyCode.Orchestration.Delegation do
          :ok <- check_depth(invocation),
          :ok <- check_child_cap(invocation, 1, bounds.max_children),
          {:ok, participant} <-
-           resolve_participant(projection.rooms[invocation.room_id], agent) do
+           resolve_participant(projection.sessions[invocation.session_id], agent) do
       {:ok,
        %Plan{
          participant: participant,
@@ -272,7 +272,7 @@ defmodule ReyCode.Orchestration.Delegation do
          :ok <- check_brief(brief, bounds.brief_max_bytes),
          :ok <- check_schema(output_schema),
          {:ok, participant} <-
-           resolve_participant(projection.rooms[invocation.room_id], agent) do
+           resolve_participant(projection.sessions[invocation.session_id], agent) do
       {:ok,
        %Plan{
          participant: participant,
@@ -462,8 +462,8 @@ defmodule ReyCode.Orchestration.Delegation do
 
   defp resolve_participant(nil, _agent), do: {:error, :unknown_agent}
 
-  defp resolve_participant(room, agent) do
-    case Enum.filter(room.participants, &(&1.name == agent)) do
+  defp resolve_participant(session, agent) do
+    case Enum.filter(session.participants, &(&1.name == agent)) do
       [] -> {:error, :unknown_agent}
       [%Participant{kind: :task} = participant] -> {:ok, participant}
       [%Participant{}] -> {:error, :primary_target}

@@ -2,15 +2,15 @@ defmodule ReyCode.TUI.ActivityTest do
   use ExUnit.Case, async: true
   use ExUnitProperties
 
-  alias ReyCode.Orchestration.{Invocation, Participant, Projection, Room, ToolRun, Turn}
+  alias ReyCode.Orchestration.{Invocation, Participant, Projection, Session, ToolRun, Turn}
   alias ReyCode.TUI.Activity
 
   @now_ms DateTime.to_unix(~U[2026-08-26 22:00:10Z], :millisecond)
   @workspace "/workspace"
 
   test "provider thinking is active and elapsed from the durable Turn" do
-    {projection, room_id, invocation_id} = fixture(invocation_status: :running)
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    {projection, session_id, invocation_id} = fixture(invocation_status: :running)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     item = Activity.invocation(view, invocation_id)
 
     assert Activity.active?(view)
@@ -24,8 +24,11 @@ defmodule ReyCode.TUI.ActivityTest do
 
   test "running tool wins over thinking and owner approval wins over generic activity" do
     run = tool_run("run-1", :read, :running, %{"path" => "/workspace/lib/file.ex"})
-    {projection, room_id, invocation_id} = fixture(invocation_status: :running, tool_runs: [run])
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+
+    {projection, session_id, invocation_id} =
+      fixture(invocation_status: :running, tool_runs: [run])
+
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     item = Activity.invocation(view, invocation_id)
 
     assert item.label == "Reading"
@@ -34,10 +37,10 @@ defmodule ReyCode.TUI.ActivityTest do
 
     waiting = %{run | status: :awaiting_approval}
 
-    {projection, room_id, invocation_id} =
+    {projection, session_id, invocation_id} =
       fixture(invocation_status: :waiting_tool_approval, tool_runs: [waiting])
 
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     item = Activity.invocation(view, invocation_id)
 
     refute Activity.active?(view)
@@ -48,10 +51,10 @@ defmodule ReyCode.TUI.ActivityTest do
 
     ready = %{run | status: :ready}
 
-    {projection, room_id, invocation_id} =
+    {projection, session_id, invocation_id} =
       fixture(invocation_status: :running, tool_runs: [ready])
 
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     item = Activity.invocation(view, invocation_id)
     refute Activity.active?(view)
     assert item.state == :queued
@@ -59,8 +62,8 @@ defmodule ReyCode.TUI.ActivityTest do
   end
 
   test "retry and active delegation use deterministic priority" do
-    {projection, room_id, invocation_id} = fixture(invocation_status: :running, attempt: 2)
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    {projection, session_id, invocation_id} = fixture(invocation_status: :running, attempt: 2)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     assert Activity.invocation(view, invocation_id).label == "Retrying"
 
     participant = participant("luna", "Luna", :task)
@@ -75,7 +78,7 @@ defmodule ReyCode.TUI.ActivityTest do
 
     parent = %Invocation{
       id: "parent",
-      room_id: "room",
+      session_id: "room",
       turn_id: "turn",
       message_id: "msg-parent",
       participant: participant("assistant", "Assistant", :primary),
@@ -86,7 +89,7 @@ defmodule ReyCode.TUI.ActivityTest do
 
     child = %Invocation{
       id: "child",
-      room_id: "room",
+      session_id: "room",
       turn_id: "turn",
       message_id: "msg-child",
       participant: participant,
@@ -97,13 +100,13 @@ defmodule ReyCode.TUI.ActivityTest do
 
     turn = %Turn{
       id: "turn",
-      room_id: "room",
+      session_id: "room",
       status: :running,
       invocation_order: [parent.id, child.id],
       created_at: "2026-08-26T22:00:00Z"
     }
 
-    room = %Room{
+    session = %Session{
       id: "room",
       workspace: @workspace,
       participants: [parent.participant, participant],
@@ -112,8 +115,8 @@ defmodule ReyCode.TUI.ActivityTest do
     }
 
     projection = %Projection{
-      rooms: %{room.id => room},
-      room_order: [room.id],
+      sessions: %{session.id => session},
+      session_order: [session.id],
       turns: %{turn.id => turn},
       invocations: %{parent.id => parent, child.id => child},
       messages: %{
@@ -130,7 +133,7 @@ defmodule ReyCode.TUI.ActivityTest do
       }
     }
 
-    view = Activity.present(room.id, projection, %{}, @now_ms)
+    view = Activity.present(session.id, projection, %{}, @now_ms)
     assert view.ordered_invocation_ids == [parent.id, child.id]
     assert view.header.label == "Delegating"
     assert view.header.target == "Luna"
@@ -198,14 +201,14 @@ defmodule ReyCode.TUI.ActivityTest do
     check all(outcome <- member_of([:completed, :partial, :reworked, :failed, :cancelled])) do
       invocation_status = terminal_invocation_status(outcome)
 
-      {projection, room_id, invocation_id} =
+      {projection, session_id, invocation_id} =
         fixture(
           invocation_status: invocation_status,
           turn_status: :terminal,
           outcome: outcome
         )
 
-      view = Activity.present(room_id, projection, %{}, @now_ms)
+      view = Activity.present(session_id, projection, %{}, @now_ms)
 
       refute Activity.active?(view)
       assert view.header.state == :terminal
@@ -218,12 +221,12 @@ defmodule ReyCode.TUI.ActivityTest do
   end
 
   test "selected Session scope ignores malformed hidden history and keeps parallel order" do
-    {projection, room_id, first_id} = fixture(invocation_status: :running)
+    {projection, session_id, first_id} = fixture(invocation_status: :running)
     second_id = "inv-2"
 
     second = %Invocation{
       id: second_id,
-      room_id: room_id,
+      session_id: session_id,
       turn_id: "turn",
       message_id: "msg-2",
       participant: participant("review", "Review", :task),
@@ -232,20 +235,25 @@ defmodule ReyCode.TUI.ActivityTest do
       tool_run_order: []
     }
 
-    selected_room = %{Map.fetch!(projection.rooms, room_id) | message_order: ["msg-2", "msg-1"]}
+    selected_room = %{
+      Map.fetch!(projection.sessions, session_id)
+      | message_order: ["msg-2", "msg-1"]
+    }
 
     selected_turn = %{
       Map.fetch!(projection.turns, "turn")
       | invocation_order: [first_id, second_id]
     }
 
-    hidden_room = %Room{id: "hidden", workspace: "/hidden", message_order: ["missing-message"]}
+    hidden_room = %Session{id: "hidden", workspace: "/hidden", message_order: ["missing-message"]}
 
     projection = %{
       projection
-      | rooms:
-          projection.rooms |> Map.put(room_id, selected_room) |> Map.put("hidden", hidden_room),
-        room_order: projection.room_order ++ ["hidden"],
+      | sessions:
+          projection.sessions
+          |> Map.put(session_id, selected_room)
+          |> Map.put("hidden", hidden_room),
+        session_order: projection.session_order ++ ["hidden"],
         turns: Map.put(projection.turns, "turn", selected_turn),
         invocations: Map.put(projection.invocations, second_id, second),
         messages:
@@ -256,7 +264,7 @@ defmodule ReyCode.TUI.ActivityTest do
           })
     }
 
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
 
     assert view.ordered_invocation_ids == [first_id, second_id]
     assert view.header.id == first_id
@@ -267,41 +275,42 @@ defmodule ReyCode.TUI.ActivityTest do
     assert Activity.present(nil, %Projection{}, %{}, @now_ms) == %Activity.View{}
     assert Activity.present("missing", %Projection{}, %{}, @now_ms) == %Activity.View{}
 
-    {projection, room_id, _invocation_id} = fixture(turn_status: :terminal, outcome: :completed)
+    {projection, session_id, _invocation_id} =
+      fixture(turn_status: :terminal, outcome: :completed)
 
-    room = %{
-      Map.fetch!(projection.rooms, room_id)
+    session = %{
+      Map.fetch!(projection.sessions, session_id)
       | message_order: [],
         queued_turn_ids: ["queued"]
     }
 
-    projection = %{projection | rooms: Map.put(projection.rooms, room_id, room)}
-    assert Activity.present(room_id, projection, %{}, @now_ms).header.state == :queued
+    projection = %{projection | sessions: Map.put(projection.sessions, session_id, session)}
+    assert Activity.present(session_id, projection, %{}, @now_ms).header.state == :queued
 
-    room = %{room | queued_turn_ids: [], participants: []}
-    projection = %{projection | rooms: Map.put(projection.rooms, room_id, room)}
-    assert Activity.present(room_id, projection, %{}, @now_ms).header.label == "Model required"
+    session = %{session | queued_turn_ids: [], participants: []}
+    projection = %{projection | sessions: Map.put(projection.sessions, session_id, session)}
+    assert Activity.present(session_id, projection, %{}, @now_ms).header.label == "Model required"
 
     primary = participant("assistant", "Assistant", :primary)
-    room = %{room | participants: [primary]}
-    projection = %{projection | rooms: Map.put(projection.rooms, room_id, room)}
+    session = %{session | participants: [primary]}
+    projection = %{projection | sessions: Map.put(projection.sessions, session_id, session)}
 
     checking = %{simulator: %{status: :checking}}
 
-    assert Activity.present(room_id, projection, checking, @now_ms).header.label ==
+    assert Activity.present(session_id, projection, checking, @now_ms).header.label ==
              "Checking provider"
 
-    assert Activity.present(room_id, projection, checking, @now_ms).active?
+    assert Activity.present(session_id, projection, checking, @now_ms).active?
 
     configured = %{
       simulator: %{id: :simulator, status: :configured, models: [], credential_count: 0}
     }
 
-    ready = Activity.present(room_id, projection, configured, @now_ms).header
+    ready = Activity.present(session_id, projection, configured, @now_ms).header
     assert ready.state == :idle
     assert Activity.text(ready, "unused") == "• · Ready"
 
-    assert Activity.present(room_id, projection, %{simulator: %{status: :error}}, @now_ms).header.label ==
+    assert Activity.present(session_id, projection, %{simulator: %{status: :error}}, @now_ms).header.label ==
              "Provider unavailable"
 
     cases = [
@@ -372,41 +381,41 @@ defmodule ReyCode.TUI.ActivityTest do
   end
 
   test "waiting invocation without a run and delegation without a child are blocked, not active" do
-    {projection, room_id, invocation_id} = fixture(invocation_status: :waiting_tool_approval)
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    {projection, session_id, invocation_id} = fixture(invocation_status: :waiting_tool_approval)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     item = Activity.invocation(view, invocation_id)
     assert item.state == :blocked
     assert item.target == "tool approval required · /tools"
     refute Activity.active?(view)
 
-    {projection, room_id, invocation_id} = fixture(invocation_status: :awaiting_delegation)
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    {projection, session_id, invocation_id} = fixture(invocation_status: :awaiting_delegation)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     item = Activity.invocation(view, invocation_id)
     assert item.state == :blocked
     assert item.label == "Paused"
   end
 
   test "room header selects the newest terminal Turn from newest-first message order" do
-    {projection, room_id, _invocation_id} =
+    {projection, session_id, _invocation_id} =
       fixture(invocation_status: :completed, turn_status: :terminal, outcome: :completed)
 
     newest_turn = %Turn{
       id: "turn-newest",
-      room_id: room_id,
+      session_id: session_id,
       status: :terminal,
       outcome: :failed,
       invocation_order: [],
       created_at: "2026-08-26T22:00:09Z"
     }
 
-    room = %{
-      Map.fetch!(projection.rooms, room_id)
+    session = %{
+      Map.fetch!(projection.sessions, session_id)
       | message_order: ["msg-newest", "msg-1"]
     }
 
     projection = %{
       projection
-      | rooms: Map.put(projection.rooms, room_id, room),
+      | sessions: Map.put(projection.sessions, session_id, session),
         turns: Map.put(projection.turns, newest_turn.id, newest_turn),
         messages:
           Map.put(projection.messages, "msg-newest", %{
@@ -415,13 +424,13 @@ defmodule ReyCode.TUI.ActivityTest do
           })
     }
 
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     assert view.header.outcome == :failed
     assert view.header.label == "Failed"
   end
 
   test "selected activity view keeps a bounded newest invocation window" do
-    {projection, room_id, _invocation_id} = fixture(invocation_status: :completed)
+    {projection, session_id, _invocation_id} = fixture(invocation_status: :completed)
 
     {message_order, messages, invocations} =
       Enum.reduce(1..300, {[], %{}, %{}}, fn index, {order, message_acc, invocation_acc} ->
@@ -430,7 +439,7 @@ defmodule ReyCode.TUI.ActivityTest do
 
         invocation = %Invocation{
           id: invocation_id,
-          room_id: room_id,
+          session_id: session_id,
           turn_id: "turn",
           message_id: message_id,
           participant: participant("p-#{index}", "P#{index}", :task),
@@ -444,16 +453,16 @@ defmodule ReyCode.TUI.ActivityTest do
         }
       end)
 
-    room = %{Map.fetch!(projection.rooms, room_id) | message_order: message_order}
+    session = %{Map.fetch!(projection.sessions, session_id) | message_order: message_order}
 
     projection = %{
       projection
-      | rooms: Map.put(projection.rooms, room_id, room),
+      | sessions: Map.put(projection.sessions, session_id, session),
         messages: messages,
         invocations: invocations
     }
 
-    view = Activity.present(room_id, projection, %{}, @now_ms)
+    view = Activity.present(session_id, projection, %{}, @now_ms)
     assert length(view.ordered_invocation_ids) == 256
     assert view.truncated?
     assert List.first(view.ordered_invocation_ids) == "bulk-inv-45"
@@ -488,11 +497,11 @@ defmodule ReyCode.TUI.ActivityTest do
     assert Activity.color(partial) == "warning"
     assert Activity.color(nil) == "muted"
 
-    {projection, room_id, invocation_id} = fixture(invocation_status: :unknown)
+    {projection, session_id, invocation_id} = fixture(invocation_status: :unknown)
 
     item =
       projection
-      |> then(&Activity.present(room_id, &1, %{}, @now_ms))
+      |> then(&Activity.present(session_id, &1, %{}, @now_ms))
       |> Activity.invocation(invocation_id)
 
     assert item.state == :idle
@@ -512,7 +521,7 @@ defmodule ReyCode.TUI.ActivityTest do
   end
 
   defp fixture(opts) do
-    room_id = "room"
+    session_id = "room"
     turn_id = "turn"
     invocation_id = "inv-1"
     outcome = Keyword.get(opts, :outcome)
@@ -524,7 +533,7 @@ defmodule ReyCode.TUI.ActivityTest do
 
     invocation = %Invocation{
       id: invocation_id,
-      room_id: room_id,
+      session_id: session_id,
       turn_id: turn_id,
       message_id: "msg-1",
       participant: participant,
@@ -536,15 +545,15 @@ defmodule ReyCode.TUI.ActivityTest do
 
     turn = %Turn{
       id: turn_id,
-      room_id: room_id,
+      session_id: session_id,
       status: turn_status,
       outcome: outcome,
       invocation_order: [invocation_id],
       created_at: "2026-08-26T22:00:00Z"
     }
 
-    room = %Room{
-      id: room_id,
+    session = %Session{
+      id: session_id,
       workspace: @workspace,
       participants: [participant],
       active_turn_id: if(turn_status == :running, do: turn_id),
@@ -552,8 +561,8 @@ defmodule ReyCode.TUI.ActivityTest do
     }
 
     projection = %Projection{
-      rooms: %{room_id => room},
-      room_order: [room_id],
+      sessions: %{session_id => session},
+      session_order: [session_id],
       turns: %{turn_id => turn},
       invocations: %{invocation_id => invocation},
       messages: %{
@@ -565,7 +574,7 @@ defmodule ReyCode.TUI.ActivityTest do
       }
     }
 
-    {projection, room_id, invocation_id}
+    {projection, session_id, invocation_id}
   end
 
   defp participant(id, name, kind) do

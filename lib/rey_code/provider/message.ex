@@ -2,7 +2,7 @@ defmodule ReyCode.Provider.Message do
   @moduledoc """
   One normalized conversation message supplied to a provider round.
 
-  Messages carry room context (`:user` and plain `:assistant` text), assistant
+  Messages carry session context (`:user` and plain `:assistant` text), assistant
   tool-call batches, and tool results keyed by call ID (`:tool`).
   """
 

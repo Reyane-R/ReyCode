@@ -4,8 +4,8 @@ defmodule ReyCode.Orchestration.SquadFSM do
   alias ReyCode.Orchestration.Squad
   alias ReyCode.Orchestration.Squad.Phase
 
-  @enforce_keys [:room_id]
-  defstruct room_id: nil,
+  @enforce_keys [:session_id]
+  defstruct session_id: nil,
             phase_index: 0,
             cycle: 0,
             rework_count: 0,
@@ -13,7 +13,7 @@ defmodule ReyCode.Orchestration.SquadFSM do
             outcome: nil
 
   @type t :: %__MODULE__{
-          room_id: String.t(),
+          session_id: String.t(),
           phase_index: non_neg_integer(),
           cycle: non_neg_integer(),
           rework_count: non_neg_integer(),
@@ -23,11 +23,11 @@ defmodule ReyCode.Orchestration.SquadFSM do
 
   @type transition :: {:continue, t()} | {:complete, t()} | {:error, atom()}
 
-  @doc "Creates squad workflow state for a room with an optional rework budget."
+  @doc "Creates squad workflow state for a session with an optional rework budget."
   @spec new(String.t(), keyword()) :: t()
-  def new(room_id, opts \\ []) do
+  def new(session_id, opts \\ []) do
     %__MODULE__{
-      room_id: room_id,
+      session_id: session_id,
       rework_budget: Keyword.get(opts, :rework_budget, Squad.max_rework())
     }
   end

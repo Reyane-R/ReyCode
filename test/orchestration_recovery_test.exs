@@ -9,7 +9,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     Invocation,
     Participant,
     Projector,
-    Room,
+    Session,
     Turn
   }
 
@@ -82,7 +82,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     start_supervised!({Registry, keys: :duplicate, name: @event_registry})
     start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
 
-    room_id = "room-midstream"
+    session_id = "room-midstream"
     turn_id = "turn-midstream"
 
     builder_participant = %Participant{
@@ -96,8 +96,8 @@ defmodule ReyCode.Orchestration.RecoveryTest do
 
     entries =
       [
-        EventEntries.room_created(
-          room_id,
+        EventEntries.session_created(
+          session_id,
           "midstream",
           "Midstream",
           System.tmp_dir!(),
@@ -105,7 +105,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
         )
       ] ++
         EventEntries.queue_turn(
-          room_id,
+          session_id,
           "Recover this",
           :compare,
           turn_id,
@@ -114,10 +114,10 @@ defmodule ReyCode.Orchestration.RecoveryTest do
           :operator,
           nil
         ) ++
-        [EventEntries.turn_started(%Turn{id: turn_id, room_id: room_id})] ++
+        [EventEntries.turn_started(%Turn{id: turn_id, session_id: session_id})] ++
         EventEntries.open_invocations(
-          %Room{id: room_id},
-          %Turn{id: turn_id, room_id: room_id},
+          %Session{id: session_id},
+          %Turn{id: turn_id, session_id: session_id},
           [
             %{
               participant_id: builder_participant.id,
@@ -133,7 +133,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
         [
           EventEntries.invocation_started(%Invocation{
             id: "inv-builder",
-            room_id: room_id,
+            session_id: session_id,
             turn_id: turn_id,
             message_id: "msg-builder"
           })
@@ -194,8 +194,10 @@ defmodule ReyCode.Orchestration.RecoveryTest do
        config: RuntimeConfig.fresh(global_concurrency: 3, workspace_concurrency: 3)}
     )
 
-    assert {:ok, room_id} = Engine.create_room("Ghost Room", System.tmp_dir!(), @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Start", :compare, @engine)
+    assert {:ok, session_id} =
+             Engine.create_blank_session("Ghost Room", System.tmp_dir!(), @engine)
+
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Start", :compare, @engine)
 
     Wait.projection(@engine, fn projection ->
       turn = projection.turns[turn_id]
@@ -249,7 +251,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     start_supervised!({Registry, keys: :duplicate, name: @event_registry})
     start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
 
-    room_id = "room-non-replayable"
+    session_id = "room-non-replayable"
     turn_id = "turn-non-replayable"
     invocation_id = "inv-non-replayable"
     message_id = "msg-non-replayable"
@@ -268,40 +270,40 @@ defmodule ReyCode.Orchestration.RecoveryTest do
                  {
                    :room_created,
                    %{
-                     "room_id" => room_id,
+                     "room_id" => session_id,
                      "slug" => "non-replayable",
                      "title" => "Non-replayable",
                      "workspace" => System.tmp_dir!(),
                      "participants" => [participant]
                    },
-                   metadata(:room, room_id, room_id, turn_id)
+                   metadata(:room, session_id, session_id, turn_id)
                  },
                  {
                    :message_posted,
                    %{
                      "message_id" => "msg-user-non-replayable",
-                     "room_id" => room_id,
+                     "room_id" => session_id,
                      "turn_id" => turn_id,
                      "author_name" => "You",
                      "body" => "Recover safely"
                    },
-                   metadata(:room, room_id, room_id, turn_id)
+                   metadata(:room, session_id, session_id, turn_id)
                  },
                  {
                    :turn_queued,
                    %{
                      "turn_id" => turn_id,
-                     "room_id" => room_id,
+                     "room_id" => session_id,
                      "user_message_id" => "msg-user-non-replayable",
                      "mode" => "compare",
                      "context_through_sequence" => 2
                    },
-                   metadata(:turn, turn_id, room_id, turn_id)
+                   metadata(:turn, turn_id, session_id, turn_id)
                  },
                  {
                    :turn_started,
-                   %{"turn_id" => turn_id, "room_id" => room_id},
-                   metadata(:turn, turn_id, room_id, turn_id)
+                   %{"turn_id" => turn_id, "room_id" => session_id},
+                   metadata(:turn, turn_id, session_id, turn_id)
                  },
                  {
                    :assistant_message_opened,
@@ -309,14 +311,14 @@ defmodule ReyCode.Orchestration.RecoveryTest do
                      "invocation_id" => invocation_id,
                      "message_id" => message_id,
                      "turn_id" => turn_id,
-                     "room_id" => room_id,
+                     "room_id" => session_id,
                      "participant" => participant,
                      "stage" => 0,
                      "label" => "independent response",
                      "system_prompt" => "Respond independently",
                      "attempt" => 1
                    },
-                   metadata(:invocation, invocation_id, room_id, turn_id)
+                   metadata(:invocation, invocation_id, session_id, turn_id)
                  },
                  {
                    :invocation_started,
@@ -324,9 +326,9 @@ defmodule ReyCode.Orchestration.RecoveryTest do
                      "invocation_id" => invocation_id,
                      "message_id" => message_id,
                      "turn_id" => turn_id,
-                     "room_id" => room_id
+                     "room_id" => session_id
                    },
-                   metadata(:invocation, invocation_id, room_id, turn_id)
+                   metadata(:invocation, invocation_id, session_id, turn_id)
                  }
                ],
                store
@@ -364,11 +366,11 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     end)
   end
 
-  defp metadata(type, aggregate_id, room_id, correlation_id) do
+  defp metadata(type, aggregate_id, session_id, correlation_id) do
     [
       aggregate_type: type,
       aggregate_id: aggregate_id,
-      room_id: room_id,
+      room_id: session_id,
       correlation_id: correlation_id
     ]
   end

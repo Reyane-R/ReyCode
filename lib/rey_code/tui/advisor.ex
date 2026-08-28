@@ -9,8 +9,8 @@ defmodule ReyCode.TUI.Advisor do
 
   @spec run(map(), String.t() | nil) :: {:noreply, map()}
   def run(term, brief \\ nil) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
-    advisor = advisor(room)
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+    advisor = advisor(session)
 
     cond do
       is_nil(advisor) ->
@@ -29,10 +29,10 @@ defmodule ReyCode.TUI.Advisor do
   @spec advisor(map() | nil) :: map() | nil
   def advisor(nil), do: nil
 
-  def advisor(room),
+  def advisor(session),
     do:
       Enum.find(
-        room.participants,
+        session.participants,
         &(String.downcase(&1.name || "") == "advisor" and &1.kind == :task)
       )
 
@@ -41,7 +41,7 @@ defmodule ReyCode.TUI.Advisor do
 
   defp delegate(term, advisor, brief, delegate_fun) do
     case delegate_fun.(
-           term.assigns.selected_room_id,
+           term.assigns.selected_session_id,
            advisor.id,
            brief,
            term.assigns.engine

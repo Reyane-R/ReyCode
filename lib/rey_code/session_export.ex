@@ -9,65 +9,65 @@ defmodule ReyCode.SessionExport do
 
   @doc "Renders one Session without mutating Projection or EventStore state."
   @spec render(Projection.t(), String.t(), format()) :: {:ok, String.t()} | {:error, atom()}
-  def render(%Projection{} = projection, room_id, format) when format in [:markdown, :html] do
-    case projection.rooms[room_id] do
+  def render(%Projection{} = projection, session_id, format) when format in [:markdown, :html] do
+    case projection.sessions[session_id] do
       nil -> {:error, :session_not_found}
-      room -> room |> document(projection, format) |> bounded()
+      session -> session |> document(projection, format) |> bounded()
     end
   end
 
   @doc "Writes one deterministic Session export to an explicit path."
   @spec write(Projection.t(), String.t(), Path.t(), format()) :: :ok | {:error, term()}
-  def write(projection, room_id, path, format) do
-    with {:ok, content} <- render(projection, room_id, format),
+  def write(projection, session_id, path, format) do
+    with {:ok, content} <- render(projection, session_id, format),
          :ok <- File.mkdir_p(Path.dirname(path)) do
       File.write(path, content, [:binary])
     end
   end
 
-  defp document(room, projection, :markdown) do
+  defp document(session, projection, :markdown) do
     header = [
       "# ",
-      room.title,
+      session.title,
       "\n\n",
       "- Session: `",
-      room.id,
+      session.id,
       "`\n- Workspace: `",
-      room.workspace,
+      session.workspace,
       "`\n",
-      parent_markdown(room),
+      parent_markdown(session),
       "\n"
     ]
 
-    [header | Enum.map(messages(room, projection), &message_markdown(&1, projection))]
+    [header | Enum.map(messages(session, projection), &message_markdown(&1, projection))]
     |> IO.iodata_to_binary()
   end
 
-  defp document(room, projection, :html) do
-    body = Enum.map(messages(room, projection), &message_html(&1, projection))
+  defp document(session, projection, :html) do
+    body = Enum.map(messages(session, projection), &message_html(&1, projection))
 
     [
       "<!doctype html><html><head><meta charset=\"utf-8\"><title>",
-      html(room.title),
+      html(session.title),
       "</title><style>",
       "body{max-width:900px;margin:2rem auto;font:16px system-ui;line-height:1.5}",
       "article{border-top:1px solid #ccc;padding:1rem 0}pre{white-space:pre-wrap}",
       "code{background:#eee;padding:.1rem .3rem}</style></head><body><h1>",
-      html(room.title),
+      html(session.title),
       "</h1><p><code>",
-      html(room.id),
+      html(session.id),
       "</code> · <code>",
-      html(room.workspace),
+      html(session.workspace),
       "</code></p>",
-      parent_html(room),
+      parent_html(session),
       body,
       "</body></html>"
     ]
     |> IO.iodata_to_binary()
   end
 
-  defp messages(room, projection) do
-    room.message_order
+  defp messages(session, projection) do
+    session.message_order
     |> Enum.reverse()
     |> Enum.map(&projection.messages[&1])
   end
@@ -138,19 +138,20 @@ defmodule ReyCode.SessionExport do
     end
   end
 
-  defp parent_markdown(%{parent_room_id: nil}), do: ""
+  defp parent_markdown(%{parent_session_id: nil}), do: ""
 
-  defp parent_markdown(room),
-    do: "- Forked from `#{room.parent_room_id}` at sequence #{room.forked_from_sequence}\n"
+  defp parent_markdown(session),
+    do:
+      "- Forked from `#{session.parent_session_id}` at sequence #{session.forked_from_sequence}\n"
 
-  defp parent_html(%{parent_room_id: nil}), do: ""
+  defp parent_html(%{parent_session_id: nil}), do: ""
 
-  defp parent_html(room) do
+  defp parent_html(session) do
     [
       "<p>Forked from <code>",
-      html(room.parent_room_id),
+      html(session.parent_session_id),
       "</code> at sequence ",
-      Integer.to_string(room.forked_from_sequence),
+      Integer.to_string(session.forked_from_sequence),
       "</p>"
     ]
   end

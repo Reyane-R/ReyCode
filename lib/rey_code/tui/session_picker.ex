@@ -70,9 +70,9 @@ defmodule ReyCode.TUI.SessionPicker do
   defp sessions(term) do
     assigns = term_assigns(term)
 
-    assigns.projection.room_order
+    assigns.projection.session_order
     |> Enum.reverse()
-    |> Enum.map(&assigns.projection.rooms[&1])
+    |> Enum.map(&assigns.projection.sessions[&1])
     |> Enum.filter(&(&1.message_order != []))
   end
 

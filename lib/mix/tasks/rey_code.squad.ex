@@ -60,8 +60,8 @@ defmodule Mix.Tasks.ReyCode.Squad do
 
     with_application_env(config.application_env, fn ->
       provider = start_live_runtime(config)
-      {room_id, workspace} = prepare_room(config, provider)
-      turn = execute_turn(room_id, workspace, config)
+      {session_id, workspace} = prepare_session(config, provider)
+      turn = execute_turn(session_id, workspace, config)
       Mix.shell().info(render(turn, workspace, config.format))
 
       case turn do
@@ -152,41 +152,41 @@ defmodule Mix.Tasks.ReyCode.Squad do
       else: {:error, :unknown_provider}
   end
 
-  defp prepare_room(config, provider) do
-    room_id = select_room(config.workspace)
+  defp prepare_session(config, provider) do
+    session_id = select_session(config.workspace)
 
     workspace =
       case ReyCode.snapshot() do
-        %{rooms: %{^room_id => %{workspace: workspace}}} -> workspace
-        _snapshot -> Mix.raise("Squad room #{room_id} is unavailable")
+        %{sessions: %{^session_id => %{workspace: workspace}}} -> workspace
+        _snapshot -> Mix.raise("Squad session #{session_id} is unavailable")
       end
 
     role_ids = Enum.map(Squad.roles(), & &1.id)
 
-    case ReyCode.configure_squad_roles(room_id, role_ids, provider, config.model) do
-      :ok -> {room_id, workspace}
+    case ReyCode.configure_squad_roles(session_id, role_ids, provider, config.model) do
+      :ok -> {session_id, workspace}
       {:error, reason} -> Mix.raise("Could not configure squad roles: #{inspect(reason)}")
     end
   end
 
-  defp select_room(nil) do
-    case ReyCode.snapshot().room_order do
-      [room_id | _rest] -> room_id
-      [] -> Mix.raise("No squad room is available")
+  defp select_session(nil) do
+    case ReyCode.snapshot().session_order do
+      [session_id | _rest] -> session_id
+      [] -> Mix.raise("No squad session is available")
     end
   end
 
-  defp select_room(workspace) do
-    case ReyCode.create_room("Squad", workspace) do
-      {:ok, room_id} -> room_id
-      {:error, reason} -> Mix.raise("Could not create squad room: #{inspect(reason)}")
+  defp select_session(workspace) do
+    case ReyCode.create_blank_session("Squad", workspace) do
+      {:ok, session_id} -> session_id
+      {:error, reason} -> Mix.raise("Could not create squad session: #{inspect(reason)}")
     end
   end
 
-  defp execute_turn(room_id, workspace, config) do
+  defp execute_turn(session_id, workspace, config) do
     Mix.shell().info("Workspace: #{workspace}")
 
-    case ReyCode.post_message(room_id, config.theme, :squad) do
+    case ReyCode.post_message(session_id, config.theme, :squad) do
       {:ok, turn_id} -> wait_for_turn(turn_id, config)
       {:error, reason} -> Mix.raise("Could not start squad turn: #{inspect(reason)}")
     end
@@ -277,7 +277,7 @@ defmodule Mix.Tasks.ReyCode.Squad do
   def summary(turn, workspace) do
     %{
       turn_id: turn.id,
-      room_id: turn.room_id,
+      session_id: turn.session_id,
       workspace: workspace,
       status: turn.outcome || turn.status,
       workflow_version: turn.squad.workflow_version,

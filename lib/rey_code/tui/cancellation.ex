@@ -10,9 +10,9 @@ defmodule ReyCode.TUI.Cancellation do
   @doc "Opens cancellation confirmation for the active turn, if one exists."
   @spec open(map()) :: map()
   def open(term) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
 
-    case room.active_turn_id do
+    case session.active_turn_id do
       nil ->
         SlashPalette.close(term, "No running turn to cancel")
 

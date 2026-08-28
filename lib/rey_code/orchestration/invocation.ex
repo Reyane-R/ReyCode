@@ -18,7 +18,7 @@ defmodule ReyCode.Orchestration.Invocation do
 
   @fields [
     :id,
-    :room_id,
+    :session_id,
     :turn_id,
     :message_id,
     :participant,
@@ -51,7 +51,7 @@ defmodule ReyCode.Orchestration.Invocation do
   ]
 
   defstruct id: nil,
-            room_id: nil,
+            session_id: nil,
             turn_id: nil,
             message_id: nil,
             participant: nil,
@@ -84,7 +84,7 @@ defmodule ReyCode.Orchestration.Invocation do
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
-          room_id: String.t() | nil,
+          session_id: String.t() | nil,
           turn_id: String.t() | nil,
           message_id: String.t() | nil,
           participant: Participant.t() | Seat.t() | nil,

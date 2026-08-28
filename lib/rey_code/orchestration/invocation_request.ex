@@ -13,17 +13,17 @@ defmodule ReyCode.Orchestration.InvocationRequest do
   @spec build(Invocation.t(), Projection.t(), request_policy()) :: Request.t()
   def build(invocation, projection, request_policy) do
     turn = projection.turns[invocation.turn_id]
-    room = projection.rooms[invocation.room_id]
+    session = projection.sessions[invocation.session_id]
 
     %Request{
       invocation_id: invocation.id,
       turn_id: turn.id,
-      room_id: room.id,
+      session_id: session.id,
       mode: turn.mode,
       participant: invocation.participant,
       system_prompt: system_prompt(invocation),
-      messages: Context.messages(room, turn, invocation, projection),
-      workspace: invocation.execution_context.workspace || room.workspace,
+      messages: Context.messages(session, turn, invocation, projection),
+      workspace: invocation.execution_context.workspace || session.workspace,
       resume_from: invocation.last_frame_sequence,
       round_index: length(invocation.rounds),
       attempt: invocation.attempt,

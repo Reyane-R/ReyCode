@@ -13,7 +13,7 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
       "qa_author" => participant("qa_author", "QA Author")
     }
 
-    room = %{squad_seats: roles}
+    session = %{squad_seats: roles}
 
     turn = %{
       id: "turn-1",
@@ -26,7 +26,7 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
       }
     }
 
-    context = %{room: room, turn: turn, projection: %{invocations: %{}}}
+    context = %{session: session, turn: turn, projection: %{invocations: %{}}}
     specs = Squad.specs_for_phase(context, 4, 0)
 
     assert length(specs) == 2
@@ -203,7 +203,7 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
       id: "inv-1",
       message_id: "msg-1",
       turn_id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       participant: participant(role_id, role_id),
       phase_index: 1,
       phase: phase,

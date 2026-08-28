@@ -88,7 +88,7 @@ defmodule ReyCode.ModelEvalTaskTest do
     configured_source_room(stack.workspace, ["Luna", "Review"])
 
     assert {:ok, stale_room} =
-             Engine.create_room("Newer unconfigured copy", stack.workspace, @engine)
+             Engine.create_blank_session("Newer unconfigured copy", stack.workspace, @engine)
 
     assert {:ok, _stale_id} =
              Engine.add_task_participant(stale_room, "Luna", "stale profile", @engine)
@@ -163,7 +163,7 @@ defmodule ReyCode.ModelEvalTaskTest do
     snapshot = Engine.snapshot(@engine)
 
     primary =
-      Enum.find(Map.fetch!(snapshot.rooms, source_room).participants, &(&1.kind == :primary))
+      Enum.find(Map.fetch!(snapshot.sessions, source_room).participants, &(&1.kind == :primary))
 
     assert :ok =
              Engine.configure_participants(source_room, [primary.id], :simulator, nil, @engine)
@@ -182,10 +182,12 @@ defmodule ReyCode.ModelEvalTaskTest do
 
   test "eval admission rejects a room with no task participants" do
     stack = start_stack()
-    assert {:ok, room_id} = Engine.create_room("No candidates", stack.workspace, @engine)
+
+    assert {:ok, session_id} =
+             Engine.create_blank_session("No candidates", stack.workspace, @engine)
 
     assert {:error, :eval_participants_required} =
-             Engine.post_message(room_id, "Never strand this room", :eval, @engine)
+             Engine.post_message(session_id, "Never strand this room", :eval, @engine)
   end
 
   test "renders identical human and JSON fields and enforces both exit branches" do
@@ -259,17 +261,23 @@ defmodule ReyCode.ModelEvalTaskTest do
   end
 
   defp configured_source_room(workspace, names) do
-    assert {:ok, room_id} = Engine.create_room("Source profiles", workspace, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Source profiles", workspace, @engine)
 
     Enum.each(names, fn name ->
       assert {:ok, participant_id} =
-               Engine.add_task_participant(room_id, name, "#{name} perspective", @engine)
+               Engine.add_task_participant(session_id, name, "#{name} perspective", @engine)
 
       assert :ok =
-               Engine.configure_participants(room_id, [participant_id], :simulator, nil, @engine)
+               Engine.configure_participants(
+                 session_id,
+                 [participant_id],
+                 :simulator,
+                 nil,
+                 @engine
+               )
     end)
 
-    room_id
+    session_id
   end
 
   defp start_stack(overrides \\ []) do

@@ -632,7 +632,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     %Request{
       invocation_id: "inv-real",
       turn_id: "turn-real",
-      room_id: "room-real",
+      session_id: "room-real",
       mode: :compare,
       participant: %{
         id: "builder",

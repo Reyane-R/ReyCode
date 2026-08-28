@@ -27,8 +27,8 @@ defmodule ReyCode.Orchestration.Engine.Execution do
   def recover(state) do
     state = Lifecycle.recover_invocations(state)
 
-    state.projection.room_order
-    |> Enum.reduce(state, fn room_id, acc -> Lifecycle.recover_room(acc, room_id) end)
+    state.projection.session_order
+    |> Enum.reduce(state, fn session_id, acc -> Lifecycle.recover_session(acc, session_id) end)
   end
 
   @doc """

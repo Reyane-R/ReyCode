@@ -8,21 +8,21 @@ defmodule ReyCode.Orchestration.Projection do
 
   @behaviour Access
 
-  alias ReyCode.Orchestration.{Invocation, Message, Room, Turn}
+  alias ReyCode.Orchestration.{Invocation, Message, Session, Turn}
 
-  @fields [:sequence, :rooms, :room_order, :messages, :turns, :invocations]
+  @fields [:sequence, :sessions, :session_order, :messages, :turns, :invocations]
 
   defstruct sequence: 0,
-            rooms: %{},
-            room_order: [],
+            sessions: %{},
+            session_order: [],
             messages: %{},
             turns: %{},
             invocations: %{}
 
   @type t :: %__MODULE__{
           sequence: non_neg_integer(),
-          rooms: %{optional(String.t()) => Room.t()},
-          room_order: [String.t()],
+          sessions: %{optional(String.t()) => Session.t()},
+          session_order: [String.t()],
           messages: %{optional(String.t()) => Message.t()},
           turns: %{optional(String.t()) => Turn.t()},
           invocations: %{optional(String.t()) => Invocation.t()}
@@ -31,16 +31,29 @@ defmodule ReyCode.Orchestration.Projection do
   @doc "Converts a decoded or legacy projection map into the current typed records."
   @spec from_map(t() | map()) :: t()
   def from_map(projection) when is_map(projection) do
+    projection = normalize_legacy_keys(projection)
     projection = struct!(__MODULE__, Map.take(projection, @fields))
 
     %{
       projection
-      | rooms: normalize_records(projection.rooms, &Room.from_map/1),
+      | sessions: normalize_records(projection.sessions, &Session.from_map/1),
         messages: normalize_records(projection.messages, &Message.from_map/1),
         turns: normalize_records(projection.turns, &Turn.from_map/1),
         invocations: normalize_records(projection.invocations, &Invocation.from_map/1)
     }
   end
+
+  defp normalize_legacy_keys(projection) do
+    {legacy_sessions, projection} = Map.pop(projection, :rooms)
+    {legacy_order, projection} = Map.pop(projection, :room_order)
+
+    projection
+    |> put_legacy(:sessions, legacy_sessions)
+    |> put_legacy(:session_order, legacy_order)
+  end
+
+  defp put_legacy(map, _key, nil), do: map
+  defp put_legacy(map, key, value), do: Map.put_new(map, key, value)
 
   @doc "Returns the invocation awaiting a tool decision in a turn, if any."
   @spec pending_tool_invocation(t(), String.t() | nil) :: Invocation.t() | nil
@@ -56,13 +69,13 @@ defmodule ReyCode.Orchestration.Projection do
 
   @doc "Returns delegated child Invocations represented in one Session's message order."
   @spec delegated_invocations(t(), String.t()) :: [Invocation.t()]
-  def delegated_invocations(projection, room_id) do
-    case Map.get(projection.rooms, room_id) do
+  def delegated_invocations(projection, session_id) do
+    case Map.get(projection.sessions, session_id) do
       nil ->
         []
 
-      room ->
-        room.message_order
+      session ->
+        session.message_order
         |> Enum.map(&projection.messages[&1])
         |> Enum.filter(&(&1 && &1.invocation_id))
         |> Enum.map(&projection.invocations[&1.invocation_id])
@@ -73,25 +86,25 @@ defmodule ReyCode.Orchestration.Projection do
 
   @doc "Returns the newest Invocation awaiting an OperatorQuestion in one Session."
   @spec pending_question_invocation(t(), String.t()) :: Invocation.t() | nil
-  def pending_question_invocation(projection, room_id) do
-    room_invocations(projection, room_id)
+  def pending_question_invocation(projection, session_id) do
+    session_invocations(projection, session_id)
     |> Enum.find(&(not is_nil(Map.get(&1, :coordination) && &1.coordination.pending_question)))
   end
 
   @doc "Returns the newest Invocation with a WorkPlan in one Session."
   @spec work_plan_invocation(t(), String.t()) :: Invocation.t() | nil
-  def work_plan_invocation(projection, room_id) do
-    room_invocations(projection, room_id)
+  def work_plan_invocation(projection, session_id) do
+    session_invocations(projection, session_id)
     |> Enum.find(&(not is_nil(Map.get(&1, :coordination) && &1.coordination.work_plan)))
   end
 
-  defp room_invocations(projection, room_id) do
-    case Map.get(projection.rooms, room_id) do
+  defp session_invocations(projection, session_id) do
+    case Map.get(projection.sessions, session_id) do
       nil ->
         []
 
-      room ->
-        room.message_order
+      session ->
+        session.message_order
         |> Enum.map(&projection.messages[&1])
         |> Enum.filter(&(&1 && &1.invocation_id))
         |> Enum.map(&projection.invocations[&1.invocation_id])
