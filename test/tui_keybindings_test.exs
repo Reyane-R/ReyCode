@@ -82,6 +82,58 @@ defmodule ReyCode.TUI.KeybindingsTest do
            ]
   end
 
+  test "invalid keybinding shapes fail closed with specific bounded diagnostics" do
+    root =
+      Path.join(
+        System.tmp_dir!(),
+        "reycode-keybinding-errors-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf!(root) end)
+    definitions = ReyCode.TUI.binding_actions()
+
+    oversized = Path.join(root, "oversized.json")
+    File.write!(oversized, String.duplicate("x", 32_769))
+
+    assert Keybindings.resolve(definitions, oversized).errors == [
+             "Keybindings file exceeds 32 KB"
+           ]
+
+    assert Keybindings.resolve(definitions, root).errors == [
+             "Keybindings file unreadable: eisdir"
+           ]
+
+    not_object = Path.join(root, "array.json")
+    File.write!(not_object, "[]")
+
+    assert Keybindings.resolve(definitions, not_object).errors == [
+             "Keybindings JSON must be an object"
+           ]
+
+    too_many = Path.join(root, "many.json")
+    many = Map.new(1..65, &{"unknown.#{&1}", "^A"})
+    File.write!(too_many, Jason.encode!(many))
+
+    assert Keybindings.resolve(definitions, too_many).errors == [
+             "Keybindings file has too many actions"
+           ]
+
+    invalid = Path.join(root, "invalid.json")
+
+    File.write!(
+      invalid,
+      Jason.encode!(%{
+        "app.session.tree" => "",
+        "app.tools.inspect" => ["1", "2", "3", "4", "5"]
+      })
+    )
+
+    errors = Keybindings.resolve(definitions, invalid).errors
+    assert "app.session.tree: Chord must be a non-empty bounded string" in errors
+    assert "app.tools.inspect: Use one chord string or at most four chord strings" in errors
+  end
+
   test "feature shortcuts leave an existing modal in control" do
     term = %Breeze.Term{assigns: %{modal: :help}}
 

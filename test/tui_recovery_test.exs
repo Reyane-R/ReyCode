@@ -65,4 +65,27 @@ defmodule ReyCode.TUI.RecoveryTest do
     assert dequeued.assigns.drafts[session.id] == "Recovered follow-up"
     assert_receive {:dequeued, "session"}
   end
+
+  test "retry reports when the Session has no failed Turn" do
+    {:ok, engine} = EngineStub.start_link(self())
+    session = %Session{id: "empty", message_order: []}
+
+    term = %Breeze.Term{
+      assigns: %{
+        drafts: %{session.id => ""},
+        engine: engine,
+        modal: nil,
+        notice: nil,
+        projection: %Projection{
+          sessions: %{session.id => session},
+          session_order: [session.id]
+        },
+        selected_session_id: session.id,
+        slash: nil
+      }
+    }
+
+    assert {:noreply, unchanged} = Recovery.retry_latest(term)
+    assert unchanged.assigns.notice == "No failed Turn to retry"
+  end
 end
