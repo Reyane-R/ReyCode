@@ -71,6 +71,34 @@ defmodule ReyCode.Orchestration.Projection do
     end
   end
 
+  @doc "Returns the newest Invocation awaiting an OperatorQuestion in one Session."
+  @spec pending_question_invocation(t(), String.t()) :: Invocation.t() | nil
+  def pending_question_invocation(projection, room_id) do
+    room_invocations(projection, room_id)
+    |> Enum.find(&(not is_nil(Map.get(&1, :coordination) && &1.coordination.pending_question)))
+  end
+
+  @doc "Returns the newest Invocation with a WorkPlan in one Session."
+  @spec work_plan_invocation(t(), String.t()) :: Invocation.t() | nil
+  def work_plan_invocation(projection, room_id) do
+    room_invocations(projection, room_id)
+    |> Enum.find(&(not is_nil(Map.get(&1, :coordination) && &1.coordination.work_plan)))
+  end
+
+  defp room_invocations(projection, room_id) do
+    case Map.get(projection.rooms, room_id) do
+      nil ->
+        []
+
+      room ->
+        room.message_order
+        |> Enum.map(&projection.messages[&1])
+        |> Enum.filter(&(&1 && &1.invocation_id))
+        |> Enum.map(&projection.invocations[&1.invocation_id])
+        |> Enum.filter(& &1)
+    end
+  end
+
   @impl Access
   def fetch(projection, key), do: Map.fetch(projection, key)
 

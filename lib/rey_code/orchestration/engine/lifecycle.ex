@@ -132,7 +132,13 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     turn.invocation_order
     |> Enum.map(&state.projection.invocations[&1])
     |> Enum.filter(
-      &(&1.status in [:queued, :running, :waiting_tool_approval, :awaiting_delegation])
+      &(&1.status in [
+          :queued,
+          :running,
+          :waiting_tool_approval,
+          :waiting_operator,
+          :awaiting_delegation
+        ])
     )
   end
 
@@ -151,7 +157,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     Enum.flat_map(invocations, fn invocation ->
       invocation
       |> ToolRuns.running()
-      |> Enum.filter(&(&1.tool == Delegation.tool_name()))
+      |> Enum.filter(&(&1.tool in [Delegation.tool_name(), Delegation.batch_tool_name()]))
       |> Enum.map(fn run ->
         EventEntries.tool_run_failed(invocation, run, %{
           "ok" => false,
@@ -223,6 +229,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   # A waiting approval is dormant: it holds no worker or admission slot and is
   # resumed only by the owner's resolution.
   defp recover_invocation(state, %{status: :waiting_tool_approval}), do: state
+  defp recover_invocation(state, %{status: :waiting_operator}), do: state
 
   # A suspended parent is dormant like a waiting approval; it resumes only on
   # its child's terminal event or the stale-delegation sweep below.
@@ -387,10 +394,15 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
         room = state.projection.rooms[turn.room_id]
 
-        if room.queued_turn_ids == [] do
-          state
-        else
-          start_turn(state, hd(room.queued_turn_ids))
+        cond do
+          turn.detached? ->
+            state
+
+          room.queued_turn_ids == [] ->
+            state
+
+          true ->
+            start_turn(state, hd(room.queued_turn_ids))
         end
     end
   end
@@ -521,6 +533,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
       else
         turn = state.projection.turns[invocation.turn_id]
         message = state.projection.messages[invocation.message_id]
+        outcome = detached_outcome(turn, invocation, message, outcome)
 
         opts = [
           human_release_review?:
@@ -537,26 +550,49 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     resume_parent_delegation(next, invocation, outcome)
   end
 
+  defp detached_outcome(%{detached?: false}, _invocation, _message, outcome), do: outcome
+
+  defp detached_outcome(_turn, child, message, {:completed, metadata}) do
+    with {:ok, _structured} <-
+           Delegation.validate_output(message.body, child.execution_context.output_schema),
+         :ok <- finish_isolation(child, :apply) do
+      {:completed, metadata}
+    else
+      {:error, reason} ->
+        _ = finish_isolation(child, :cleanup)
+
+        {:failed,
+         Failure.new(
+           :delegation_contract_failed,
+           "Detached delegation contract failed: #{inspect(reason)}"
+         )}
+    end
+  end
+
+  defp detached_outcome(_turn, child, _message, outcome) do
+    _ = finish_isolation(child, :cleanup)
+    outcome
+  end
+
   # A finished child hands its structured report to the suspended parent as
   # the spawn_task run's result and re-arms parent admission. Guarded by the
   # run's :running status, so replaying or re-entering resolves exactly once.
   defp resume_parent_delegation(state, %{delegated_from_invocation_id: nil}, _outcome),
     do: state
 
-  defp resume_parent_delegation(state, child, :cancelled) do
-    _ = finish_isolation(child, :cleanup)
-    state
-  end
-
   defp resume_parent_delegation(state, child, outcome) do
     parent = state.projection.invocations[child.delegated_from_invocation_id]
     run = parent && Map.get(parent.tool_runs, child.delegated_from_tool_run_id)
 
     cond do
-      parent == nil or run == nil ->
+      parent == nil or run == nil or run.status != :running ->
         state
 
-      run.status != :running ->
+      run.tool == Delegation.batch_tool_name() ->
+        resume_delegation_wave(state, parent, run)
+
+      outcome == :cancelled ->
+        _ = finish_isolation(child, :cleanup)
         state
 
       true ->
@@ -567,6 +603,63 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
         |> Admission.enqueue(parent.id)
         |> pump_admission()
     end
+  end
+
+  defp resume_delegation_wave(state, parent, run) do
+    children = Enum.map(run.child_invocation_ids, &state.projection.invocations[&1])
+
+    if children != [] and Enum.all?(children, &(&1.status in [:completed, :failed, :cancelled])) do
+      reports = Enum.map(children, &wave_child_report(&1, state.projection))
+      output = Jason.encode!(%{"tasks" => reports})
+      result = Delegation.report(true, output, aggregate_wave_usage(children))
+      entry = EventEntries.tool_run_completed(parent, run, result)
+
+      state
+      |> Persistence.append_and_apply!([entry])
+      |> Admission.enqueue(parent.id)
+      |> pump_admission()
+    else
+      state
+    end
+  end
+
+  defp wave_child_report(child, projection) do
+    body = projection.messages[child.message_id] && projection.messages[child.message_id].body
+    role = if child.dependencies == [], do: "worker", else: "integrator"
+
+    result =
+      cond do
+        child.status == :completed ->
+          with {:ok, structured} <-
+                 Delegation.validate_output(body, child.execution_context.output_schema),
+               :ok <- finish_isolation(child, :apply) do
+            %{"ok" => true, "output" => structured}
+          else
+            {:error, reason} ->
+              _ = finish_isolation(child, :cleanup)
+              %{"ok" => false, "error" => inspect(reason)}
+          end
+
+        child.status == :failed ->
+          _ = finish_isolation(child, :cleanup)
+          failure = child.error || interrupted_failure()
+          %{"ok" => false, "error" => Failure.to_wire(failure)}
+
+        true ->
+          _ = finish_isolation(child, :cleanup)
+          %{"ok" => false, "error" => "cancelled"}
+      end
+
+    Map.merge(result, %{
+      "invocation_id" => child.id,
+      "agent" => child.participant.name,
+      "role" => role,
+      "usage" => child.usage || %{}
+    })
+  end
+
+  defp aggregate_wave_usage(children) do
+    %{"children" => Enum.map(children, &(&1.usage || %{}))}
   end
 
   defp delegation_report(child, {:failed, error}, _projection) do
@@ -646,29 +739,31 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     |> Enum.reverse()
     |> Enum.map(&parent.tool_runs[&1])
     |> Enum.find(fn run ->
-      run != nil and run.tool == Delegation.tool_name() and run.status == :running and
-        run.child_invocation_id != nil
+      run != nil and
+        run.tool in [Delegation.tool_name(), Delegation.batch_tool_name()] and
+        run.status == :running and run_child_ids(run) != []
     end)
   end
 
   defp resume_stale_child(state, run) do
-    child = state.projection.invocations[run.child_invocation_id]
+    children = Enum.map(run_child_ids(run), &state.projection.invocations[&1])
 
-    cond do
-      is_nil(child) ->
+    case Enum.find(children, &(&1 && &1.status in [:completed, :failed])) do
+      nil ->
         state
 
-      child.status == :completed ->
+      %{status: :completed} = child ->
         resume_parent_delegation(state, child, {:completed, nil})
 
-      child.status == :failed ->
+      %{status: :failed} = child ->
         resume_parent_delegation(state, child, {:failed, child.error || interrupted_failure()})
-
-      true ->
-        # The child is still recovering; its own terminal event resumes the parent.
-        state
     end
   end
+
+  defp run_child_ids(%{child_invocation_ids: [], child_invocation_id: child_id}),
+    do: List.wrap(child_id)
+
+  defp run_child_ids(run), do: run.child_invocation_ids
 
   defp interrupted_failure,
     do: Failure.new(:interrupted, "The delegated task failed during recovery")

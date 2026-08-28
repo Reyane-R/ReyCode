@@ -18,11 +18,14 @@ defmodule ReyCode.TUI.SlashPalette do
     Delegation,
     Help,
     ModelPicker,
+    ModelTiers,
+    OperatorQuestion,
     SessionCommand,
     SessionPicker,
     Settings,
     ToolReview,
     WorkCommand,
+    WorkPlan,
     Workspace
   }
 
@@ -36,6 +39,7 @@ defmodule ReyCode.TUI.SlashPalette do
     "/connect",
     "/new",
     "/resume",
+    "/plan",
     "/help"
   ]
   @max_visible_row_count 12
@@ -360,6 +364,10 @@ defmodule ReyCode.TUI.SlashPalette do
   defp run_action(term, :settings, %{provider: provider, model: model}),
     do: {:noreply, Settings.open_at(term, provider, model)}
 
+  defp run_action(term, :model_tiers, nil), do: {:noreply, ModelTiers.open(term)}
+  defp run_action(term, :operator_question, nil), do: {:noreply, OperatorQuestion.open(term)}
+  defp run_action(term, :work_plan, nil), do: {:noreply, WorkPlan.open(term)}
+
   defp run_action(term, :theme, nil), do: ReyCode.TUI.cycle_theme(nil, close(term))
   defp run_action(term, :quit, nil), do: ReyCode.TUI.quit(nil, clear(term))
   defp run_action(term, :tool_review, nil), do: {:noreply, ToolReview.open(term)}
@@ -409,6 +417,7 @@ defmodule ReyCode.TUI.SlashPalette do
 
       room ->
         [
+          if(Projection.pending_question_invocation(projection, room_id), do: "/answer"),
           if(Projection.pending_tool_invocation(projection, room.active_turn_id), do: "/tools"),
           if(room.active_turn_id, do: "/steer"),
           if(room.active_turn_id, do: "/cancel"),

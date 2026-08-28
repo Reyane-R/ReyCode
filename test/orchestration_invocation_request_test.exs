@@ -137,6 +137,9 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
              phase: "implementation",
              cycle: 1,
              logical_work_id: "work-1",
+             model_tier: :default,
+             token_budget_tokens: 100_000,
+             used_tokens: nil,
              agent_delay_ms: 25,
              simulator_opts: [seed: 7],
              dependencies: ["inv-0"]

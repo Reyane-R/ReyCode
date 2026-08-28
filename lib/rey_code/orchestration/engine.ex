@@ -118,6 +118,13 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:delegate_task, room_id, participant_id, task})
   end
 
+  @doc "Records one OperatorQuestion option selection."
+  @spec answer_question(String.t(), String.t(), String.t(), GenServer.server()) ::
+          :ok | {:error, atom()}
+  def answer_question(invocation_id, question_id, option_id, server \\ __MODULE__) do
+    GenServer.call(server, {:answer_question, invocation_id, question_id, option_id})
+  end
+
   @doc "Cancels an unfinished turn and its outstanding provider invocations."
   @spec cancel_turn(term(), term(), GenServer.server()) :: :ok | {:error, atom()}
   def cancel_turn(turn_id, reason \\ "Cancelled by user", server \\ __MODULE__) do
@@ -129,6 +136,13 @@ defmodule ReyCode.Orchestration.Engine do
           :ok | {:error, atom()}
   def configure_participants(room_id, participant_ids, provider, model, server \\ __MODULE__) do
     GenServer.call(server, {:configure_participants, room_id, participant_ids, provider, model})
+  end
+
+  @doc "Assigns one ModelTier to a room Participant."
+  @spec configure_participant_tier(term(), term(), term(), GenServer.server()) ::
+          :ok | {:error, atom()}
+  def configure_participant_tier(room_id, participant_id, tier, server \\ __MODULE__) do
+    GenServer.call(server, {:configure_participant_tier, room_id, participant_id, tier})
   end
 
   @doc "Assigns a provider and model to selected squad roles in a room."
@@ -253,12 +267,18 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:delegate_task, room_id, participant_id, task}, _from, state),
     do: Turns.delegate_task(state, room_id, participant_id, task)
 
+  def handle_call({:answer_question, invocation_id, question_id, option_id}, _from, state),
+    do: Loop.answer_question(state, invocation_id, question_id, option_id)
+
   def handle_call(
         {:configure_participants, room_id, participant_ids, provider, model},
         _from,
         state
       ),
       do: Rooms.configure_participants(state, room_id, participant_ids, provider, model)
+
+  def handle_call({:configure_participant_tier, room_id, participant_id, tier}, _from, state),
+    do: Rooms.configure_participant_tier(state, room_id, participant_id, tier)
 
   def handle_call({:resolve_tool_run, invocation_id, run_id, raw_decision}, _from, state),
     do: Loop.resolve_tool_run(state, invocation_id, run_id, raw_decision)

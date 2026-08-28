@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Engine.Rooms do
   @moduledoc "Handles room creation and runtime configuration commands for the Engine."
 
-  alias ReyCode.Orchestration.{EventEntries, Validation}
+  alias ReyCode.Orchestration.{EventEntries, ModelTier, Validation}
 
   alias ReyCode.Orchestration.Engine.{
     Configuration,
@@ -140,6 +140,24 @@ defmodule ReyCode.Orchestration.Engine.Rooms do
     state
     |> Configuration.participants(room_id, participant_ids, provider, model)
     |> apply_configuration(state)
+  end
+
+  @doc "Validates and applies one Participant ModelTier."
+  @spec configure_participant_tier(map(), term(), term(), term()) :: response()
+  def configure_participant_tier(state, room_id, participant_id, raw_tier) do
+    room = state.projection.rooms[room_id]
+
+    with %{} <- room,
+         true <- Enum.any?(room.participants, &(&1.id == participant_id)),
+         {:ok, tier} <- ModelTier.normalize(raw_tier) do
+      entry = EventEntries.participant_tier_configured(room_id, participant_id, tier)
+      next = Persistence.append_and_apply!(state, [entry])
+      {:reply, :ok, next}
+    else
+      nil -> {:reply, {:error, :room_not_found}, state}
+      false -> {:reply, {:error, :participant_not_found}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
   @doc "Validates and applies squad-role runtime configuration."

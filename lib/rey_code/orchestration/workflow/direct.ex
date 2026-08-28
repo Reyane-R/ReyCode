@@ -8,13 +8,18 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
   def plan(room, turn, _projection) do
     participant = participant!(room, turn.participant_id)
     delegated? = not is_nil(turn.participant_id)
+    detached? = Map.get(turn, :detached?, false)
 
     [
       %{
         participant_id: participant.id,
         phase_index: 0,
-        label: if(delegated?, do: "delegated task", else: "assistant response"),
-        system_prompt: system_prompt(participant, delegated?)
+        label:
+          if(detached?,
+            do: "detached task",
+            else: if(delegated?, do: "delegated task", else: "assistant response")
+          ),
+        system_prompt: system_prompt(participant, delegated?, detached?, Map.get(turn, :task))
       }
     ]
   end
@@ -32,13 +37,19 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
       raise "room #{room.id} has no participant #{participant_id}"
   end
 
-  defp system_prompt(participant, false) do
+  defp system_prompt(participant, false, false, _task) do
     "You are #{participant.name}, the room's primary coding assistant. " <>
       "Responsibility: #{participant.perspective}."
   end
 
-  defp system_prompt(participant, true) do
+  defp system_prompt(participant, true, false, _task) do
     "You are the #{participant.name} task agent. " <>
       "Standing responsibility: #{participant.perspective}. Complete only the delegated task."
+  end
+
+  defp system_prompt(participant, true, true, task) do
+    "You are the #{participant.name} task agent. " <>
+      "Standing responsibility: #{participant.perspective}. " <>
+      "Complete the detached task and report the result.\n\nDetached task:\n#{task}"
   end
 end

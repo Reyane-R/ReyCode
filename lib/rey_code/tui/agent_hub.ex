@@ -66,11 +66,10 @@ defmodule ReyCode.TUI.AgentHub do
 
   @doc "Returns child Invocation rows in durable turn order."
   @spec children(map()) :: [map()]
-  def children(term) do
-    Projection.delegated_invocations(
-      term.assigns.projection,
-      term.assigns.selected_room_id
-    )
+  def children(%{assigns: assigns}), do: children(assigns)
+
+  def children(%{projection: projection, selected_room_id: room_id}) do
+    Projection.delegated_invocations(projection, room_id)
   end
 
   defp selected_child(term), do: Enum.at(children(term), term.assigns.agent_hub.index)
@@ -96,13 +95,23 @@ defmodule ReyCode.TUI.AgentHub do
           :for={{child, index} <- Enum.with_index(children(@term))}
           class={row_class(index, @term.agent_hub.index)}
         >
-          {marker(index, @term.agent_hub.index)} {child.participant.name} · {child.status} · {child.label}
+          {marker(index, @term.agent_hub.index)} {child.participant.name} · {child.status} · {child.label}{peer_label(child)}
         </box>
       </box>
       <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
       <box class="pt-2 text-muted">Arrow keys or j/k move   C cancel child   Esc close</box>
     </box>
     """
+  end
+
+  defp peer_label(child) do
+    messages =
+      case Map.get(child, :coordination) do
+        %{peer_messages: messages} -> messages
+        _legacy -> Map.get(child, :peer_messages, [])
+      end
+
+    if messages == [], do: "", else: " · #{length(messages)} peer messages"
   end
 
   defp row_class(index, index), do: "w-full px-1 bg-panel font-bold text-primary"

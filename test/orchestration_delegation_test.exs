@@ -648,6 +648,86 @@ defmodule ReyCode.Orchestration.DelegationTest do
                Delegation.validate_output("{}", schema)
     end
 
+    test "freezes a bounded Wave with ordered workers and a dependency-gated integrator" do
+      {invocation, projection} = policy_fixture(:direct)
+      room = projection.rooms[invocation.room_id]
+
+      nova = %Participant{
+        id: "nova",
+        name: "Nova",
+        perspective: "second worker",
+        provider: :simulator,
+        model: nil,
+        kind: :task
+      }
+
+      release = %Participant{
+        id: "release",
+        name: "Release",
+        perspective: "integration owner",
+        provider: :simulator,
+        model: nil,
+        kind: :task
+      }
+
+      projection =
+        put_in(
+          projection.rooms[room.id],
+          %{room | participants: room.participants ++ [nova, release]}
+        )
+
+      arguments = %{
+        "shared_context" => "Use the public contract",
+        "tasks" => [
+          %{"agent" => "Luna", "brief" => "first"},
+          %{"agent" => "Nova", "brief" => "second"}
+        ],
+        "integrator" => %{"agent" => "Release", "brief" => "integrate"}
+      }
+
+      assert {:ok, %Delegation.BatchPlan{} = wave} =
+               Delegation.authorize_batch(
+                 invocation,
+                 arguments,
+                 projection,
+                 %{max_children: 3, brief_max_bytes: 100}
+               )
+
+      assert Enum.map(wave.workers, & &1.participant.name) == ["Luna", "Nova"]
+      assert Enum.all?(wave.workers, &(&1.shared_context == "Use the public contract"))
+      assert wave.integrator.participant.name == "Release"
+
+      assert {:error, :child_cap_exceeded} =
+               Delegation.authorize_batch(
+                 invocation,
+                 arguments,
+                 projection,
+                 %{max_children: 2, brief_max_bytes: 100}
+               )
+
+      duplicate = put_in(arguments, ["integrator", "agent"], "Nova")
+
+      assert {:error, :duplicate_agent} =
+               Delegation.authorize_batch(
+                 invocation,
+                 duplicate,
+                 projection,
+                 %{max_children: 3, brief_max_bytes: 100}
+               )
+    end
+
+    test "freezes detached delivery on a single DelegationContract" do
+      {invocation, projection} = policy_fixture(:direct)
+
+      assert {:ok, %Delegation.Plan{detach?: true}} =
+               Delegation.authorize(
+                 invocation,
+                 %{"agent" => "Luna", "brief" => "background", "detach" => true},
+                 projection,
+                 %{max_children: 1, brief_max_bytes: 100}
+               )
+    end
+
     test "report truncation preserves UTF-8 and the byte cap" do
       report = Delegation.report(true, String.duplicate("é", 9_000), %{})
 

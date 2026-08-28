@@ -160,7 +160,13 @@ defmodule ReyCode.ToolRegistry do
 
   defp memory_mutation?(_tool, _arguments), do: false
 
-  @orchestration_tools MapSet.new(["spawn_task"])
+  @orchestration_tools MapSet.new([
+                         "ask_operator",
+                         "send_peer",
+                         "spawn_task",
+                         "spawn_tasks",
+                         "update_plan"
+                       ])
 
   @doc "Tools that route through the engine lifecycle instead of the workspace sandbox."
   @spec orchestration_tool_names() :: [String.t()]

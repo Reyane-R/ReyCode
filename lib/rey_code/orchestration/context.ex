@@ -14,7 +14,9 @@ defmodule ReyCode.Orchestration.Context do
   @spec messages(Room.t(), Turn.t(), Invocation.t(), Projection.t()) :: [Message.t()]
   def messages(room, turn, invocation, projection) do
     room_messages(room, turn, invocation, projection) ++
-      round_messages(invocation) ++ steering_messages(invocation.pending_steering)
+      round_messages(invocation) ++
+      steering_messages(invocation.pending_steering) ++
+      peer_messages(invocation.coordination.peer_messages)
   end
 
   @spec include?(
@@ -28,9 +30,16 @@ defmodule ReyCode.Orchestration.Context do
   # exposing it again makes the child repeat spawn_task and hit the depth
   # guard instead of doing the delegated work. Earlier completed room history
   # remains visible.
-  def include?(message, turn, %{delegated_from_invocation_id: parent_id}, _projection)
+  def include?(message, turn, %{delegated_from_invocation_id: parent_id} = invocation, projection)
       when not is_nil(parent_id) do
-    message.created_sequence < turn.context_through_sequence and message.status == :completed
+    dependency_message? =
+      message.invocation_id in invocation.dependencies and
+        message.status == :completed and
+        projection.invocations[message.invocation_id].status == :completed
+
+    dependency_message? or
+      (message.created_sequence < turn.context_through_sequence and
+         message.status == :completed)
   end
 
   def include?(message, %{mode: :debate} = turn, invocation, projection) do
@@ -126,6 +135,15 @@ defmodule ReyCode.Orchestration.Context do
       Message.new(
         role: :user,
         content: "Operator steering at a provider-round boundary:\n\n" <> correction.body
+      )
+    end)
+  end
+
+  defp peer_messages(messages) do
+    Enum.map(messages || [], fn message ->
+      Message.new(
+        role: :user,
+        content: "Peer message from #{message.sender_name}:\n\n#{message.body}"
       )
     end)
   end

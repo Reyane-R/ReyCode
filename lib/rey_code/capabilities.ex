@@ -10,6 +10,11 @@ defmodule ReyCode.Capabilities do
     },
     %{command: "/agent", description: "Create a task Participant", action: :agent_profile},
     %{command: "/agents", description: "Configure Participant models", action: :settings},
+    %{
+      command: "/answer",
+      description: "Answer a waiting Operator question",
+      action: :operator_question
+    },
     %{command: "/cancel", description: "Cancel the current task", action: :cancel},
     %{command: "/connect", description: "Configure providers", action: :settings},
     %{command: "/export", description: "Export the current Session", action: :export},
@@ -28,6 +33,11 @@ defmodule ReyCode.Capabilities do
       argument: :model
     },
     %{command: "/new", description: "Start a clean session", action: :new_session},
+    %{
+      command: "/plan",
+      description: "Inspect the newest Invocation WorkPlan",
+      action: :work_plan
+    },
     %{command: "/quit", description: "Quit ReyCode", action: :quit},
     %{
       command: "/resume",
@@ -54,6 +64,7 @@ defmodule ReyCode.Capabilities do
       argument: :participant
     },
     %{command: "/theme", description: "Change theme", action: :theme},
+    %{command: "/tier", description: "Configure Participant model tiers", action: :model_tiers},
     %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
     %{command: "/unqueue", description: "Cancel the newest queued follow-up", action: :unqueue},
     %{

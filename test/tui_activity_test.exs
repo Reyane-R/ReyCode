@@ -147,7 +147,9 @@ defmodule ReyCode.TUI.ActivityTest do
       {:bash, %{"command" => "mix test\n--trace"}, "Running", "mix test --trace"},
       {:edit, %{"path" => "lib/a.ex"}, "Editing", "lib/a.ex"},
       {:write, %{"path" => "README.md"}, "Writing", "README.md"},
-      {:spawn_task, %{"agent" => "Luna"}, "Delegating", "Luna"}
+      {:spawn_task, %{"agent" => "Luna"}, "Delegating", "Luna"},
+      {:spawn_tasks, %{"tasks" => [%{}, %{}]}, "Delegating", "2 agents"},
+      {:send_peer, %{"target" => "Nova"}, "Messaging", "Nova"}
     ]
 
     Enum.each(cases, fn {tool, arguments, label, target} ->

@@ -12,10 +12,14 @@ defmodule ReyCode.Orchestration.Projector do
   alias ReyCode.Orchestration.{
     Author,
     Invocation,
+    InvocationCoordination,
     InvocationExecution,
     Message,
     Mode,
+    ModelTier,
+    OperatorQuestion,
     Participant,
+    PeerMessage,
     Projection,
     ProviderRound,
     Room,
@@ -23,7 +27,8 @@ defmodule ReyCode.Orchestration.Projector do
     Steering,
     ToolAsk,
     ToolRun,
-    Turn
+    Turn,
+    WorkPlan
   }
 
   alias ReyCode.Orchestration.Squad.{
@@ -123,6 +128,25 @@ defmodule ReyCode.Orchestration.Projector do
     |> put_sequence(event.sequence)
   end
 
+  def apply(%Event{type: :participant_tier_configured, data: data} = event, state) do
+    {:ok, tier} = ModelTier.normalize(data["model_tier"])
+    participant_id = data["participant_id"]
+
+    update_room(state, data["room_id"], fn room ->
+      participants =
+        Enum.map(room.participants, fn
+          %{id: ^participant_id} = participant ->
+            %{participant | model_tier: tier}
+
+          participant ->
+            participant
+        end)
+
+      %{room | participants: participants}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
   def apply(%Event{type: :squad_role_configured, data: data} = event, state) do
     update_room(state, data["room_id"], fn room ->
       seat = %Seat{
@@ -145,7 +169,7 @@ defmodule ReyCode.Orchestration.Projector do
       room_id: data["room_id"],
       turn_id: data["turn_id"],
       invocation_id: nil,
-      author: Author.user(data["author_name"]),
+      author: posted_author(data),
       role: :user,
       status: :completed,
       body: data["body"],
@@ -167,6 +191,9 @@ defmodule ReyCode.Orchestration.Projector do
       input_kind: input_kind(data["input_kind"]),
       mode: mode(data["mode"]),
       participant_id: data["participant_id"],
+      source_invocation_id: data["source_invocation_id"],
+      task: data["task"],
+      detached?: data["detached"] == true,
       status: :queued,
       context_through_sequence: data["context_through_sequence"],
       invocation_order: [],
@@ -175,23 +202,35 @@ defmodule ReyCode.Orchestration.Projector do
       created_at: event.recorded_at
     }
 
-    update_room(state, turn.room_id, fn room ->
-      %{room | queued_turn_ids: room.queued_turn_ids ++ [turn.id]}
-    end)
-    |> Map.update!(:turns, &Map.put(&1, turn.id, turn))
-    |> put_sequence(event.sequence)
+    state = Map.update!(state, :turns, &Map.put(&1, turn.id, turn))
+
+    if turn.detached? do
+      put_sequence(state, event.sequence)
+    else
+      state
+      |> update_room(turn.room_id, fn room ->
+        %{room | queued_turn_ids: room.queued_turn_ids ++ [turn.id]}
+      end)
+      |> put_sequence(event.sequence)
+    end
   end
 
   def apply(%Event{type: :turn_started, data: data} = event, state) do
-    update_turn(state, data["turn_id"], &%{&1 | status: :running})
-    |> update_room(data["room_id"], fn room ->
-      %{
-        room
-        | active_turn_id: data["turn_id"],
-          queued_turn_ids: List.delete(room.queued_turn_ids, data["turn_id"])
-      }
-    end)
-    |> put_sequence(event.sequence)
+    state = update_turn(state, data["turn_id"], &%{&1 | status: :running})
+
+    if data["detached"] == true do
+      put_sequence(state, event.sequence)
+    else
+      state
+      |> update_room(data["room_id"], fn room ->
+        %{
+          room
+          | active_turn_id: data["turn_id"],
+            queued_turn_ids: List.delete(room.queued_turn_ids, data["turn_id"])
+        }
+      end)
+      |> put_sequence(event.sequence)
+    end
   end
 
   def apply(%Event{type: :assistant_message_opened, data: data} = event, state) do
@@ -393,11 +432,89 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :delegation_opened, data: data} = event, state) do
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
-      invocation
-      |> update_run(data["tool_run_id"], fn run ->
-        %{run | child_invocation_id: data["child_invocation_id"]}
-      end)
-      |> then(&%{&1 | status: :awaiting_delegation})
+      invocation =
+        update_run(invocation, data["tool_run_id"], fn run ->
+          child_ids = run.child_invocation_ids ++ [data["child_invocation_id"]]
+
+          %{
+            run
+            | child_invocation_id: run.child_invocation_id || data["child_invocation_id"],
+              child_invocation_ids: Enum.uniq(child_ids)
+          }
+        end)
+
+      if data["suspend_parent"] == false,
+        do: invocation,
+        else: %{invocation | status: :awaiting_delegation}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :peer_message_sent, data: data} = event, state) do
+    message = %PeerMessage{
+      id: data["peer_message_id"],
+      sender_invocation_id: data["sender_invocation_id"],
+      sender_name: data["sender_name"],
+      target_invocation_id: data["target_invocation_id"],
+      body: data["body"],
+      created_sequence: event.sequence
+    }
+
+    state
+    |> update_invocation(data["target_invocation_id"], fn invocation ->
+      coordination = %{
+        invocation.coordination
+        | peer_messages: invocation.coordination.peer_messages ++ [message]
+      }
+
+      %{invocation | coordination: coordination}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :operator_question_asked, data: data} = event, state) do
+    question = %OperatorQuestion{
+      id: data["question_id"],
+      tool_run_id: data["tool_run_id"],
+      question: data["question"],
+      options:
+        Enum.map(data["options"], fn option ->
+          %{
+            id: option["id"],
+            label: option["label"],
+            description: option["description"] || ""
+          }
+        end),
+      recommended_id: data["recommended_id"],
+      asked_at: event.recorded_at
+    }
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      coordination = %{invocation.coordination | pending_question: question}
+      %{invocation | status: :waiting_operator, coordination: coordination}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :operator_question_answered, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      coordination = %{invocation.coordination | pending_question: nil}
+      %{invocation | status: :queued, coordination: coordination}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :invocation_plan_updated, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      coordination = %{
+        invocation.coordination
+        | work_plan: WorkPlan.from_map(data["plan"])
+      }
+
+      %{invocation | coordination: coordination}
     end)
     |> put_sequence(event.sequence)
   end
@@ -406,11 +523,16 @@ defmodule ReyCode.Orchestration.Projector do
     state
     |> update_invocation(
       data["invocation_id"],
-      &%{
-        &1
-        | status: :completed,
-          completion_metadata: data["metadata"]
-      }
+      fn invocation ->
+        coordination = %{invocation.coordination | pending_question: nil}
+
+        %{
+          invocation
+          | status: :completed,
+            completion_metadata: data["metadata"],
+            coordination: coordination
+        }
+      end
     )
     |> update_message(data["message_id"], &%{&1 | status: :completed})
     |> put_sequence(event.sequence)
@@ -420,7 +542,10 @@ defmodule ReyCode.Orchestration.Projector do
     error = failure_from_wire!(data["error"])
 
     state
-    |> update_invocation(data["invocation_id"], &%{&1 | status: :failed, error: error})
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      coordination = %{invocation.coordination | pending_question: nil}
+      %{invocation | status: :failed, error: error, coordination: coordination}
+    end)
     |> update_message(data["message_id"], &%{&1 | status: :failed, error: error})
     |> put_sequence(event.sequence)
   end
@@ -430,7 +555,15 @@ defmodule ReyCode.Orchestration.Projector do
 
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
-      %{invocation | status: :cancelled, error: failure, pending_tool_review: nil}
+      coordination = %{invocation.coordination | pending_question: nil}
+
+      %{
+        invocation
+        | status: :cancelled,
+          error: failure,
+          pending_tool_review: nil,
+          coordination: coordination
+      }
     end)
     |> update_message(data["message_id"], &%{&1 | status: :cancelled, error: failure})
     |> put_sequence(event.sequence)
@@ -710,8 +843,15 @@ defmodule ReyCode.Orchestration.Projector do
         output_schema: data["output_schema"],
         workspace: data["workspace"],
         workspace_roots: value_or(data["workspace_roots"], []),
-        isolation: data["isolation"]
+        isolation: data["isolation"],
+        model_tier: invocation_tier(data),
+        token_budget_tokens:
+          value_or(
+            data["token_budget_tokens"],
+            ModelTier.budget_tokens(invocation_tier(data))
+          )
       },
+      coordination: %InvocationCoordination{},
       status: :queued,
       attempt: value_or(data["attempt"], 1),
       usage: nil,
@@ -880,6 +1020,7 @@ defmodule ReyCode.Orchestration.Projector do
       perspective: data["perspective"],
       provider: provider(data["provider"]),
       model: data["model"],
+      model_tier: participant_tier(data),
       kind: participant_kind(data["kind"])
     }
   end
@@ -893,6 +1034,20 @@ defmodule ReyCode.Orchestration.Projector do
       provider: provider(data["provider"]),
       model: data["model"]
     }
+  end
+
+  defp participant_tier(data) do
+    case ModelTier.normalize(
+           data["model_tier"] || ModelTier.default(participant_kind(data["kind"]))
+         ) do
+      {:ok, tier} -> tier
+    end
+  end
+
+  defp invocation_tier(data) do
+    case ModelTier.normalize(data["model_tier"] || "default") do
+      {:ok, tier} -> tier
+    end
   end
 
   defp release_authority("leader"), do: :squad_leader
@@ -932,10 +1087,21 @@ defmodule ReyCode.Orchestration.Projector do
   defp provider(value) when is_binary(value) or is_atom(value),
     do: Registry.normalize_provider_id(value)
 
+  defp posted_author(%{"author_kind" => "agent"} = data) do
+    Author.from_map(%{
+      kind: :agent,
+      id: data["author_id"],
+      name: data["author_name"]
+    })
+  end
+
+  defp posted_author(data), do: Author.user(data["author_name"])
+
   defp input_kind(nil), do: :operator
   defp input_kind("operator"), do: :operator
   defp input_kind("follow_up"), do: :follow_up
-  defp input_kind(value) when value in [:operator, :follow_up], do: value
+  defp input_kind("detached"), do: :detached
+  defp input_kind(value) when value in [:operator, :follow_up, :detached], do: value
 
   defp outcome("completed"), do: :completed
   defp outcome("partial"), do: :partial
