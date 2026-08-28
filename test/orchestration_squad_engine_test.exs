@@ -9,10 +9,10 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     %{engine: engine, store: store} =
       start_isolated_engine(simulator_opts: [delay_ms: 0, seed: 123])
 
-    room_id = configure_squad(engine)
+    session_id = configure_squad(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Deliver the squad workflow", :squad, engine)
+             Engine.post_message(session_id, "Deliver the squad workflow", :squad, engine)
 
     turn = wait_until_terminal(turn_id, engine)
     snapshot = Engine.snapshot(engine)
@@ -52,12 +52,12 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
         ]
       )
 
-    room_id = configure_squad(engine)
+    session_id = configure_squad(engine)
     engine_pid = Process.whereis(engine)
     monitor = Process.monitor(engine_pid)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Deliver with one bad envelope", :squad, engine)
+             Engine.post_message(session_id, "Deliver with one bad envelope", :squad, engine)
 
     turn = wait_until_terminal(turn_id, engine)
 
@@ -86,10 +86,10 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     %{engine: engine, store: store} =
       start_isolated_engine(simulator_opts: [delay_ms: 0, seed: 456, leader_rework_rounds: 1])
 
-    room_id = configure_squad(engine)
+    session_id = configure_squad(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Exercise bounded rework", :squad, engine)
+             Engine.post_message(session_id, "Exercise bounded rework", :squad, engine)
 
     turn = wait_until_terminal(turn_id, engine)
 
@@ -114,8 +114,8 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
         ]
       )
 
-    room_id = configure_squad(engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Exercise retry", :squad, engine)
+    session_id = configure_squad(engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Exercise retry", :squad, engine)
 
     turn = wait_until_terminal(turn_id, engine)
     snapshot = Engine.snapshot(engine)
@@ -140,10 +140,10 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
         ]
       )
 
-    room_id = configure_squad(engine)
+    session_id = configure_squad(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Do not retry permanent errors", :squad, engine)
+             Engine.post_message(session_id, "Do not retry permanent errors", :squad, engine)
 
     turn = wait_until_terminal(turn_id, engine)
     snapshot = Engine.snapshot(engine)
@@ -164,21 +164,23 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   end
 
   test "configures fixed squad role runtimes durably" do
-    room_id = ReyCode.snapshot().room_order |> hd()
+    session_id = ReyCode.snapshot().session_order |> hd()
 
-    assert :ok = Engine.configure_squad_roles(room_id, ["analyst", "architect"], :simulator, nil)
-    room = ReyCode.snapshot().rooms[room_id]
+    assert :ok =
+             Engine.configure_squad_roles(session_id, ["analyst", "architect"], :simulator, nil)
 
-    assert room.squad_seats["analyst"].provider == :simulator
-    assert room.squad_seats["architect"].name == "Architect"
+    session = ReyCode.snapshot().sessions[session_id]
+
+    assert session.squad_seats["analyst"].provider == :simulator
+    assert session.squad_seats["architect"].name == "Architect"
   end
 
   test "records an owner directive on a running squad turn" do
     %{engine: engine, store: store} =
       start_isolated_engine(simulator_opts: [delay_ms: 1_000, seed: 321])
 
-    room_id = configure_squad(engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Steer this squad", :squad, engine)
+    session_id = configure_squad(engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Steer this squad", :squad, engine)
 
     on_exit(fn ->
       if GenServer.whereis(engine), do: Engine.cancel_turn(turn_id, "test cleanup", engine)
@@ -203,12 +205,12 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
 
   test "holds the release gate for the owner and advances after approval" do
     %{engine: engine, store: store} = start_isolated_engine(squad_release_gate_human: true)
-    room_id = first_room_id(engine)
+    session_id = first_room_id(engine)
     role_ids = Enum.map(Squad.roles(), & &1.id)
-    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
+    :ok = Engine.configure_squad_roles(session_id, role_ids, :simulator, nil, engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Require owner release approval", :squad, engine)
+             Engine.post_message(session_id, "Require owner release approval", :squad, engine)
 
     turn = wait_until_pending_review(turn_id, engine)
     assert turn.status == :running
@@ -257,12 +259,12 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
         simulator_opts: [delay_ms: 0, seed: 246, leader_rework_rounds: 4]
       )
 
-    room_id = first_room_id(engine)
+    session_id = first_room_id(engine)
     role_ids = Enum.map(Squad.roles(), & &1.id)
-    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
+    :ok = Engine.configure_squad_roles(session_id, role_ids, :simulator, nil, engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Exhaust the rework budget", :squad, engine)
+             Engine.post_message(session_id, "Exhaust the rework budget", :squad, engine)
 
     on_exit(fn ->
       case GenServer.whereis(engine) do
@@ -324,11 +326,12 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
     # human. The authority recorded at turn start ("human") must hold even
     # though nothing else in the environment agrees with it.
     %{engine: engine} = start_isolated_engine(squad_release_gate_human: true)
-    room_id = first_room_id(engine)
+    session_id = first_room_id(engine)
     role_ids = Enum.map(Squad.roles(), & &1.id)
-    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
+    :ok = Engine.configure_squad_roles(session_id, role_ids, :simulator, nil, engine)
 
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Freeze the authority", :squad, engine)
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Freeze the authority", :squad, engine)
 
     on_exit(fn -> ReyCode.cancel_turn(turn_id) end)
     assert RuntimeConfig.load!().squad.release_gate_human? == false
@@ -351,22 +354,23 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   end
 
   test "blocks a squad turn when required roles are unconfigured" do
-    assert {:ok, room_id} = ReyCode.create_room("Unconfigured Squad", System.tmp_dir!())
+    assert {:ok, session_id} =
+             ReyCode.create_blank_session("Unconfigured Squad", System.tmp_dir!())
 
     assert {:error, {:squad_seats_unconfigured, missing}} =
-             ReyCode.post_message(room_id, "Do not start", :squad)
+             ReyCode.post_message(session_id, "Do not start", :squad)
 
     assert length(missing) == 12
     assert "squad_leader" in missing
-    assert ReyCode.snapshot().rooms[room_id].active_turn_id == nil
+    assert ReyCode.snapshot().sessions[session_id].active_turn_id == nil
   end
 
   test "recovers an active squad phase without duplicating logical work" do
     %{engine: engine} =
       start_isolated_supervised_engine(simulator_opts: [delay_ms: 20, seed: 999])
 
-    room_id = configure_squad(engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Recover this squad", :squad, engine)
+    session_id = configure_squad(engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Recover this squad", :squad, engine)
 
     old_engine = Process.whereis(engine)
     assert is_pid(old_engine)
@@ -395,13 +399,13 @@ defmodule ReyCode.Orchestration.SquadEngineTest do
   defp wait_until_pending_review(turn_id, server, attempts \\ 3_000),
     do: Wait.pending_review(server, turn_id, attempts * 10)
 
-  defp first_room_id(server), do: Engine.snapshot(server).room_order |> hd()
+  defp first_room_id(server), do: Engine.snapshot(server).session_order |> hd()
 
   defp configure_squad(server) do
-    room_id = first_room_id(server)
+    session_id = first_room_id(server)
     role_ids = Enum.map(Squad.roles(), & &1.id)
-    :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, server)
-    room_id
+    :ok = Engine.configure_squad_roles(session_id, role_ids, :simulator, nil, server)
+    session_id
   end
 
   defp start_isolated_engine(config_overrides) do

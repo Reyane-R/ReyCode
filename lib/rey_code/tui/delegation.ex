@@ -120,7 +120,7 @@ defmodule ReyCode.TUI.Delegation do
     state = term.assigns.delegation
 
     case Engine.delegate_task(
-           term.assigns.selected_room_id,
+           term.assigns.selected_session_id,
            state.participant_id,
            state.task,
            term.assigns.engine
@@ -169,7 +169,7 @@ defmodule ReyCode.TUI.Delegation do
   defp task_participants(term) do
     assigns = term_assigns(term)
 
-    assigns.projection.rooms[assigns.selected_room_id].participants
+    assigns.projection.sessions[assigns.selected_session_id].participants
     |> Enum.filter(&(&1.kind == :task))
   end
 

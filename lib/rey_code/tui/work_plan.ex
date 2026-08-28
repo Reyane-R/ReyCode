@@ -10,7 +10,7 @@ defmodule ReyCode.TUI.WorkPlan do
   @spec open(map()) :: map()
   def open(term) do
     invocation =
-      Projection.work_plan_invocation(term.assigns.projection, term.assigns.selected_room_id)
+      Projection.work_plan_invocation(term.assigns.projection, term.assigns.selected_session_id)
 
     if invocation do
       term

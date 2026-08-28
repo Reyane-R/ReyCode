@@ -1,7 +1,7 @@
 defmodule ReyCode.TUI.CommandActionsTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.{Projection, Room}
+  alias ReyCode.Orchestration.{Projection, Session}
   alias ReyCode.TUI.{AnimationClock, SessionCommand, WorkCommand}
 
   defmodule EngineStub do
@@ -33,7 +33,7 @@ defmodule ReyCode.TUI.CommandActionsTest do
     term = term(engine, workspace)
 
     assert {:noreply, forked} = SessionCommand.run(term, "/fork", nil)
-    assert forked.assigns.selected_room_id == "session-fork"
+    assert forked.assigns.selected_session_id == "session-fork"
 
     assert {:noreply, invalid} = SessionCommand.run(term, "/rewind", "invalid")
     assert invalid.assigns.notice == "Rewind requires a durable sequence number"
@@ -56,7 +56,7 @@ defmodule ReyCode.TUI.CommandActionsTest do
   end
 
   defp term(engine, workspace, active_turn_id \\ nil) do
-    room = %Room{
+    session = %Session{
       id: "room-1",
       title: "Session",
       workspace: workspace,
@@ -68,10 +68,10 @@ defmodule ReyCode.TUI.CommandActionsTest do
         engine: engine,
         projection: %Projection{
           sequence: 12,
-          rooms: %{room.id => room},
-          room_order: [room.id]
+          sessions: %{session.id => session},
+          session_order: [session.id]
         },
-        selected_room_id: room.id,
+        selected_session_id: session.id,
         modal: :slash,
         slash: nil,
         notice: nil,

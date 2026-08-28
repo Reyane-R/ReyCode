@@ -93,7 +93,7 @@ defmodule ReyCode.SquadMixTaskTest do
   test "live JSON summaries identify the room workspace" do
     turn = %{
       id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       status: :terminal,
       outcome: :completed,
       squad: %{
@@ -110,7 +110,7 @@ defmodule ReyCode.SquadMixTaskTest do
     workspace = Path.expand("test/fixtures/workspace")
 
     summary = SquadTask.summary(turn, workspace)
-    assert summary.room_id == "room-1"
+    assert summary.session_id == "room-1"
     assert summary.workspace == workspace
     assert Jason.decode!(Jason.encode!(summary))["workspace"] == workspace
   end
@@ -118,7 +118,7 @@ defmodule ReyCode.SquadMixTaskTest do
   test "renders live summaries at a focused formatter boundary" do
     turn = %{
       id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       status: :terminal,
       outcome: :completed,
       squad: %{

@@ -240,15 +240,15 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
       restart: :temporary
     )
 
-    {:ok, room_id} = Engine.create_room("Tier One", workspace, @engine)
-    configure_participants(room_id)
-    %{room_id: room_id}
+    {:ok, session_id} = Engine.create_blank_session("Tier One", workspace, @engine)
+    configure_participants(session_id)
+    %{session_id: session_id}
   end
 
   test "wave runs workers, exchanges peer messages, validates reports, then starts integrator", %{
-    room_id: room_id
+    session_id: session_id
   } do
-    {:ok, turn_id} = Engine.post_message(room_id, "wave", :direct, @engine)
+    {:ok, turn_id} = Engine.post_message(session_id, "wave", :direct, @engine)
     Wait.terminal_turn(@engine, turn_id)
     projection = Engine.snapshot(@engine)
 
@@ -281,9 +281,9 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
   end
 
   test "detached delegation lets the source Turn finish and auto-delivers later", %{
-    room_id: room_id
+    session_id: session_id
   } do
-    {:ok, source_turn_id} = Engine.post_message(room_id, "detach", :direct, @engine)
+    {:ok, source_turn_id} = Engine.post_message(session_id, "detach", :direct, @engine)
 
     assert_receive {:detached_waiting, child_id, child_pid}, 5_000
     Wait.terminal_turn(@engine, source_turn_id)
@@ -296,7 +296,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
       |> Enum.find(&(&1.source_invocation_id != nil and &1.detached?))
 
     assert detached_turn.status == :running
-    assert source_projection.rooms[room_id].active_turn_id == nil
+    assert source_projection.sessions[session_id].active_turn_id == nil
 
     send(child_pid, :finish)
     Wait.terminal_turn(@engine, detached_turn.id)
@@ -309,10 +309,10 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
     assert message.status == :completed
   end
 
-  defp configure_participants(room_id) do
-    room = Engine.snapshot(@engine).rooms[room_id]
-    primary = Enum.find(room.participants, &(&1.kind == :primary))
-    :ok = Engine.configure_participants(room_id, [primary.id], :simulator, nil, @engine)
+  defp configure_participants(session_id) do
+    session = Engine.snapshot(@engine).sessions[session_id]
+    primary = Enum.find(session.participants, &(&1.kind == :primary))
+    :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
 
     Enum.each(
       [
@@ -322,9 +322,10 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
       ],
       fn {name, responsibility} ->
         {:ok, participant_id} =
-          Engine.add_task_participant(room_id, name, responsibility, @engine)
+          Engine.add_task_participant(session_id, name, responsibility, @engine)
 
-        :ok = Engine.configure_participants(room_id, [participant_id], :simulator, nil, @engine)
+        :ok =
+          Engine.configure_participants(session_id, [participant_id], :simulator, nil, @engine)
       end
     )
   end

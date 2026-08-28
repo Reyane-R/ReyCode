@@ -146,7 +146,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
 
     %Breeze.Term{
       assigns: %{
-        selected_room_id: "room-1",
+        selected_session_id: "room-1",
         drafts: %{"room-1" => draft},
         modal: :slash,
         slash: %{
@@ -162,7 +162,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
   end
 
   defp contextual_term do
-    room = %{
+    session = %{
       participants: [],
       workspace: "/tmp",
       active_turn_id: "turn-active",
@@ -171,8 +171,8 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     }
 
     projection = %{
-      rooms: %{"room-1" => room},
-      room_order: ["room-1"],
+      sessions: %{"room-1" => session},
+      session_order: ["room-1"],
       messages: %{"message-child" => %{invocation_id: "invocation-child"}},
       turns: %{
         "turn-follow-up" => %{input_kind: :follow_up, status: :queued}

@@ -77,7 +77,7 @@ Design intent: every cycle either advances, consumes rework budget, or terminate
 
 | Dimension | Current behavior |
 |---|---|
-| Room/message/turn retention | Entire durable history retained in Projection |
+| Session/Message/Turn retention | Entire durable history retained in Projection |
 | TUI render input | Current full Projection, presentation windows selected during rendering |
 | Agent-note trail | Newest 100 notes per Invocation (`@max_invocation_notes` in Projector) |
 | TUI activity lines visible | 3 per message behind a `+k more activity` collapse |

@@ -24,14 +24,14 @@ defmodule ReyCode.Orchestration.Engine.IdentityTest do
       assert Identity.slugify("  Hello   World  ") == "hello-world"
     end
 
-    test "falls back to room for a slugless title" do
-      assert Identity.slugify("!!!") == "room"
+    test "falls back to session for a slugless title" do
+      assert Identity.slugify("!!!") == "session"
     end
   end
 
   describe "unique_slug/2" do
-    defp projection(rooms) do
-      %{rooms: Map.new(rooms, fn {id, slug} -> {id, %{slug: slug}} end)}
+    defp projection(sessions) do
+      %{sessions: Map.new(sessions, fn {id, slug} -> {id, %{slug: slug}} end)}
     end
 
     test "keeps the base slug when unused" do
@@ -43,8 +43,8 @@ defmodule ReyCode.Orchestration.Engine.IdentityTest do
     end
 
     test "skips to the first free suffix when several are taken" do
-      rooms = %{"room-1" => "alpha", "room-2" => "alpha-2"}
-      assert Identity.unique_slug("alpha", projection(rooms)) == "alpha-3"
+      sessions = %{"room-1" => "alpha", "room-2" => "alpha-2"}
+      assert Identity.unique_slug("alpha", projection(sessions)) == "alpha-3"
     end
   end
 end

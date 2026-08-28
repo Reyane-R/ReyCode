@@ -118,8 +118,8 @@ defmodule ReyCode.AgentLoopLifecycleTest do
         tool_requests: [%{tool: "read", arguments: %{"path" => "hello.txt"}}]
       )
 
-    assert {:ok, room_id} = Engine.create_room("Tool Loop", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Read the file", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Tool Loop", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Read the file", :compare, @engine)
 
     assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 
@@ -168,10 +168,10 @@ defmodule ReyCode.AgentLoopLifecycleTest do
         tool_requests: [%{tool: "read", arguments: %{"path" => "missing.txt"}}]
       )
 
-    assert {:ok, room_id} = Engine.create_room("Tool Failure", workspace, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Tool Failure", workspace, @engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Read the missing file", :compare, @engine)
+             Engine.post_message(session_id, "Read the missing file", :compare, @engine)
 
     assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 
@@ -207,8 +207,8 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   } do
     %{store: store} = start_engine(workspace, tool_write_pause())
 
-    assert {:ok, room_id} = Engine.create_room("Ask Loop", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Write the file", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Ask Loop", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write the file", :compare, @engine)
 
     invocation =
       Wait.projection(@engine, fn projection ->
@@ -232,8 +232,8 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   test "provider frames never overwrite waiting approval status", %{workspace: workspace} do
     %{store: store} = start_engine(workspace, tool_write_pause())
 
-    assert {:ok, room_id} = Engine.create_room("Frame Guard", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Write the file", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Frame Guard", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write the file", :compare, @engine)
 
     projection =
       Wait.projection(@engine, fn projection ->
@@ -262,8 +262,8 @@ defmodule ReyCode.AgentLoopLifecycleTest do
   test "waiting approval survives engine restart and stays dormant", %{workspace: workspace} do
     %{store: store} = start_engine(workspace, tool_write_pause())
 
-    assert {:ok, room_id} = Engine.create_room("Restart Loop", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Write the file", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Restart Loop", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write the file", :compare, @engine)
 
     projection =
       Wait.projection(@engine, fn projection ->
@@ -295,8 +295,8 @@ defmodule ReyCode.AgentLoopLifecycleTest do
         ]
       )
 
-    assert {:ok, room_id} = Engine.create_room("Multi Round", workspace, @engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Inspect twice", :compare, @engine)
+    assert {:ok, session_id} = Engine.create_blank_session("Multi Round", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Inspect twice", :compare, @engine)
 
     assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
 

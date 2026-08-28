@@ -6,41 +6,41 @@ defmodule ReyCode.Orchestration.Engine.Configuration do
 
   @type plan_result :: {:ok, [EventEntries.event_entry()]} | {:error, atom()}
 
-  @doc "Validates and plans configuration events for selected room participants."
+  @doc "Validates and plans configuration events for selected session participants."
   @spec participants(map(), term(), term(), atom(), term()) :: plan_result()
-  def participants(state, room_id, raw_ids, provider, model) do
-    room = state.projection.rooms[room_id]
+  def participants(state, session_id, raw_ids, provider, model) do
+    session = state.projection.sessions[session_id]
     participant_ids = raw_ids |> List.wrap() |> Enum.uniq()
-    available_ids = if room, do: Enum.map(room.participants, & &1.id), else: []
+    available_ids = if session, do: Enum.map(session.participants, & &1.id), else: []
 
-    with :ok <- validate_selection(room, participant_ids, available_ids),
+    with :ok <- validate_selection(session, participant_ids, available_ids),
          {:ok, model} <- resolve_model(state, provider, model) do
-      {:ok, EventEntries.participant_configuration(room_id, participant_ids, provider, model)}
+      {:ok, EventEntries.participant_configuration(session_id, participant_ids, provider, model)}
     end
   end
 
   @doc "Validates and plans configuration events for selected squad roles."
   @spec squad_roles(map(), term(), term(), atom(), term()) :: plan_result()
-  def squad_roles(state, room_id, raw_ids, provider, model) do
+  def squad_roles(state, session_id, raw_ids, provider, model) do
     role_ids = raw_ids |> List.wrap() |> Enum.uniq()
 
     with :ok <-
            validate_selection(
-             state.projection.rooms[room_id],
+             state.projection.sessions[session_id],
              role_ids,
              Enum.map(Squad.roles(), & &1.id)
            ),
          {:ok, model} <- resolve_model(state, provider, model) do
-      {:ok, EventEntries.squad_role_configuration(room_id, role_ids, provider, model)}
+      {:ok, EventEntries.squad_role_configuration(session_id, role_ids, provider, model)}
     end
   end
 
-  # Error precedence is part of the contract: target room, then selection
+  # Error precedence is part of the contract: target session, then selection
   # shape, then membership, then provider configuration, then model/runtime.
-  defp validate_selection(room, ids, available_ids) do
+  defp validate_selection(session, ids, available_ids) do
     cond do
-      room == nil ->
-        {:error, :room_not_found}
+      session == nil ->
+        {:error, :session_not_found}
 
       ids == [] ->
         {:error, :participant_required}

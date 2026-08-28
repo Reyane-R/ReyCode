@@ -183,7 +183,7 @@ defmodule ReyCode.EventStoreSQLiteTest do
              EventStore.append(:room_created, room_data("room-2"), store, metadata("room-2"))
 
     assert {:ok, loaded_checkpoint, [tail]} = EventStore.load_projection(store)
-    refute Map.has_key?(loaded_checkpoint.rooms["room-1"], :__struct__)
+    refute Map.has_key?(loaded_checkpoint.sessions["room-1"], :__struct__)
     assert Projector.replay([], loaded_checkpoint) == checkpoint
     assert tail == second
 
@@ -195,10 +195,10 @@ defmodule ReyCode.EventStoreSQLiteTest do
     path = tmp_path("legacy-tail.sqlite3")
     {store, id} = start_store(path)
 
-    assert {:ok, room} =
+    assert {:ok, session} =
              EventStore.append(:room_created, room_data(), store, metadata())
 
-    assert :ok = EventStore.checkpoint(Projector.replay([room]), store)
+    assert :ok = EventStore.checkpoint(Projector.replay([session]), store)
 
     invocation_metadata = [
       aggregate_type: :invocation,
@@ -494,18 +494,18 @@ defmodule ReyCode.EventStoreSQLiteTest do
              )
   end
 
-  defp room_data(room_id \\ "room-1") do
+  defp room_data(session_id \\ "room-1") do
     %{
-      "room_id" => room_id,
-      "slug" => room_id,
-      "title" => room_id,
+      "room_id" => session_id,
+      "slug" => session_id,
+      "title" => session_id,
       "workspace" => System.tmp_dir!(),
       "participants" => []
     }
   end
 
-  defp metadata(room_id \\ "room-1") do
-    [aggregate_type: :room, aggregate_id: room_id, room_id: room_id]
+  defp metadata(session_id \\ "room-1") do
+    [aggregate_type: :room, aggregate_id: session_id, room_id: session_id]
   end
 
   defp tmp_path(filename) do

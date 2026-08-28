@@ -208,8 +208,8 @@ ReyCode.Application                     rest-for-one dependency supervision
 |-- ReyCode.ProcessHub                   supervised bounded background processes
 |-- ReyCode.Orchestration.Supervisor     engine/worker restart boundary
 |   |-- DynamicSupervisor                monitored temporary Agent workers
-|   `-- ReyCode.Orchestration.Engine     room commands, FIFO scheduling, admission control
-`-- Breeze.Server                        terminal room client (TUI only)
+|   `-- ReyCode.Orchestration.Engine     Session commands, FIFO scheduling, admission control
+`-- Breeze.Server                        terminal Session client (TUI only)
 ```
 
 Key logical modules (owning the loop and execution, not separate processes):
@@ -217,7 +217,7 @@ Key logical modules (owning the loop and execution, not separate processes):
 - `ReyCode.AgentLoop` — durable provider/tool continuation loop per invocation
 - `ReyCode.ToolRegistry` — workspace-trusted tool dispatch and execution
 
-Rooms, messages, turns, invocations, rounds, tool runs, and approvals are
+Sessions, Messages, Turns, Invocations, ProviderRounds, ToolRuns, and approvals are
 durable. The TUI only dispatches commands and renders projected state.
 Providers consume normalized requests and emit sequenced frames; tool
 execution is wholly owned by ReyCode.

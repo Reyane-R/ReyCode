@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.Engine do
-  @moduledoc "Owns durable room state and schedules provider invocations."
+  @moduledoc "Owns durable session state and schedules provider invocations."
 
   use GenServer
 
@@ -14,7 +14,7 @@ defmodule ReyCode.Orchestration.Engine do
     Options,
     OwnerCommand,
     Persistence,
-    Rooms,
+    Sessions,
     Turns
   }
 
@@ -60,43 +60,44 @@ defmodule ReyCode.Orchestration.Engine do
     :ok
   end
 
-  @doc "Creates a room rooted at a workspace and returns its ID."
-  @spec create_room(term(), term(), GenServer.server()) :: {:ok, String.t()} | {:error, atom()}
-  def create_room(title, workspace \\ File.cwd!(), server \\ __MODULE__) do
-    GenServer.call(server, {:create_room, title, workspace})
+  @doc "Creates a session rooted at a workspace and returns its ID."
+  @spec create_blank_session(term(), term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, atom()}
+  def create_blank_session(title, workspace \\ File.cwd!(), server \\ __MODULE__) do
+    GenServer.call(server, {:create_blank_session, title, workspace})
   end
 
   @doc "Creates a fresh durable session titled from its first input."
   @spec create_session(term(), term(), GenServer.server()) :: {:ok, String.t()} | {:error, atom()}
-  def create_session(source_room_id, title, server \\ __MODULE__) do
-    GenServer.call(server, {:create_session, source_room_id, title})
+  def create_session(source_session_id, title, server \\ __MODULE__) do
+    GenServer.call(server, {:create_session, source_session_id, title})
   end
 
   @doc "Forks a Session at one immutable Projection sequence."
   @spec fork_session(term(), term(), GenServer.server()) ::
           {:ok, String.t()} | {:error, atom()}
-  def fork_session(source_room_id, through_sequence, server \\ __MODULE__) do
-    GenServer.call(server, {:fork_session, source_room_id, through_sequence})
+  def fork_session(source_session_id, through_sequence, server \\ __MODULE__) do
+    GenServer.call(server, {:fork_session, source_session_id, through_sequence})
   end
 
   @doc "Runs one owner-typed shell command and records its transcript message."
   @spec run_owner_command(term(), term(), GenServer.server()) :: :ok | {:error, atom()}
-  def run_owner_command(room_id, command, server \\ __MODULE__) do
-    GenServer.call(server, {:run_owner_command, room_id, command})
+  def run_owner_command(session_id, command, server \\ __MODULE__) do
+    GenServer.call(server, {:run_owner_command, session_id, command})
   end
 
-  @doc "Adds one durable task participant to a room."
+  @doc "Adds one durable task participant to a session."
   @spec add_task_participant(term(), term(), term(), GenServer.server()) ::
           {:ok, String.t()} | {:error, atom()}
-  def add_task_participant(room_id, name, responsibility, server \\ __MODULE__) do
-    GenServer.call(server, {:add_task_participant, room_id, name, responsibility})
+  def add_task_participant(session_id, name, responsibility, server \\ __MODULE__) do
+    GenServer.call(server, {:add_task_participant, session_id, name, responsibility})
   end
 
   @doc "Queues a user message for orchestration in the requested mode."
   @spec post_message(term(), term(), term(), GenServer.server()) ::
           {:ok, String.t()} | {:error, term()}
-  def post_message(room_id, body, mode, server \\ __MODULE__) do
-    GenServer.call(server, {:post_message, room_id, body, mode})
+  def post_message(session_id, body, mode, server \\ __MODULE__) do
+    GenServer.call(server, {:post_message, session_id, body, mode})
   end
 
   @doc "Queues one Operator correction for the next provider-round boundary."
@@ -107,15 +108,15 @@ defmodule ReyCode.Orchestration.Engine do
 
   @doc "Cancels the newest queued follow-up in one Session."
   @spec cancel_latest_follow_up(term(), GenServer.server()) :: :ok | {:error, atom()}
-  def cancel_latest_follow_up(room_id, server \\ __MODULE__) do
-    GenServer.call(server, {:cancel_latest_follow_up, room_id})
+  def cancel_latest_follow_up(session_id, server \\ __MODULE__) do
+    GenServer.call(server, {:cancel_latest_follow_up, session_id})
   end
 
   @doc "Queues one explicit task for one task participant."
   @spec delegate_task(term(), term(), term(), GenServer.server()) ::
           {:ok, String.t()} | {:error, term()}
-  def delegate_task(room_id, participant_id, task, server \\ __MODULE__) do
-    GenServer.call(server, {:delegate_task, room_id, participant_id, task})
+  def delegate_task(session_id, participant_id, task, server \\ __MODULE__) do
+    GenServer.call(server, {:delegate_task, session_id, participant_id, task})
   end
 
   @doc "Records one OperatorQuestion option selection."
@@ -131,25 +132,28 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:cancel_turn, turn_id, reason}, :infinity)
   end
 
-  @doc "Assigns a provider and model to selected room participants."
+  @doc "Assigns a provider and model to selected session participants."
   @spec configure_participants(term(), term(), term(), term(), GenServer.server()) ::
           :ok | {:error, atom()}
-  def configure_participants(room_id, participant_ids, provider, model, server \\ __MODULE__) do
-    GenServer.call(server, {:configure_participants, room_id, participant_ids, provider, model})
+  def configure_participants(session_id, participant_ids, provider, model, server \\ __MODULE__) do
+    GenServer.call(
+      server,
+      {:configure_participants, session_id, participant_ids, provider, model}
+    )
   end
 
-  @doc "Assigns one ModelTier to a room Participant."
+  @doc "Assigns one ModelTier to a session Participant."
   @spec configure_participant_tier(term(), term(), term(), GenServer.server()) ::
           :ok | {:error, atom()}
-  def configure_participant_tier(room_id, participant_id, tier, server \\ __MODULE__) do
-    GenServer.call(server, {:configure_participant_tier, room_id, participant_id, tier})
+  def configure_participant_tier(session_id, participant_id, tier, server \\ __MODULE__) do
+    GenServer.call(server, {:configure_participant_tier, session_id, participant_id, tier})
   end
 
-  @doc "Assigns a provider and model to selected squad roles in a room."
+  @doc "Assigns a provider and model to selected squad roles in a session."
   @spec configure_squad_roles(term(), term(), term(), term(), GenServer.server()) ::
           :ok | {:error, atom()}
-  def configure_squad_roles(room_id, role_ids, provider, model, server \\ __MODULE__) do
-    GenServer.call(server, {:configure_squad_roles, room_id, role_ids, provider, model})
+  def configure_squad_roles(session_id, role_ids, provider, model, server \\ __MODULE__) do
+    GenServer.call(server, {:configure_squad_roles, session_id, role_ids, provider, model})
   end
 
   @doc "Adds operator guidance to a running squad turn."
@@ -214,7 +218,7 @@ defmodule ReyCode.Orchestration.Engine do
       name: Keyword.get(opts, :name, __MODULE__)
     }
 
-    state = state |> Lifecycle.ensure_default_room() |> Lifecycle.ensure_primary_participants()
+    state = state |> Lifecycle.ensure_default_session() |> Lifecycle.ensure_primary_participants()
     {:ok, state, {:continue, :recover}}
   end
 
@@ -240,51 +244,51 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call(:snapshot, _from, state), do: {:reply, state.projection, state}
   def handle_call(:event_registry, _from, state), do: {:reply, state.event_registry, state}
 
-  def handle_call({:create_room, raw_title, workspace}, _from, state),
-    do: Rooms.create(state, raw_title, workspace)
+  def handle_call({:create_blank_session, raw_title, workspace}, _from, state),
+    do: Sessions.create(state, raw_title, workspace)
 
-  def handle_call({:create_session, source_room_id, title}, _from, state),
-    do: Rooms.create_session(state, source_room_id, title)
+  def handle_call({:create_session, source_session_id, title}, _from, state),
+    do: Sessions.create_session(state, source_session_id, title)
 
-  def handle_call({:fork_session, source_room_id, through_sequence}, _from, state),
-    do: Rooms.fork_session(state, source_room_id, through_sequence)
+  def handle_call({:fork_session, source_session_id, through_sequence}, _from, state),
+    do: Sessions.fork_session(state, source_session_id, through_sequence)
 
-  def handle_call({:run_owner_command, room_id, command}, _from, state),
-    do: OwnerCommand.run(state, room_id, command)
+  def handle_call({:run_owner_command, session_id, command}, _from, state),
+    do: OwnerCommand.run(state, session_id, command)
 
-  def handle_call({:add_task_participant, room_id, name, responsibility}, _from, state),
-    do: Rooms.add_task_participant(state, room_id, name, responsibility)
+  def handle_call({:add_task_participant, session_id, name, responsibility}, _from, state),
+    do: Sessions.add_task_participant(state, session_id, name, responsibility)
 
-  def handle_call({:post_message, room_id, raw_body, mode}, _from, state),
-    do: Turns.post_message(state, room_id, raw_body, mode)
+  def handle_call({:post_message, session_id, raw_body, mode}, _from, state),
+    do: Turns.post_message(state, session_id, raw_body, mode)
 
   def handle_call({:steer_turn, turn_id, raw_body}, _from, state),
     do: Turns.steer(state, turn_id, raw_body)
 
-  def handle_call({:cancel_latest_follow_up, room_id}, _from, state),
-    do: Turns.cancel_latest_follow_up(state, room_id)
+  def handle_call({:cancel_latest_follow_up, session_id}, _from, state),
+    do: Turns.cancel_latest_follow_up(state, session_id)
 
-  def handle_call({:delegate_task, room_id, participant_id, task}, _from, state),
-    do: Turns.delegate_task(state, room_id, participant_id, task)
+  def handle_call({:delegate_task, session_id, participant_id, task}, _from, state),
+    do: Turns.delegate_task(state, session_id, participant_id, task)
 
   def handle_call({:answer_question, invocation_id, question_id, option_id}, _from, state),
     do: Loop.answer_question(state, invocation_id, question_id, option_id)
 
   def handle_call(
-        {:configure_participants, room_id, participant_ids, provider, model},
+        {:configure_participants, session_id, participant_ids, provider, model},
         _from,
         state
       ),
-      do: Rooms.configure_participants(state, room_id, participant_ids, provider, model)
+      do: Sessions.configure_participants(state, session_id, participant_ids, provider, model)
 
-  def handle_call({:configure_participant_tier, room_id, participant_id, tier}, _from, state),
-    do: Rooms.configure_participant_tier(state, room_id, participant_id, tier)
+  def handle_call({:configure_participant_tier, session_id, participant_id, tier}, _from, state),
+    do: Sessions.configure_participant_tier(state, session_id, participant_id, tier)
 
   def handle_call({:resolve_tool_run, invocation_id, run_id, raw_decision}, _from, state),
     do: Loop.resolve_tool_run(state, invocation_id, run_id, raw_decision)
 
-  def handle_call({:configure_squad_roles, room_id, role_ids, provider, model}, _from, state),
-    do: Rooms.configure_squad_roles(state, room_id, role_ids, provider, model)
+  def handle_call({:configure_squad_roles, session_id, role_ids, provider, model}, _from, state),
+    do: Sessions.configure_squad_roles(state, session_id, role_ids, provider, model)
 
   def handle_call({:invocation_request, invocation_id}, _from, state),
     do: Loop.request(state, invocation_id)
@@ -340,8 +344,8 @@ defmodule ReyCode.Orchestration.Engine do
           raw_reasons
         )
 
-  def handle_info({:owner_command_result, room_id, message_id, command, result}, state),
-    do: OwnerCommand.finish(state, room_id, message_id, command, result)
+  def handle_info({:owner_command_result, session_id, message_id, command, result}, state),
+    do: OwnerCommand.finish(state, session_id, message_id, command, result)
 
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do

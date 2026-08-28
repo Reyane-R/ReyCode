@@ -15,7 +15,7 @@ defmodule ReyCode.Orchestration.ProjectorSnapshotTest do
   test "snapshots without tool-run fields replay into normalized invocations" do
     legacy_invocation = %{
       id: "inv-legacy",
-      room_id: "room-1",
+      session_id: "room-1",
       turn_id: "turn-1",
       message_id: "msg-1",
       participant: %{

@@ -2,9 +2,9 @@ defmodule ReyCode.ModelEval do
   @moduledoc """
   Runs and reports one explicit-subset model audition.
 
-  Candidate names resolve against task Participants in existing rooms. Their
-  provider/model profiles are copied into a fresh room; the Eval workflow opens
-  one independent Invocation per copied task Participant and ignores the room's
+  Candidate names resolve against task Participants in existing sessions. Their
+  provider/model profiles are copied into a fresh session; the Eval workflow opens
+  one independent Invocation per copied task Participant and ignores the session's
   automatically-created Primary Participant.
   """
 
@@ -44,17 +44,17 @@ defmodule ReyCode.ModelEval do
     profiles = resolve_profiles(Engine.snapshot(engine), options.agents)
     catalog = Map.get(options, :provider_catalog, Catalog)
     title = "Model audition #{System.system_time(:millisecond)}"
-    {:ok, room_id} = Engine.create_room(title, options.workspace, engine)
+    {:ok, session_id} = Engine.create_blank_session(title, options.workspace, engine)
 
     {participant_count, setup_errors} =
       Enum.reduce(options.agents, {0, %{}}, fn name, acc ->
-        add_candidate(engine, catalog, room_id, name, Map.get(profiles, name), acc)
+        add_candidate(engine, catalog, session_id, name, Map.get(profiles, name), acc)
       end)
 
     if participant_count == 0 do
       synthetic_report(options.agents, setup_errors)
     else
-      run_turn(engine, room_id, options, setup_errors)
+      run_turn(engine, session_id, options, setup_errors)
     end
   end
 
@@ -88,12 +88,12 @@ defmodule ReyCode.ModelEval do
 
   defp resolve_profiles(snapshot, names) do
     candidates =
-      snapshot.room_order
+      snapshot.session_order
       |> Enum.reverse()
-      |> Enum.flat_map(fn room_id ->
-        room = Map.fetch!(snapshot.rooms, room_id)
+      |> Enum.flat_map(fn session_id ->
+        session = Map.fetch!(snapshot.sessions, session_id)
 
-        Enum.filter(room.participants, fn participant ->
+        Enum.filter(session.participants, fn participant ->
           participant.kind == :task and
             participant.provider not in [:unconfigured, "unconfigured"]
         end)
@@ -102,15 +102,15 @@ defmodule ReyCode.ModelEval do
     Map.new(names, fn name -> {name, Enum.find(candidates, &(&1.name == name))} end)
   end
 
-  defp add_candidate(engine, catalog, room_id, name, profile, {count, errors}) do
+  defp add_candidate(engine, catalog, session_id, name, profile, {count, errors}) do
     responsibility = if profile, do: profile.perspective, else: "model audition candidate"
 
-    case Engine.add_task_participant(room_id, name, responsibility, engine) do
+    case Engine.add_task_participant(session_id, name, responsibility, engine) do
       {:ok, participant_id} ->
         configure_candidate(
           engine,
           catalog,
-          room_id,
+          session_id,
           participant_id,
           name,
           profile,
@@ -125,7 +125,7 @@ defmodule ReyCode.ModelEval do
   defp configure_candidate(
          _engine,
          _catalog,
-         _room_id,
+         _session_id,
          _participant_id,
          name,
          nil,
@@ -137,7 +137,7 @@ defmodule ReyCode.ModelEval do
   defp configure_candidate(
          engine,
          catalog,
-         room_id,
+         session_id,
          participant_id,
          name,
          profile,
@@ -146,7 +146,7 @@ defmodule ReyCode.ModelEval do
     with {:ok, _runtime} <- Catalog.resolve_when_ready(profile.provider, profile.model, catalog),
          :ok <-
            Engine.configure_participants(
-             room_id,
+             session_id,
              [participant_id],
              profile.provider,
              profile.model,
@@ -158,8 +158,8 @@ defmodule ReyCode.ModelEval do
     end
   end
 
-  defp run_turn(engine, room_id, options, setup_errors) do
-    case Engine.post_message(room_id, options.task, :eval, engine) do
+  defp run_turn(engine, session_id, options, setup_errors) do
+    case Engine.post_message(session_id, options.task, :eval, engine) do
       {:ok, turn_id} ->
         execute_turn(engine, turn_id, options, setup_errors)
 

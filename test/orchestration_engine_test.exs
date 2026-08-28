@@ -10,8 +10,10 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "ordinary messages invoke only the primary assistant" do
     %{engine: engine} = start_isolated_engine([])
-    room_id = default_room_id(engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Handle this directly", :direct, engine)
+    session_id = default_room_id(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Handle this directly", :direct, engine)
 
     turn = wait_until_terminal_on(engine, turn_id)
     snapshot = Engine.snapshot(engine)
@@ -23,14 +25,14 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "forks a Session at one sequence without mutating its parent transcript" do
     %{engine: engine} = start_isolated_engine([])
-    source_room_id = default_room_id(engine)
+    source_session_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(source_room_id, "Keep this request", :direct, engine)
+             Engine.post_message(source_session_id, "Keep this request", :direct, engine)
 
     _turn = wait_until_terminal_on(engine, turn_id)
     source_before = Engine.snapshot(engine)
-    source = source_before.rooms[source_room_id]
+    source = source_before.sessions[source_session_id]
 
     user_sequence =
       source.message_order
@@ -38,14 +40,14 @@ defmodule ReyCode.Orchestration.EngineTest do
       |> Enum.find(&(&1.role == :user))
       |> Map.fetch!(:created_sequence)
 
-    assert {:ok, fork_id} = Engine.fork_session(source_room_id, user_sequence, engine)
+    assert {:ok, fork_id} = Engine.fork_session(source_session_id, user_sequence, engine)
     snapshot = Engine.snapshot(engine)
-    fork = snapshot.rooms[fork_id]
+    fork = snapshot.sessions[fork_id]
 
-    assert fork.parent_room_id == source_room_id
+    assert fork.parent_session_id == source_session_id
     assert fork.forked_from_sequence == user_sequence
     assert Enum.map(fork.message_order, &snapshot.messages[&1].body) == ["Keep this request"]
-    assert snapshot.rooms[source_room_id].message_order == source.message_order
+    assert snapshot.sessions[source_session_id].message_order == source.message_order
 
     assert Enum.map(fork.participants, &{&1.name, &1.provider, &1.model}) ==
              Enum.map(source.participants, &{&1.name, &1.provider, &1.model})
@@ -53,8 +55,8 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "steering is durably consumed by a provider round" do
     %{engine: engine} = start_isolated_engine(agent_delay_ms: 200)
-    room_id = default_room_id(engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Draft the change", :direct, engine)
+    session_id = default_room_id(engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Draft the change", :direct, engine)
 
     assert Wait.projection(
              engine,
@@ -79,8 +81,8 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "messages submitted during active work are cancellable FollowUps" do
     %{engine: engine} = start_isolated_engine(agent_delay_ms: 500)
-    room_id = default_room_id(engine)
-    assert {:ok, active_turn_id} = Engine.post_message(room_id, "First", :direct, engine)
+    session_id = default_room_id(engine)
+    assert {:ok, active_turn_id} = Engine.post_message(session_id, "First", :direct, engine)
 
     assert Wait.projection(
              engine,
@@ -88,9 +90,9 @@ defmodule ReyCode.Orchestration.EngineTest do
              1_000
            )
 
-    assert {:ok, follow_up_id} = Engine.post_message(room_id, "Second", :direct, engine)
+    assert {:ok, follow_up_id} = Engine.post_message(session_id, "Second", :direct, engine)
     assert Engine.snapshot(engine).turns[follow_up_id].input_kind == :follow_up
-    assert :ok = Engine.cancel_latest_follow_up(room_id, engine)
+    assert :ok = Engine.cancel_latest_follow_up(session_id, engine)
 
     follow_up = Engine.snapshot(engine).turns[follow_up_id]
     assert follow_up.status == :terminal
@@ -141,7 +143,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     migrated = Lifecycle.ensure_primary_participants(state)
 
     assistant =
-      Enum.find(migrated.projection.rooms["room-legacy"].participants, &(&1.kind == :primary))
+      Enum.find(migrated.projection.sessions["room-legacy"].participants, &(&1.kind == :primary))
 
     assert assistant.name == "Assistant"
     assert assistant.provider == :simulator
@@ -150,16 +152,16 @@ defmodule ReyCode.Orchestration.EngineTest do
     restarted = start_supervised!(spec)
     replayed = restarted |> EventStore.load() |> Projector.replay()
 
-    assert Enum.any?(replayed.rooms["room-legacy"].participants, &(&1.kind == :primary))
+    assert Enum.any?(replayed.sessions["room-legacy"].participants, &(&1.kind == :primary))
   end
 
   test "new sessions copy configured agent profiles without transcript history" do
     %{engine: engine} = start_isolated_engine([])
-    source_room_id = default_room_id(engine)
+    source_session_id = default_room_id(engine)
 
     assert {:ok, task_participant_id} =
              Engine.add_task_participant(
-               source_room_id,
+               source_session_id,
                "Documentation",
                "Write and update project documentation",
                engine
@@ -167,7 +169,7 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     assert :ok =
              Engine.configure_participants(
-               source_room_id,
+               source_session_id,
                task_participant_id,
                :simulator,
                nil,
@@ -175,15 +177,15 @@ defmodule ReyCode.Orchestration.EngineTest do
              )
 
     assert {:ok, source_turn_id} =
-             Engine.post_message(source_room_id, "Old transcript", :direct, engine)
+             Engine.post_message(source_session_id, "Old transcript", :direct, engine)
 
     assert wait_until_terminal_on(engine, source_turn_id).outcome == :completed
 
-    assert {:ok, session_id} = Engine.create_session(source_room_id, "Copy profiles", engine)
+    assert {:ok, session_id} = Engine.create_session(source_session_id, "Copy profiles", engine)
 
     snapshot = Engine.snapshot(engine)
-    source = snapshot.rooms[source_room_id]
-    session = snapshot.rooms[session_id]
+    source = snapshot.sessions[source_session_id]
+    session = snapshot.sessions[session_id]
 
     assert session.id != source.id
     assert session.workspace == source.workspace
@@ -195,46 +197,51 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "owner commands run bash and post a durable transcript message" do
     %{engine: engine} = start_isolated_engine([])
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
-    assert :ok = Engine.run_owner_command(room_id, "echo reycode-owner", engine)
+    assert :ok = Engine.run_owner_command(session_id, "echo reycode-owner", engine)
 
     projection =
       Wait.projection(engine, fn projection ->
-        if Enum.any?(projection.rooms[room_id].message_order, fn message_id ->
+        if Enum.any?(projection.sessions[session_id].message_order, fn message_id ->
              String.contains?(projection.messages[message_id].body || "", "reycode-owner")
            end),
            do: projection
       end)
 
-    [message_id] = projection.rooms[room_id].message_order
+    [message_id] = projection.sessions[session_id].message_order
     body = projection.messages[message_id].body
 
     assert body =~ "! echo reycode-owner"
     assert body =~ "reycode-owner"
     assert projection.messages[message_id].status == :completed
 
-    assert {:error, :empty_command} = Engine.run_owner_command(room_id, "   ", engine)
-    assert {:error, :room_not_found} = Engine.run_owner_command("missing", "echo x", engine)
+    assert {:error, :empty_command} = Engine.run_owner_command(session_id, "   ", engine)
+    assert {:error, :session_not_found} = Engine.run_owner_command("missing", "echo x", engine)
   end
 
   test "created task agents run only when explicitly delegated" do
     %{engine: engine} = start_isolated_engine([])
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
     assert {:ok, participant_id} =
              Engine.add_task_participant(
-               room_id,
+               session_id,
                "Release",
                "Commit, push, and deploy approved changes",
                engine
              )
 
     assert :ok =
-             Engine.configure_participants(room_id, participant_id, :simulator, nil, engine)
+             Engine.configure_participants(session_id, participant_id, :simulator, nil, engine)
 
     assert {:ok, turn_id} =
-             Engine.delegate_task(room_id, participant_id, "Deploy the current release", engine)
+             Engine.delegate_task(
+               session_id,
+               participant_id,
+               "Deploy the current release",
+               engine
+             )
 
     turn = wait_until_terminal_on(engine, turn_id)
     snapshot = Engine.snapshot(engine)
@@ -248,15 +255,15 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "advanced compare invokes only participants explicitly present in the room" do
     %{engine: engine} = start_isolated_engine([])
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "How should this ship?", :compare, engine)
+             Engine.post_message(session_id, "How should this ship?", :compare, engine)
 
     turn = wait_until_terminal_on(engine, turn_id)
     snapshot = Engine.snapshot(engine)
-    room = snapshot.rooms[room_id]
-    messages = Enum.map(room.message_order, &snapshot.messages[&1])
+    session = snapshot.sessions[session_id]
+    messages = Enum.map(session.message_order, &snapshot.messages[&1])
 
     assert turn.outcome == :completed
     assert Enum.count(messages, &(&1.turn_id == turn_id)) == 2
@@ -265,8 +272,10 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "debate schedules proposal, critiques, and revision in durable stages" do
     %{engine: engine} = start_isolated_engine([])
-    room_id = default_room_id(engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Choose an event model", :debate, engine)
+    session_id = default_room_id(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Choose an event model", :debate, engine)
 
     turn = wait_until_terminal_on(engine, turn_id)
     snapshot = Engine.snapshot(engine)
@@ -279,10 +288,10 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "compare records independent parallel branches" do
     %{engine: engine} = start_isolated_engine([])
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Explore three designs", :compare, engine)
+             Engine.post_message(session_id, "Explore three designs", :compare, engine)
 
     turn = wait_until_terminal_on(engine, turn_id)
     snapshot = Engine.snapshot(engine)
@@ -293,15 +302,16 @@ defmodule ReyCode.Orchestration.EngineTest do
     assert Enum.all?(invocations, &(&1.label == "independent response"))
   end
 
-  test "creates project rooms and queues follow-up turns FIFO" do
+  test "creates project sessions and queues follow-up turns FIFO" do
     %{engine: engine} = start_isolated_engine([])
 
-    assert {:ok, room_id} = Engine.create_room("Payments Rewrite", System.tmp_dir!(), engine)
+    assert {:ok, session_id} =
+             Engine.create_blank_session("Payments Rewrite", System.tmp_dir!(), engine)
 
-    assert {:ok, first_id} = Engine.post_message(room_id, "First question", :compare, engine)
+    assert {:ok, first_id} = Engine.post_message(session_id, "First question", :compare, engine)
 
     assert {:ok, second_id} =
-             Engine.post_message(room_id, "Follow-up question", :compare, engine)
+             Engine.post_message(session_id, "Follow-up question", :compare, engine)
 
     first = wait_until_terminal_on(engine, first_id)
     second = wait_until_terminal_on(engine, second_id)
@@ -309,18 +319,18 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     assert first.outcome == :completed
     assert second.outcome == :completed
-    assert snapshot.rooms[room_id].slug == "payments-rewrite"
-    assert snapshot.rooms[room_id].active_turn_id == nil
-    assert snapshot.rooms[room_id].queued_turn_ids == []
+    assert snapshot.sessions[session_id].slug == "payments-rewrite"
+    assert snapshot.sessions[session_id].active_turn_id == nil
+    assert snapshot.sessions[session_id].queued_turn_ids == []
   end
 
   test "accepts an in-flight duplicate frame retry idempotently" do
     %{engine: engine} = start_isolated_engine(agent_delay_ms: 100)
 
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Retry one durable frame", :compare, engine)
+             Engine.post_message(session_id, "Retry one durable frame", :compare, engine)
 
     invocation = wait_for_frame_on(engine, turn_id)
     message = Engine.snapshot(engine).messages[invocation.message_id]
@@ -334,10 +344,10 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "persists provider frames before terminal invocation events" do
     %{engine: engine, store: store} = start_isolated_engine([])
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Durable frame check", :compare, engine)
+             Engine.post_message(session_id, "Durable frame check", :compare, engine)
 
     turn = wait_until_terminal_on(engine, turn_id)
     events = EventStore.load(store)
@@ -365,11 +375,12 @@ defmodule ReyCode.Orchestration.EngineTest do
   test "rejects an OpenCode model when provider discovery is unavailable" do
     %{engine: engine} = start_isolated_engine([])
 
-    assert {:ok, room_id} = Engine.create_room("Provider Assignment", System.tmp_dir!(), engine)
+    assert {:ok, session_id} =
+             Engine.create_blank_session("Provider Assignment", System.tmp_dir!(), engine)
 
     assert {:error, :unchecked} =
              Engine.configure_participants(
-               room_id,
+               session_id,
                ["assistant"],
                :opencode,
                "openai/gpt-5.6-sol",
@@ -377,7 +388,7 @@ defmodule ReyCode.Orchestration.EngineTest do
              )
 
     assert Enum.all?(
-             Engine.snapshot(engine).rooms[room_id].participants,
+             Engine.snapshot(engine).sessions[session_id].participants,
              &(&1.provider == :simulator)
            )
   end
@@ -388,8 +399,8 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     Engine.subscribe(engine)
     old_engine = Process.whereis(engine)
-    room_id = default_room_id(engine)
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Recover this room", :compare, engine)
+    session_id = default_room_id(engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Recover this room", :compare, engine)
     baseline = Engine.snapshot(engine).sequence
     flush_projection_snapshots()
 
@@ -402,7 +413,9 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     # Recovery helpers consume queued snapshots while waiting, so prove the
     # restarted engine still broadcasts by committing one more command.
-    assert {:ok, _room_id} = Engine.create_room("After recovery", System.tmp_dir!(), engine)
+    assert {:ok, _room_id} =
+             Engine.create_blank_session("After recovery", System.tmp_dir!(), engine)
+
     assert receive_snapshot_after(baseline)
   end
 
@@ -411,10 +424,10 @@ defmodule ReyCode.Orchestration.EngineTest do
     %{engine: engine, agent_registry: agent_registry} =
       start_isolated_engine(agent_delay_ms: 100)
 
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Survive one worker crash", :compare, engine)
+             Engine.post_message(session_id, "Survive one worker crash", :compare, engine)
 
     turn = Engine.snapshot(engine).turns[turn_id]
     invocation_id = hd(turn.invocation_order)
@@ -431,10 +444,10 @@ defmodule ReyCode.Orchestration.EngineTest do
     %{engine: engine} =
       start_isolated_engine(simulator_opts: [seed: 5, delay_ms: 0, emit_process: :task])
 
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
     assert {:ok, turn_id} =
-             Engine.post_message(room_id, "Frames from a task process", :compare, engine)
+             Engine.post_message(session_id, "Frames from a task process", :compare, engine)
 
     turn = wait_until_terminal_on(engine, turn_id)
     snapshot = Engine.snapshot(engine)
@@ -470,10 +483,10 @@ defmodule ReyCode.Orchestration.EngineTest do
     test "accepts empty batches and rejects unknown invocations and non-list frames", %{
       engine: engine
     } do
-      room_id = default_room_id(engine)
+      session_id = default_room_id(engine)
 
       assert {:ok, turn_id} =
-               Engine.post_message(room_id, "Batch validation check", :compare, engine)
+               Engine.post_message(session_id, "Batch validation check", :compare, engine)
 
       invocation = wait_for_running(engine, turn_id)
 
@@ -489,10 +502,10 @@ defmodule ReyCode.Orchestration.EngineTest do
     test "rejects batches containing non-frame elements without crashing the engine", %{
       engine: engine
     } do
-      room_id = default_room_id(engine)
+      session_id = default_room_id(engine)
 
       assert {:ok, turn_id} =
-               Engine.post_message(room_id, "Non-frame batch check", :compare, engine)
+               Engine.post_message(session_id, "Non-frame batch check", :compare, engine)
 
       invocation = wait_for_running(engine, turn_id)
 
@@ -516,8 +529,11 @@ defmodule ReyCode.Orchestration.EngineTest do
          %{
            engine: engine
          } do
-      room_id = default_room_id(engine)
-      assert {:ok, turn_id} = Engine.post_message(room_id, "Batch append check", :compare, engine)
+      session_id = default_room_id(engine)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(session_id, "Batch append check", :compare, engine)
+
       invocation = wait_for_running(engine, turn_id)
 
       assert invocation.last_frame_sequence == 0
@@ -557,10 +573,10 @@ defmodule ReyCode.Orchestration.EngineTest do
     end
 
     test "rejects frame batches for a terminal invocation", %{engine: engine} do
-      room_id = default_room_id(engine)
+      session_id = default_room_id(engine)
 
       assert {:ok, turn_id} =
-               Engine.post_message(room_id, "Terminal batch check", :compare, engine)
+               Engine.post_message(session_id, "Terminal batch check", :compare, engine)
 
       invocation = wait_for_running(engine, turn_id)
 
@@ -578,12 +594,13 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   test "rejects malformed commands at the clause boundary without touching state" do
     %{engine: engine} = start_isolated_engine([])
-    room_id = default_room_id(engine)
+    session_id = default_room_id(engine)
 
-    assert {:error, :room_not_found} =
+    assert {:error, :session_not_found} =
              Engine.post_message("room-missing", "Hello", :compare, engine)
 
-    assert {:error, :invalid_mode} = Engine.post_message(room_id, "Hello", :unknown_mode, engine)
+    assert {:error, :invalid_mode} =
+             Engine.post_message(session_id, "Hello", :unknown_mode, engine)
 
     assert {:error, :invocation_not_found} =
              Engine.Client.record_round(engine, "inv-missing", 0, %{"text" => ""})
@@ -624,7 +641,7 @@ defmodule ReyCode.Orchestration.EngineTest do
 
   defp default_room_id(engine) do
     snapshot = Engine.snapshot(engine)
-    Enum.find(snapshot.room_order, &(snapshot.rooms[&1].slug == "reycode"))
+    Enum.find(snapshot.session_order, &(snapshot.sessions[&1].slug == "reycode"))
   end
 
   defp wait_until_terminal_on(engine, turn_id, timeout \\ 3_000),
@@ -765,29 +782,30 @@ defmodule ReyCode.Orchestration.EngineTest do
       %{engine: engine} = start_isolated_engine(agent_delay_ms: 5_000)
       baseline = Engine.subscribe(engine)
 
-      assert {:ok, room_id} = Engine.create_room("Batched room", System.tmp_dir!(), engine)
+      assert {:ok, session_id} =
+               Engine.create_blank_session("Batched room", System.tmp_dir!(), engine)
 
       assert [snapshot] = new_snapshots()
       assert snapshot.sequence > baseline.sequence
-      assert Map.has_key?(snapshot.rooms, room_id)
+      assert Map.has_key?(snapshot.sessions, session_id)
     end
 
     test "a turn queued behind an active turn publishes its message and turn in one snapshot" do
       %{engine: engine} = start_isolated_engine(agent_delay_ms: 5_000)
-      room_id = default_room_id(engine)
+      session_id = default_room_id(engine)
       Engine.subscribe(engine)
 
       assert {:ok, _occupied_turn} =
-               Engine.post_message(room_id, "Occupy the room", :direct, engine)
+               Engine.post_message(session_id, "Occupy the room", :direct, engine)
 
       poll_projection(engine, fn snapshot ->
-        if snapshot.rooms[room_id].active_turn_id, do: :ok
+        if snapshot.sessions[session_id].active_turn_id, do: :ok
       end)
 
       flush_projection_snapshots()
 
       assert {:ok, queued_turn_id} =
-               Engine.post_message(room_id, "Second while busy", :compare, engine)
+               Engine.post_message(session_id, "Second while busy", :compare, engine)
 
       # Snapshots are cumulative, so the regression signal is referential:
       # every published snapshot that carries the queued message carries its
@@ -807,10 +825,10 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     test "cancellation publishes the cancelled invocation and terminal turn in one snapshot" do
       %{engine: engine} = start_isolated_engine(agent_delay_ms: 5_000)
-      room_id = default_room_id(engine)
+      session_id = default_room_id(engine)
       Engine.subscribe(engine)
 
-      assert {:ok, turn_id} = Engine.post_message(room_id, "Cancel me", :direct, engine)
+      assert {:ok, turn_id} = Engine.post_message(session_id, "Cancel me", :direct, engine)
 
       poll_projection(engine, &find_running_invocation(&1, turn_id))
       flush_projection_snapshots()
@@ -832,10 +850,10 @@ defmodule ReyCode.Orchestration.EngineTest do
     test "every published snapshot during a full compare turn stays transaction-consistent" do
       %{engine: engine} = start_isolated_engine(agent_delay_ms: 0)
       Engine.subscribe(engine)
-      room_id = default_room_id(engine)
+      session_id = default_room_id(engine)
 
       assert {:ok, turn_id} =
-               Engine.post_message(room_id, "Compare these drafts", :compare, engine)
+               Engine.post_message(session_id, "Compare these drafts", :compare, engine)
 
       snapshots = collect_snapshots_until(&turn_terminal?(&1, turn_id))
       assert Enum.all?(snapshots, &referentially_consistent?/1)
@@ -858,14 +876,14 @@ defmodule ReyCode.Orchestration.EngineTest do
       %{engine: engine} =
         start_isolated_engine(agent_delay_ms: 0, simulator_opts: [delay_ms: 0, seed: 123])
 
-      room_id = default_room_id(engine)
+      session_id = default_room_id(engine)
       role_ids = Enum.map(Squad.roles(), & &1.id)
 
-      assert :ok = Engine.configure_squad_roles(room_id, role_ids, :simulator, nil, engine)
+      assert :ok = Engine.configure_squad_roles(session_id, role_ids, :simulator, nil, engine)
       Engine.subscribe(engine)
 
       assert {:ok, turn_id} =
-               Engine.post_message(room_id, "Run the squad workflow", :squad, engine)
+               Engine.post_message(session_id, "Run the squad workflow", :squad, engine)
 
       # The human-owned release gate parks the turn on a pending review.
       pre_gate = collect_snapshots_until(&pending_gate_review?(&1, turn_id))
@@ -961,11 +979,11 @@ defmodule ReyCode.Orchestration.EngineTest do
       end)
 
     rooms_attached? =
-      Enum.all?(projection.rooms, fn {_id, room} ->
+      Enum.all?(projection.sessions, fn {_id, session} ->
         active_attached? =
-          room.active_turn_id == nil or MapSet.member?(turn_ids, room.active_turn_id)
+          session.active_turn_id == nil or MapSet.member?(turn_ids, session.active_turn_id)
 
-        queued_attached? = Enum.all?(room.queued_turn_ids, &MapSet.member?(turn_ids, &1))
+        queued_attached? = Enum.all?(session.queued_turn_ids, &MapSet.member?(turn_ids, &1))
         active_attached? and queued_attached?
       end)
 

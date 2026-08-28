@@ -5,7 +5,7 @@ defmodule ReyCode.Orchestration.Turn do
 
   @fields [
     :id,
-    :room_id,
+    :session_id,
     :user_message_id,
     :input_kind,
     :mode,
@@ -22,7 +22,7 @@ defmodule ReyCode.Orchestration.Turn do
   ]
 
   defstruct id: nil,
-            room_id: nil,
+            session_id: nil,
             user_message_id: nil,
             input_kind: :operator,
             mode: nil,
@@ -41,7 +41,7 @@ defmodule ReyCode.Orchestration.Turn do
   @type outcome :: :completed | :partial | :failed | :cancelled | :reworked
   @type t :: %__MODULE__{
           id: String.t() | nil,
-          room_id: String.t() | nil,
+          session_id: String.t() | nil,
           user_message_id: String.t() | nil,
           input_kind: :operator | :follow_up | :detached,
           participant_id: String.t() | nil,

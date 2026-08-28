@@ -1,23 +1,23 @@
 defmodule ReyCode.SessionExportTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.{Author, Message, Projection, Room}
+  alias ReyCode.Orchestration.{Author, Message, Projection, Session}
   alias ReyCode.SessionExport
 
   test "renders deterministic Markdown and escaped HTML without changing Projection" do
-    room = %Room{
+    session = %Session{
       id: "session-1",
       title: "Review <main>",
       workspace: "/workspace",
       message_order: ["assistant", "user"],
-      parent_room_id: "session-parent",
+      parent_session_id: "session-parent",
       forked_from_sequence: 12
     }
 
     projection = %Projection{
       sequence: 20,
-      rooms: %{room.id => room},
-      room_order: [room.id],
+      sessions: %{session.id => session},
+      session_order: [session.id],
       messages: %{
         "user" => %Message{
           id: "user",
@@ -38,12 +38,12 @@ defmodule ReyCode.SessionExportTest do
       }
     }
 
-    assert {:ok, markdown} = SessionExport.render(projection, room.id, :markdown)
+    assert {:ok, markdown} = SessionExport.render(projection, session.id, :markdown)
     assert markdown =~ "# Review <main>"
     assert markdown =~ "Forked from `session-parent` at sequence 12"
     assert markdown =~ ~r/## You.*Ship it.*## Assistant.*Done <safely>/s
 
-    assert {:ok, html} = SessionExport.render(projection, room.id, :html)
+    assert {:ok, html} = SessionExport.render(projection, session.id, :html)
     assert html =~ "Review &lt;main&gt;"
     assert html =~ "Done &lt;safely&gt;"
     assert projection.sequence == 20

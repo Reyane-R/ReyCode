@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.Projector do
-  @moduledoc "Pure projection of room orchestration events."
+  @moduledoc "Pure projection of session orchestration events."
 
   # Activity-trail bound: newest agent notes win when the invocation exceeds it.
   @max_invocation_notes 100
@@ -22,7 +22,7 @@ defmodule ReyCode.Orchestration.Projector do
     PeerMessage,
     Projection,
     ProviderRound,
-    Room,
+    Session,
     SquadRun,
     Steering,
     ToolAsk,
@@ -56,7 +56,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   @spec apply(Event.t(), state()) :: state()
   def apply(%Event{type: :room_created, data: data} = event, state) do
-    room = %Room{
+    session = %Session{
       id: data["room_id"],
       slug: data["slug"],
       title: data["title"],
@@ -72,16 +72,16 @@ defmodule ReyCode.Orchestration.Projector do
     %{
       state
       | sequence: event.sequence,
-        rooms: Map.put(state.rooms, room.id, room),
-        room_order: state.room_order ++ [room.id]
+        sessions: Map.put(state.sessions, session.id, session),
+        session_order: state.session_order ++ [session.id]
     }
   end
 
   def apply(%Event{type: :session_forked, data: data} = event, state) do
-    update_room(state, data["room_id"], fn room ->
+    update_session(state, data["room_id"], fn session ->
       %{
-        room
-        | parent_room_id: data["parent_room_id"],
+        session
+        | parent_session_id: data["parent_room_id"],
           forked_from_sequence: data["through_sequence"],
           message_order: data["inherited_message_ids"]
       }
@@ -90,9 +90,9 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :context_compacted, data: data} = event, state) do
-    update_room(state, data["room_id"], fn room ->
+    update_session(state, data["room_id"], fn session ->
       %{
-        room
+        session
         | context_boundary_sequence: data["through_sequence"],
           context_summary: data["summary"],
           context_compacted_at: event.recorded_at
@@ -112,18 +112,18 @@ defmodule ReyCode.Orchestration.Projector do
         "kind" => data["kind"]
       })
 
-    update_room(state, data["room_id"], fn room ->
-      %{room | participants: room.participants ++ [participant]}
+    update_session(state, data["room_id"], fn session ->
+      %{session | participants: session.participants ++ [participant]}
     end)
     |> put_sequence(event.sequence)
   end
 
   def apply(%Event{type: :participant_configured, data: data} = event, state) do
-    update_room(state, data["room_id"], fn room ->
+    update_session(state, data["room_id"], fn session ->
       participants =
-        Enum.map(room.participants, &configure_participant(&1, data))
+        Enum.map(session.participants, &configure_participant(&1, data))
 
-      %{room | participants: participants}
+      %{session | participants: participants}
     end)
     |> put_sequence(event.sequence)
   end
@@ -132,9 +132,9 @@ defmodule ReyCode.Orchestration.Projector do
     {:ok, tier} = ModelTier.normalize(data["model_tier"])
     participant_id = data["participant_id"]
 
-    update_room(state, data["room_id"], fn room ->
+    update_session(state, data["room_id"], fn session ->
       participants =
-        Enum.map(room.participants, fn
+        Enum.map(session.participants, fn
           %{id: ^participant_id} = participant ->
             %{participant | model_tier: tier}
 
@@ -142,13 +142,13 @@ defmodule ReyCode.Orchestration.Projector do
             participant
         end)
 
-      %{room | participants: participants}
+      %{session | participants: participants}
     end)
     |> put_sequence(event.sequence)
   end
 
   def apply(%Event{type: :squad_role_configured, data: data} = event, state) do
-    update_room(state, data["room_id"], fn room ->
+    update_session(state, data["room_id"], fn session ->
       seat = %Seat{
         id: data["role_id"],
         role_id: data["role_id"],
@@ -158,7 +158,7 @@ defmodule ReyCode.Orchestration.Projector do
         model: data["model"]
       }
 
-      %{room | squad_seats: Map.put(room.squad_seats, seat.id, seat)}
+      %{session | squad_seats: Map.put(session.squad_seats, seat.id, seat)}
     end)
     |> put_sequence(event.sequence)
   end
@@ -166,7 +166,7 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :message_posted, data: data} = event, state) do
     message = %Message{
       id: data["message_id"],
-      room_id: data["room_id"],
+      session_id: data["room_id"],
       turn_id: data["turn_id"],
       invocation_id: nil,
       author: posted_author(data),
@@ -186,7 +186,7 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :turn_queued, data: data} = event, state) do
     turn = %Turn{
       id: data["turn_id"],
-      room_id: data["room_id"],
+      session_id: data["room_id"],
       user_message_id: data["user_message_id"],
       input_kind: input_kind(data["input_kind"]),
       mode: mode(data["mode"]),
@@ -208,8 +208,8 @@ defmodule ReyCode.Orchestration.Projector do
       put_sequence(state, event.sequence)
     else
       state
-      |> update_room(turn.room_id, fn room ->
-        %{room | queued_turn_ids: room.queued_turn_ids ++ [turn.id]}
+      |> update_session(turn.session_id, fn session ->
+        %{session | queued_turn_ids: session.queued_turn_ids ++ [turn.id]}
       end)
       |> put_sequence(event.sequence)
     end
@@ -222,11 +222,11 @@ defmodule ReyCode.Orchestration.Projector do
       put_sequence(state, event.sequence)
     else
       state
-      |> update_room(data["room_id"], fn room ->
+      |> update_session(data["room_id"], fn session ->
         %{
-          room
+          session
           | active_turn_id: data["turn_id"],
-            queued_turn_ids: List.delete(room.queued_turn_ids, data["turn_id"])
+            queued_turn_ids: List.delete(session.queued_turn_ids, data["turn_id"])
         }
       end)
       |> put_sequence(event.sequence)
@@ -573,11 +573,11 @@ defmodule ReyCode.Orchestration.Projector do
     outcome = outcome(data["outcome"])
 
     update_turn(state, data["turn_id"], &%{&1 | status: :terminal, outcome: outcome})
-    |> update_room(data["room_id"], fn room ->
-      if room.active_turn_id == data["turn_id"] do
-        %{room | active_turn_id: nil}
+    |> update_session(data["room_id"], fn session ->
+      if session.active_turn_id == data["turn_id"] do
+        %{session | active_turn_id: nil}
       else
-        %{room | queued_turn_ids: List.delete(room.queued_turn_ids, data["turn_id"])}
+        %{session | queued_turn_ids: List.delete(session.queued_turn_ids, data["turn_id"])}
       end
     end)
     |> put_sequence(event.sequence)
@@ -586,7 +586,7 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :squad_configured, data: data} = event, state) do
     update_turn(state, data["turn_id"], fn turn ->
       run = %SquadRun{
-        room_id: turn.room_id,
+        session_id: turn.session_id,
         workflow_version: data["workflow_version"] || "squad-v1",
         release_authority: release_authority(data["release_authority"]),
         phase_index: 0,
@@ -807,7 +807,7 @@ defmodule ReyCode.Orchestration.Projector do
   defp opened_message(data, event, participant) do
     %Message{
       id: data["message_id"],
-      room_id: data["room_id"],
+      session_id: data["room_id"],
       turn_id: data["turn_id"],
       invocation_id: data["invocation_id"],
       author: Author.from_participant(participant),
@@ -823,7 +823,7 @@ defmodule ReyCode.Orchestration.Projector do
   defp opened_invocation(data, participant) do
     %Invocation{
       id: data["invocation_id"],
-      room_id: data["room_id"],
+      session_id: data["room_id"],
       turn_id: data["turn_id"],
       message_id: data["message_id"],
       participant: participant,
@@ -873,8 +873,8 @@ defmodule ReyCode.Orchestration.Projector do
   defp value_or(value, _default), do: value
 
   defp put_message(state, message) do
-    update_room(state, message.room_id, fn room ->
-      %{room | message_order: [message.id | room.message_order]}
+    update_session(state, message.session_id, fn session ->
+      %{session | message_order: [message.id | session.message_order]}
     end)
     |> Map.update!(:messages, &Map.put(&1, message.id, message))
   end
@@ -947,8 +947,8 @@ defmodule ReyCode.Orchestration.Projector do
   defp decision("deny"), do: :deny
   defp decision(value) when is_atom(value), do: value
 
-  defp update_room(state, room_id, update) do
-    %{state | rooms: Map.update!(state.rooms, room_id, update)}
+  defp update_session(state, session_id, update) do
+    %{state | sessions: Map.update!(state.sessions, session_id, update)}
   end
 
   defp update_turn(state, turn_id, update) do

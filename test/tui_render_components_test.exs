@@ -17,7 +17,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Enter")
     assert Breeze.Test.metadata(session).assigns.notice == "Write a message first"
 
-    session_id = Breeze.Test.metadata(session).assigns.selected_room_id
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "x")
     assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "x"
 

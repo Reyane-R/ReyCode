@@ -4,10 +4,10 @@ defmodule ReyCode.JSONTest do
   alias ReyCode.JSON
 
   test "normalize/1 converts nested atom keys to durable JSON keys" do
-    value = %{room_id: "room-1", nested: [%{ready: true}], count: 2}
+    value = %{session_id: "room-1", nested: [%{ready: true}], count: 2}
 
     assert JSON.normalize(value) == %{
-             "room_id" => "room-1",
+             "session_id" => "room-1",
              "nested" => [%{"ready" => true}],
              "count" => 2
            }

@@ -18,7 +18,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
     Invocation,
     Participant,
     Projector,
-    Room,
+    Session,
     Turn
   }
 
@@ -39,7 +39,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
     start_supervised!({Registry, keys: :duplicate, name: @event_registry})
     start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
 
-    room_id = "room-fanout-legacy"
+    session_id = "room-fanout-legacy"
     turn_id = "turn-fanout-legacy"
 
     explorer = %Participant{
@@ -51,11 +51,11 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
       kind: :primary
     }
 
-    turn = %Turn{id: turn_id, room_id: room_id}
+    turn = %Turn{id: turn_id, session_id: session_id}
 
     invocation = %Invocation{
       id: "inv-fanout",
-      room_id: room_id,
+      session_id: session_id,
       turn_id: turn_id,
       message_id: "msg-fanout",
       participant: explorer,
@@ -67,8 +67,8 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
 
     entries =
       [
-        EventEntries.room_created(
-          room_id,
+        EventEntries.session_created(
+          session_id,
           "fanout-legacy",
           "Fan out legacy",
           System.tmp_dir!(),
@@ -76,7 +76,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
         )
       ] ++
         EventEntries.queue_turn(
-          room_id,
+          session_id,
           "Explore three designs",
           :fan_out,
           turn_id,
@@ -87,7 +87,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
         ) ++
         [EventEntries.turn_started(turn)] ++
         EventEntries.open_invocations(
-          %Room{id: room_id},
+          %Session{id: session_id},
           turn,
           [
             %{
@@ -104,7 +104,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
         [
           EventEntries.invocation_started(invocation),
           EventEntries.provider_round(invocation, 0, %{
-            "text" => "Design one: event-sourced rooms.",
+            "text" => "Design one: event-sourced sessions.",
             "tool_calls" => [],
             "usage" => nil
           }),
@@ -144,7 +144,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
 
     # Admission still fails closed for the retired mode.
     assert {:error, :invalid_mode} =
-             Engine.post_message(room_id, "Fan out again", :fan_out, @engine)
+             Engine.post_message(session_id, "Fan out again", :fan_out, @engine)
   end
 
   test "queued and active historical fan_out turns terminate without dispatch on recovery" do
@@ -168,12 +168,12 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
       kind: :primary
     }
 
-    queued_turn = %Turn{id: "turn-fanout-queued", room_id: "room-fanout-queued"}
-    active_turn = %Turn{id: "turn-fanout-active", room_id: "room-fanout-active"}
+    queued_turn = %Turn{id: "turn-fanout-queued", session_id: "room-fanout-queued"}
+    active_turn = %Turn{id: "turn-fanout-active", session_id: "room-fanout-active"}
 
     active_invocation = %Invocation{
       id: "inv-fanout-active",
-      room_id: active_turn.room_id,
+      session_id: active_turn.session_id,
       turn_id: active_turn.id,
       message_id: "msg-fanout-active",
       participant: explorer,
@@ -188,7 +188,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
         room_and_queue_entries(active_turn, explorer, "active") ++
         [EventEntries.turn_started(active_turn)] ++
         EventEntries.open_invocations(
-          %Room{id: active_turn.room_id},
+          %Session{id: active_turn.session_id},
           active_turn,
           [
             %{
@@ -228,8 +228,8 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
 
   defp room_and_queue_entries(turn, participant, suffix) do
     [
-      EventEntries.room_created(
-        turn.room_id,
+      EventEntries.session_created(
+        turn.session_id,
         "fanout-#{suffix}",
         "Fan out #{suffix}",
         System.tmp_dir!(),
@@ -237,7 +237,7 @@ defmodule ReyCode.Orchestration.FanOutReplayTest do
       )
     ] ++
       EventEntries.queue_turn(
-        turn.room_id,
+        turn.session_id,
         "Explore #{suffix}",
         :fan_out,
         turn.id,

@@ -4,7 +4,7 @@ defmodule ReyCode.Orchestration.Validation do
   alias ReyCode.Orchestration.{Invocation, Squad, Turn}
   alias ReyCode.Security.Workspace
 
-  @max_room_title 120
+  @max_session_title 120
   @max_message_bytes 100_000
   @max_directive 2_000
   @max_participant_name 80
@@ -13,10 +13,10 @@ defmodule ReyCode.Orchestration.Validation do
   @max_cancellation_reason_bytes 1_000
   @max_gate_reason_bytes 1_000
 
-  @spec room(term(), term()) :: {:ok, String.t(), String.t()} | {:error, atom()}
-  @spec room(term(), term(), keyword()) :: {:ok, String.t(), String.t()} | {:error, atom()}
-  def room(title, workspace, opts \\ []) do
-    with {:ok, title} <- text(title, :empty_title, :invalid_title, @max_room_title),
+  @spec session(term(), term()) :: {:ok, String.t(), String.t()} | {:error, atom()}
+  @spec session(term(), term(), keyword()) :: {:ok, String.t(), String.t()} | {:error, atom()}
+  def session(title, workspace, opts \\ []) do
+    with {:ok, title} <- text(title, :empty_title, :invalid_title, @max_session_title),
          {:ok, workspace} <- Workspace.validate(workspace, opts) do
       {:ok, title, workspace}
     else
@@ -32,7 +32,7 @@ defmodule ReyCode.Orchestration.Validation do
 
   @doc "Validates the display title derived for a new session."
   @spec session_title(term()) :: {:ok, String.t()} | {:error, atom()}
-  def session_title(title), do: text(title, :empty_title, :invalid_title, @max_room_title)
+  def session_title(title), do: text(title, :empty_title, :invalid_title, @max_session_title)
 
   @doc "Validates an owner-typed shell command."
   @spec owner_command(term()) :: {:ok, String.t()} | {:error, atom()}

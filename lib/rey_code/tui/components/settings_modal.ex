@@ -20,7 +20,7 @@ defmodule ReyCode.TUI.Components.SettingsModal do
       <box :if={@term.settings.step == :participants} class="pt-2 w-full">
         <box class="font-bold">Choose an agent</box>
         <box
-          :for={{option, index} <- Enum.with_index(Settings.participant_options(@term.room, @term.mode))}
+          :for={{option, index} <- Enum.with_index(Settings.participant_options(@term.session, @term.mode))}
           class={row_class(index, @term.settings.index)}
         >
           {marker(index, @term.settings.index)} {option.label}

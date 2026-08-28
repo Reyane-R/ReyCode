@@ -101,11 +101,11 @@ defmodule ReyCode.Event do
   )
 
   @invocation_identity %{"invocation_id" => :id, "message_id" => :id}
-  @turn_room_identity %{"turn_id" => :id, "room_id" => :id}
+  @turn_session_wire_identity %{"turn_id" => :id, "room_id" => :id}
 
   @gate_contract %{
     required:
-      Map.merge(@turn_room_identity, %{
+      Map.merge(@turn_session_wire_identity, %{
         "seat_id" => :id,
         "decision" => {:one_of, @gate_decisions},
         "phase" => :text,
@@ -204,7 +204,7 @@ defmodule ReyCode.Event do
         "detached" => :boolean
       }
     },
-    turn_started: %{required: @turn_room_identity, optional: %{"detached" => :boolean}},
+    turn_started: %{required: @turn_session_wire_identity, optional: %{"detached" => :boolean}},
     assistant_message_opened: %{
       required: %{
         "invocation_id" => :id,
@@ -238,7 +238,7 @@ defmodule ReyCode.Event do
     },
     operator_question_asked: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "question_id" => :id,
           "tool_run_id" => :id,
@@ -249,7 +249,7 @@ defmodule ReyCode.Event do
     },
     operator_question_answered: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "question_id" => :id,
           "tool_run_id" => :id,
@@ -260,17 +260,17 @@ defmodule ReyCode.Event do
     },
     invocation_plan_updated: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{"plan" => :wire_map}),
       optional: %{}
     },
     invocation_started: %{
-      required: Map.merge(@invocation_identity, @turn_room_identity),
+      required: Map.merge(@invocation_identity, @turn_session_wire_identity),
       optional: %{}
     },
     invocation_steering_requested: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "steering_id" => :id,
           "body" => :text
@@ -288,20 +288,21 @@ defmodule ReyCode.Event do
       optional: %{}
     },
     invocation_completed: %{
-      required: Map.merge(@invocation_identity, @turn_room_identity),
+      required: Map.merge(@invocation_identity, @turn_session_wire_identity),
       optional: %{"metadata" => :wire_map}
     },
     invocation_failed: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity) |> Map.put("error", :failure),
+        Map.merge(@invocation_identity, @turn_session_wire_identity) |> Map.put("error", :failure),
       optional: %{}
     },
     invocation_cancelled: %{
-      required: Map.merge(@invocation_identity, @turn_room_identity) |> Map.put("reason", :text),
+      required:
+        Map.merge(@invocation_identity, @turn_session_wire_identity) |> Map.put("reason", :text),
       optional: %{}
     },
     turn_completed: %{
-      required: Map.merge(@turn_room_identity, %{"outcome" => {:one_of, @outcomes}}),
+      required: Map.merge(@turn_session_wire_identity, %{"outcome" => {:one_of, @outcomes}}),
       optional: %{}
     },
     snapshot_recorded: %{required: %{"binary" => :snapshot_binary}, optional: %{}},
@@ -319,12 +320,12 @@ defmodule ReyCode.Event do
       }
     },
     squad_stage_entered: %{
-      required: Map.merge(@turn_room_identity, %{"stage" => :non_negative_integer}),
+      required: Map.merge(@turn_session_wire_identity, %{"stage" => :non_negative_integer}),
       optional: %{"phase" => :text, "cycle" => :non_negative_integer}
     },
     squad_decision_recorded: %{
       required:
-        Map.merge(@turn_room_identity, %{
+        Map.merge(@turn_session_wire_identity, %{
           "seat_id" => :id,
           "decision" => {:one_of, @gate_decisions}
         }),
@@ -336,7 +337,7 @@ defmodule ReyCode.Event do
       }
     },
     squad_artifact_recorded: %{
-      required: Map.merge(@turn_room_identity, %{"seat_id" => :id, "kind" => :text}),
+      required: Map.merge(@turn_session_wire_identity, %{"seat_id" => :id, "kind" => :text}),
       optional: %{
         "phase" => :text,
         "cycle" => :non_negative_integer,
@@ -349,7 +350,7 @@ defmodule ReyCode.Event do
     },
     squad_retry_scheduled: %{
       required:
-        Map.merge(@turn_room_identity, %{"seat_id" => :id, "attempt" => :positive_integer}),
+        Map.merge(@turn_session_wire_identity, %{"seat_id" => :id, "attempt" => :positive_integer}),
       optional: %{
         "kind" => {:one_of, @retry_kinds},
         "phase" => :text,
@@ -372,7 +373,7 @@ defmodule ReyCode.Event do
     },
     squad_directive_added: %{
       required:
-        Map.merge(@turn_room_identity, %{
+        Map.merge(@turn_session_wire_identity, %{
           "text" => :text,
           "phase" => :text,
           "cycle" => :non_negative_integer
@@ -382,12 +383,12 @@ defmodule ReyCode.Event do
     gate_review_requested: @gate_contract,
     gate_resolved: @gate_contract,
     squad_budget_extended: %{
-      required: Map.merge(@turn_room_identity, %{"budget" => :positive_integer}),
+      required: Map.merge(@turn_session_wire_identity, %{"budget" => :positive_integer}),
       optional: %{}
     },
     tool_ask_requested: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "request_id" => :id,
           "tool" => :text,
@@ -398,7 +399,7 @@ defmodule ReyCode.Event do
     },
     tool_ask_resolved: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "request_id" => :id,
           "tool" => :text,
@@ -408,7 +409,7 @@ defmodule ReyCode.Event do
     },
     provider_round_recorded: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "round_index" => :non_negative_integer,
           "text" => :text,
@@ -419,7 +420,7 @@ defmodule ReyCode.Event do
     },
     tool_run_requested: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "tool_run_id" => :id,
           "tool_call_id" => :id,
@@ -433,7 +434,7 @@ defmodule ReyCode.Event do
     },
     tool_run_approval_resolved: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "tool_run_id" => :id,
           "tool" => :text,
@@ -443,19 +444,19 @@ defmodule ReyCode.Event do
     },
     tool_run_started: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{"tool_run_id" => :id, "tool" => :text}),
       optional: %{}
     },
     tool_run_completed: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{"tool_run_id" => :id, "tool" => :text, "result" => :wire_map}),
       optional: %{}
     },
     tool_run_failed: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "tool_run_id" => :id,
           "tool" => :text,
@@ -466,13 +467,13 @@ defmodule ReyCode.Event do
     },
     tool_run_interrupted: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{"tool_run_id" => :id, "tool" => :text, "reason" => :text}),
       optional: %{}
     },
     delegation_opened: %{
       required:
-        Map.merge(@invocation_identity, @turn_room_identity)
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
         |> Map.merge(%{
           "tool_run_id" => :id,
           "child_invocation_id" => :id,
@@ -483,7 +484,7 @@ defmodule ReyCode.Event do
     },
     peer_message_sent: %{
       required:
-        Map.merge(@turn_room_identity, %{
+        Map.merge(@turn_session_wire_identity, %{
           "peer_message_id" => :id,
           "sender_invocation_id" => :id,
           "sender_name" => :text,

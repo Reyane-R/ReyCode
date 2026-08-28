@@ -21,7 +21,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
     Invocation,
     Participant,
     Projection,
-    Room,
+    Session,
     ToolRun,
     Turn
   }
@@ -269,12 +269,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
   describe "spawn_task delegation lifecycle" do
     test "suspends the parent durably while the child runs and resumes with its report" do
       stack = start_stack()
-      room_id = new_room(stack)
-      configure_room(room_id)
+      session_id = new_room(stack)
+      configure_room(session_id)
 
       assert {:ok, turn_id} =
                Engine.post_message(
-                 room_id,
+                 session_id,
                  "delegate: #{@task_agent} :: run the tests",
                  :direct,
                  @engine
@@ -318,12 +318,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     test "failed child remains a failed tool result for the resumed parent" do
       stack = start_stack()
-      room_id = new_room(stack)
-      configure_room(room_id)
+      session_id = new_room(stack)
+      configure_room(session_id)
 
       assert {:ok, turn_id} =
                Engine.post_message(
-                 room_id,
+                 session_id,
                  "delegate: #{@task_agent} :: fail child",
                  :direct,
                  @engine
@@ -348,12 +348,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
   describe "recovery" do
     test "restart mid-child resumes the child first and completes both sides exactly once" do
       stack = start_stack()
-      room_id = new_room(stack)
-      configure_room(room_id)
+      session_id = new_room(stack)
+      configure_room(session_id)
 
       assert {:ok, turn_id} =
                Engine.post_message(
-                 room_id,
+                 session_id,
                  "delegate: #{@task_agent} :: block on purpose",
                  :direct,
                  @engine
@@ -373,7 +373,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
       refute new_child_pid == first_child_pid
 
       recovered = Engine.snapshot(@engine)
-      activity = Activity.present(room_id, recovered, %{}, System.system_time(:millisecond))
+      activity = Activity.present(session_id, recovered, %{}, System.system_time(:millisecond))
       assert Activity.active?(activity)
       assert activity.header.label == "Delegating"
 
@@ -392,12 +392,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     test "recovery resumes the newest running child after an earlier delegation completed" do
       stack = start_stack(delegation_max_children_per_invocation: 2)
-      room_id = new_room(stack)
-      configure_room(room_id)
+      session_id = new_room(stack)
+      configure_room(session_id)
 
       assert {:ok, turn_id} =
                Engine.post_message(
-                 room_id,
+                 session_id,
                  "delegate: #{@task_agent} :: recovery twice",
                  :direct,
                  @engine
@@ -433,12 +433,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     test "cancelling mid-child fails the pending run and terminates the child exactly once" do
       stack = start_stack()
-      room_id = new_room(stack)
-      configure_room(room_id)
+      session_id = new_room(stack)
+      configure_room(session_id)
 
       assert {:ok, turn_id} =
                Engine.post_message(
-                 room_id,
+                 session_id,
                  "delegate: #{@task_agent} :: block on purpose",
                  :direct,
                  @engine
@@ -466,7 +466,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
       refute Enum.any?(events, &(&1.type == :invocation_completed))
       assert Enum.count(events, &(&1.type == :invocation_cancelled)) == 2
 
-      activity = Activity.present(room_id, snapshot, %{}, System.system_time(:millisecond))
+      activity = Activity.present(session_id, snapshot, %{}, System.system_time(:millisecond))
       refute Activity.active?(activity)
       assert activity.header.outcome == :cancelled
     end
@@ -518,12 +518,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     test "oversized brief is denied by the byte cap" do
       stack = start_stack(delegation_brief_max_bytes: 16)
-      room_id = new_room(stack)
-      configure_room(room_id)
+      session_id = new_room(stack)
+      configure_room(session_id)
 
       assert {:ok, turn_id} =
                Engine.post_message(
-                 room_id,
+                 session_id,
                  "delegate: #{@task_agent} :: a brief far beyond sixteen bytes",
                  :direct,
                  @engine
@@ -543,11 +543,16 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     test "child cap denies further delegations deterministically" do
       stack = start_stack(delegation_max_children_per_invocation: 1)
-      room_id = new_room(stack)
-      configure_room(room_id)
+      session_id = new_room(stack)
+      configure_room(session_id)
 
       assert {:ok, turn_id} =
-               Engine.post_message(room_id, "delegate: #{@task_agent} :: twice", :direct, @engine)
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: twice",
+                 :direct,
+                 @engine
+               )
 
       assert_receive {:parent_round, 0}, 5_000
       assert_receive {:child_round, 0}, 5_000
@@ -650,7 +655,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     test "freezes a bounded Wave with ordered workers and a dependency-gated integrator" do
       {invocation, projection} = policy_fixture(:direct)
-      room = projection.rooms[invocation.room_id]
+      session = projection.sessions[invocation.session_id]
 
       nova = %Participant{
         id: "nova",
@@ -672,8 +677,8 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
       projection =
         put_in(
-          projection.rooms[room.id],
-          %{room | participants: room.participants ++ [nova, release]}
+          projection.sessions[session.id],
+          %{session | participants: session.participants ++ [nova, release]}
         )
 
       arguments = %{
@@ -752,12 +757,12 @@ defmodule ReyCode.Orchestration.DelegationTest do
         do: [task, %{task | id: "luna-2"}],
         else: [task]
 
-    room = %Room{id: "room-policy", participants: participants}
-    turn = %Turn{id: "turn-policy", room_id: room.id, mode: mode}
+    session = %Session{id: "room-policy", participants: participants}
+    turn = %Turn{id: "turn-policy", session_id: session.id, mode: mode}
 
     invocation = %Invocation{
       id: "inv-policy",
-      room_id: room.id,
+      session_id: session.id,
       turn_id: turn.id,
       delegation_depth: 0,
       tool_runs: opts[:tool_runs] || %{},
@@ -765,7 +770,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
     }
 
     projection = %Projection{
-      rooms: %{room.id => room},
+      sessions: %{session.id => session},
       turns: %{turn.id => turn}
     }
 
@@ -774,10 +779,10 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
   defp run_delegation_scenario(message) do
     stack = start_stack()
-    room_id = new_room(stack)
-    configure_room(room_id)
+    session_id = new_room(stack)
+    configure_room(session_id)
 
-    {:ok, turn_id} = Engine.post_message(room_id, message, :direct, @engine)
+    {:ok, turn_id} = Engine.post_message(session_id, message, :direct, @engine)
     Wait.terminal_turn(@engine, turn_id)
 
     {turn_id}
@@ -801,20 +806,22 @@ defmodule ReyCode.Orchestration.DelegationTest do
   end
 
   defp new_room(stack) do
-    assert {:ok, room_id} = Engine.create_room("Delegation Room", stack.workspace, @engine)
-    room_id
+    assert {:ok, session_id} =
+             Engine.create_blank_session("Delegation Room", stack.workspace, @engine)
+
+    session_id
   end
 
-  defp configure_room(room_id) do
+  defp configure_room(session_id) do
     snapshot = Engine.snapshot(@engine)
-    room = snapshot.rooms[room_id]
-    primary = Enum.find(room.participants, &(&1.kind == :primary))
+    session = snapshot.sessions[session_id]
+    primary = Enum.find(session.participants, &(&1.kind == :primary))
 
     assert {:ok, luna_id} =
-             Engine.add_task_participant(room_id, @task_agent, "cheap test cycles", @engine)
+             Engine.add_task_participant(session_id, @task_agent, "cheap test cycles", @engine)
 
-    assert :ok = Engine.configure_participants(room_id, [primary.id], :simulator, nil, @engine)
-    assert :ok = Engine.configure_participants(room_id, [luna_id], :simulator, nil, @engine)
+    assert :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
+    assert :ok = Engine.configure_participants(session_id, [luna_id], :simulator, nil, @engine)
   end
 
   defp start_stack(overrides \\ []) do

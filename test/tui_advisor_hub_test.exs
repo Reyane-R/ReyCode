@@ -1,14 +1,14 @@
 defmodule ReyCode.TUI.AdvisorHubTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.{Invocation, Message, Participant, Projection, Room}
+  alias ReyCode.Orchestration.{Invocation, Message, Participant, Projection, Session}
   alias ReyCode.TUI.{Advisor, AgentHub}
 
   test "finds only the configured Advisor task Participant" do
     advisor = %Participant{id: "advisor", name: "Advisor", kind: :task}
     primary = %Participant{id: "primary", name: "Advisor", kind: :primary}
-    room = %Room{participants: [primary, advisor]}
-    assert Advisor.advisor(room).id == "advisor"
+    session = %Session{participants: [primary, advisor]}
+    assert Advisor.advisor(session).id == "advisor"
     assert Advisor.advisor(nil) == nil
   end
 
@@ -21,12 +21,12 @@ defmodule ReyCode.TUI.AdvisorHubTest do
       model: "test"
     }
 
-    room = %Room{id: "room", participants: [advisor]}
+    session = %Session{id: "room", participants: [advisor]}
 
     term = %Breeze.Term{
       assigns: %{
-        projection: %Projection{rooms: %{"room" => room}},
-        selected_room_id: "room",
+        projection: %Projection{sessions: %{"room" => session}},
+        selected_session_id: "room",
         advisor_delegate: fn _room_id, _participant_id, brief, _engine ->
           send(self(), {:advisor_brief, brief})
           {:ok, "turn"}
@@ -44,12 +44,12 @@ defmodule ReyCode.TUI.AdvisorHubTest do
   end
 
   test "reports missing Advisor configuration" do
-    room = %Room{id: "room", participants: []}
+    session = %Session{id: "room", participants: []}
 
     term = %Breeze.Term{
       assigns: %{
-        projection: %Projection{rooms: %{"room" => room}},
-        selected_room_id: "room",
+        projection: %Projection{sessions: %{"room" => session}},
+        selected_session_id: "room",
         modal: :slash,
         slash: nil,
         notice: nil
@@ -78,10 +78,10 @@ defmodule ReyCode.TUI.AdvisorHubTest do
       status: :running
     }
 
-    room = %Room{id: "room", message_order: ["parent-message", "child-message"]}
+    session = %Session{id: "room", message_order: ["parent-message", "child-message"]}
 
     projection = %Projection{
-      rooms: %{"room" => room},
+      sessions: %{"room" => session},
       messages: %{
         "parent-message" => %Message{id: "parent-message", invocation_id: "parent"},
         "child-message" => %Message{id: "child-message", invocation_id: "child"}
@@ -89,7 +89,7 @@ defmodule ReyCode.TUI.AdvisorHubTest do
       invocations: %{"parent" => parent, "child" => child}
     }
 
-    term = %{assigns: %{projection: projection, selected_room_id: "room"}}
+    term = %{assigns: %{projection: projection, selected_session_id: "room"}}
 
     assert [^child] = AgentHub.children(term)
   end
@@ -104,10 +104,10 @@ defmodule ReyCode.TUI.AdvisorHubTest do
       status: :running
     }
 
-    room = %Room{id: "room", message_order: ["child-message"]}
+    session = %Session{id: "room", message_order: ["child-message"]}
 
     projection = %Projection{
-      rooms: %{"room" => room},
+      sessions: %{"room" => session},
       messages: %{"child-message" => %Message{id: "child-message", invocation_id: "child"}},
       invocations: %{"child" => child}
     }
@@ -115,7 +115,7 @@ defmodule ReyCode.TUI.AdvisorHubTest do
     term = %Breeze.Term{
       assigns: %{
         projection: projection,
-        selected_room_id: "room",
+        selected_session_id: "room",
         agent_hub: %{index: 0},
         engine: self(),
         cancel_child: fn "turn", _reason, _engine ->

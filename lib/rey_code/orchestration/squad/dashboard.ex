@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Squad.Dashboard do
   @moduledoc "Pure read model and presentation values for the squad dashboard."
 
-  alias ReyCode.Orchestration.{Projection, Room, Squad, Turn}
+  alias ReyCode.Orchestration.{Projection, Session, Squad, Turn}
   alias ReyCode.Orchestration.Squad.{Artifact, GateResolution, GateReview, Phase, Retry}
 
   @type usage_summary :: %{
@@ -11,10 +11,10 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
           invocations: non_neg_integer()
         }
 
-  @doc "Builds dashboard data for the active or most recent squad turn in a room."
-  @spec data(Room.t(), Projection.t()) :: map() | nil
-  def data(room, projection) do
-    case turn(room, projection) do
+  @doc "Builds dashboard data for the active or most recent squad turn in a session."
+  @spec data(Session.t(), Projection.t()) :: map() | nil
+  def data(session, projection) do
+    case turn(session, projection) do
       nil ->
         nil
 
@@ -32,17 +32,17 @@ defmodule ReyCode.Orchestration.Squad.Dashboard do
     end
   end
 
-  @doc "Returns the active squad turn, falling back to the room's most recent one."
-  @spec turn(Room.t(), Projection.t()) :: Turn.t() | nil
-  def turn(room, projection) do
-    active = projection.turns[room.active_turn_id]
+  @doc "Returns the active squad turn, falling back to the session's most recent one."
+  @spec turn(Session.t(), Projection.t()) :: Turn.t() | nil
+  def turn(session, projection) do
+    active = projection.turns[session.active_turn_id]
 
     if squad_turn?(active) do
       active
     else
       projection.turns
       |> Map.values()
-      |> Enum.filter(&(&1.room_id == room.id and squad_turn?(&1)))
+      |> Enum.filter(&(&1.session_id == session.id and squad_turn?(&1)))
       |> Enum.max_by(&Map.get(&1, :created_at, ""), fn -> nil end)
     end
   end

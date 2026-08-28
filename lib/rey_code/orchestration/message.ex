@@ -6,7 +6,7 @@ defmodule ReyCode.Orchestration.Message do
 
   @fields [
     :id,
-    :room_id,
+    :session_id,
     :turn_id,
     :invocation_id,
     :author,
@@ -19,7 +19,7 @@ defmodule ReyCode.Orchestration.Message do
   ]
 
   defstruct id: nil,
-            room_id: nil,
+            session_id: nil,
             turn_id: nil,
             invocation_id: nil,
             author: nil,
@@ -32,7 +32,7 @@ defmodule ReyCode.Orchestration.Message do
 
   @type t :: %__MODULE__{
           id: String.t() | nil,
-          room_id: String.t() | nil,
+          session_id: String.t() | nil,
           turn_id: String.t() | nil,
           invocation_id: String.t() | nil,
           author: Author.t() | nil,

@@ -27,17 +27,17 @@ defmodule ReyCode.Orchestration.AdmissionTest do
 
   test "serializes provider workers under global and workspace limits", %{store: store} do
     start_engine(store, global_concurrency: 1, workspace_concurrency: 1)
-    room_id = Engine.snapshot(@engine).room_order |> hd()
+    session_id = Engine.snapshot(@engine).session_order |> hd()
 
     Enum.each(["Tests", "Docs"], fn name ->
       assert {:ok, participant_id} =
-               Engine.add_task_participant(room_id, name, "Exercise admission limits", @engine)
+               Engine.add_task_participant(session_id, name, "Exercise admission limits", @engine)
 
       assert :ok =
-               Engine.configure_participants(room_id, participant_id, :simulator, nil, @engine)
+               Engine.configure_participants(session_id, participant_id, :simulator, nil, @engine)
     end)
 
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Bound this work", :compare, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Bound this work", :compare, @engine)
 
     Wait.projection(@engine, fn projection ->
       turn = projection.turns[turn_id]
@@ -59,20 +59,20 @@ defmodule ReyCode.Orchestration.AdmissionTest do
       workspace_queue_limit: 0
     )
 
-    room_id = Engine.snapshot(@engine).room_order |> hd()
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Occupy capacity", :compare, @engine)
+    session_id = Engine.snapshot(@engine).session_order |> hd()
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Occupy capacity", :compare, @engine)
     assert Wait.turn_status(@engine, turn_id, :running).status == :running
 
     assert {:error, :global_queue_full} =
-             Engine.post_message(room_id, "Do not enqueue", :compare, @engine)
+             Engine.post_message(session_id, "Do not enqueue", :compare, @engine)
 
     assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
   end
 
   test "durably cancels running and queued invocations without retries", %{store: store} do
     start_engine(store, global_concurrency: 1, workspace_concurrency: 1)
-    room_id = Engine.snapshot(@engine).room_order |> hd()
-    assert {:ok, turn_id} = Engine.post_message(room_id, "Cancel this work", :compare, @engine)
+    session_id = Engine.snapshot(@engine).session_order |> hd()
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Cancel this work", :compare, @engine)
     running_id = Wait.invocation_status(@engine, turn_id, :running).id
 
     {worker, _value} = Wait.registry_entry(@agent_registry, running_id)

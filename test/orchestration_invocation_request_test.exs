@@ -6,7 +6,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
     InvocationRequest,
     Participant,
     Projection,
-    Room,
+    Session,
     ToolRun,
     Turn
   }
@@ -27,7 +27,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
     invocation = %Invocation{
       id: "inv-1",
       turn_id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       participant: participant,
       system_prompt: "Build the smallest change",
       project_instructions: %Capture{
@@ -68,8 +68,8 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
     }
 
     projection = %Projection{
-      rooms: %{
-        "room-1" => %Room{
+      sessions: %{
+        "room-1" => %Session{
           id: "room-1",
           workspace: "/workspace",
           message_order: ["msg-user"]
@@ -99,7 +99,7 @@ defmodule ReyCode.Orchestration.InvocationRequestTest do
            }) == %Request{
              invocation_id: "inv-1",
              turn_id: "turn-1",
-             room_id: "room-1",
+             session_id: "room-1",
              mode: :compare,
              participant: participant,
              system_prompt:

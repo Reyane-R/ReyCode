@@ -7,7 +7,7 @@ defmodule ReyCode.Provider.Request do
   @enforce_keys [
     :invocation_id,
     :turn_id,
-    :room_id,
+    :session_id,
     :mode,
     :participant,
     :system_prompt,
@@ -19,7 +19,7 @@ defmodule ReyCode.Provider.Request do
   defstruct [
     :invocation_id,
     :turn_id,
-    :room_id,
+    :session_id,
     :mode,
     :participant,
     :system_prompt,
@@ -45,7 +45,7 @@ defmodule ReyCode.Provider.Request do
   @type t :: %__MODULE__{
           invocation_id: String.t(),
           turn_id: String.t(),
-          room_id: String.t(),
+          session_id: String.t(),
           mode: atom(),
           participant: participant(),
           system_prompt: String.t(),

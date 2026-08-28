@@ -62,8 +62,8 @@ defmodule ReyCode.TUI.ModelPicker do
     entry = Enum.at(entries(assigns.providers), assigns.model_picker.index)
 
     with %{provider: provider, model: model, label: label} <- entry,
-         %{} = room <- assigns.projection.rooms[assigns.selected_room_id],
-         %{} = primary <- primary_participant(room) do
+         %{} = session <- assigns.projection.sessions[assigns.selected_session_id],
+         %{} = primary <- primary_participant(session) do
       configure(term, entry, provider, model, label, primary)
     else
       _other -> {:noreply, Component.assign(term, notice: "No Assistant configured")}
@@ -81,8 +81,8 @@ defmodule ReyCode.TUI.ModelPicker do
       end)
 
     with %{} = selected <- entry,
-         %{} = room <- assigns.projection.rooms[assigns.selected_room_id],
-         %{} = primary <- primary_participant(room) do
+         %{} = session <- assigns.projection.sessions[assigns.selected_session_id],
+         %{} = primary <- primary_participant(session) do
       configure(term, selected, provider, model, selected.label, primary)
     else
       _other ->
@@ -92,7 +92,7 @@ defmodule ReyCode.TUI.ModelPicker do
 
   defp configure(term, _entry, provider, model, label, primary) do
     case Engine.configure_participants(
-           term.assigns.selected_room_id,
+           term.assigns.selected_session_id,
            [primary.id],
            provider,
            model,
@@ -115,8 +115,8 @@ defmodule ReyCode.TUI.ModelPicker do
     |> View.focus("prompt")
   end
 
-  defp primary_participant(room) do
-    Enum.find(room.participants, &(&1.kind == :primary))
+  defp primary_participant(session) do
+    Enum.find(session.participants, &(&1.kind == :primary))
   end
 
   defp provider_rows(%{models: []} = provider),

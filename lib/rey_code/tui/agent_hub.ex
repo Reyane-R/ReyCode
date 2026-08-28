@@ -68,8 +68,8 @@ defmodule ReyCode.TUI.AgentHub do
   @spec children(map()) :: [map()]
   def children(%{assigns: assigns}), do: children(assigns)
 
-  def children(%{projection: projection, selected_room_id: room_id}) do
-    Projection.delegated_invocations(projection, room_id)
+  def children(%{projection: projection, selected_session_id: session_id}) do
+    Projection.delegated_invocations(projection, session_id)
   end
 
   defp selected_child(term), do: Enum.at(children(term), term.assigns.agent_hub.index)

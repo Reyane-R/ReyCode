@@ -46,14 +46,14 @@ defmodule ReyCode.TUI.WorkflowsTest do
   end
 
   defp term(overrides \\ []) do
-    room = %{id: "room-1", active_turn_id: nil}
+    session = %{id: "room-1", active_turn_id: nil}
 
     assigns = %{
       engine: nil,
       modal: nil,
       notice: nil,
-      selected_room_id: "room-1",
-      projection: %{rooms: %{"room-1" => room}, turns: %{}},
+      selected_session_id: "room-1",
+      projection: %{sessions: %{"room-1" => session}, turns: %{}},
       slash: %{query: "/", index: 0, restore_draft: nil},
       cancel_turn_id: nil
     }
@@ -63,14 +63,14 @@ defmodule ReyCode.TUI.WorkflowsTest do
 
   defp with_turn(term, turn) do
     term
-    |> put_in([Access.key(:assigns), :projection, :rooms, "room-1", :active_turn_id], turn.id)
+    |> put_in([Access.key(:assigns), :projection, :sessions, "room-1", :active_turn_id], turn.id)
     |> put_in([Access.key(:assigns), :projection, :turns, turn.id], turn)
   end
 
   defp active_turn do
     %{
       id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       mode: :squad,
       status: :running,
       squad: nil

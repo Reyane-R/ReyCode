@@ -6,8 +6,8 @@ defmodule ReyCode.Orchestration.Workflow.Eval do
   alias ReyCode.Orchestration.Workflow
 
   @impl true
-  def plan(room, _turn, _projection) do
-    room.participants
+  def plan(session, _turn, _projection) do
+    session.participants
     |> Enum.filter(&(&1.kind == :task))
     |> Enum.map(fn participant ->
       %{
@@ -22,5 +22,5 @@ defmodule ReyCode.Orchestration.Workflow.Eval do
   end
 
   @impl true
-  def advance(room, turn, projection), do: Workflow.advance_parallel(room, turn, projection)
+  def advance(session, turn, projection), do: Workflow.advance_parallel(session, turn, projection)
 end

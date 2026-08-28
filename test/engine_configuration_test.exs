@@ -41,9 +41,9 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
   end
 
   test "preserves target, selection, and provider error precedence for both targets" do
-    assert {:error, :room_not_found} =
+    assert {:error, :session_not_found} =
              Configuration.participants(
-               state(%{rooms: %{}}),
+               state(%{sessions: %{}}),
                "missing",
                [],
                :unknown,
@@ -84,7 +84,7 @@ defmodule ReyCode.Orchestration.Engine.ConfigurationTest do
 
   defp projection do
     %{
-      rooms: %{
+      sessions: %{
         "room-1" => %{
           participants: [
             %{id: "builder"},

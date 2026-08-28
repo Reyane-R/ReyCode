@@ -16,10 +16,10 @@ defmodule ReyCode.TUI.SessionCommand do
   end
 
   def run(term, "/export", nil) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
-    path = Path.join([room.workspace, ".reycode", "exports", room.id <> ".md"])
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+    path = Path.join([session.workspace, ".reycode", "exports", session.id <> ".md"])
 
-    case SessionExport.write(term.assigns.projection, room.id, path, :markdown) do
+    case SessionExport.write(term.assigns.projection, session.id, path, :markdown) do
       :ok ->
         {:noreply, SlashPalette.close(term, "Session exported to #{path}")}
 
@@ -29,7 +29,7 @@ defmodule ReyCode.TUI.SessionCommand do
   end
 
   defp fork(term, sequence) do
-    case Engine.fork_session(term.assigns.selected_room_id, sequence, term.assigns.engine) do
+    case Engine.fork_session(term.assigns.selected_session_id, sequence, term.assigns.engine) do
       {:ok, session_id} ->
         next = term |> SlashPalette.close("Session forked") |> State.select_session(session_id)
         {:noreply, next}

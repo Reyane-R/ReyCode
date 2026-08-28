@@ -23,7 +23,7 @@ defmodule ReyCode.SubscriptionMonotonicTest do
 
     def handle_call(:snapshot, _from, registry) do
       broadcast(registry, %{sequence: 1})
-      {:reply, %{sequence: 2, rooms: %{}, room_order: []}, registry}
+      {:reply, %{sequence: 2, sessions: %{}, session_order: []}, registry}
     end
 
     def handle_call(:broadcast_next, _from, registry) do
@@ -82,7 +82,12 @@ defmodule ReyCode.SubscriptionMonotonicTest do
 
       term = mounted_term(%{projection: baseline})
 
-      stale = %{sequence: 1, rooms: %{"room-stale" => :sentinel}, room_order: ["room-stale"]}
+      stale = %{
+        sequence: 1,
+        sessions: %{"room-stale" => :sentinel},
+        session_order: ["room-stale"]
+      }
+
       assert ^term = State.projection_updated(term, stale)
     end
 
@@ -221,8 +226,8 @@ defmodule ReyCode.SubscriptionMonotonicTest do
     assigns =
       Map.merge(
         %{
-          projection: %{sequence: 0, rooms: %{}, room_order: []},
-          selected_room_id: nil,
+          projection: %{sequence: 0, sessions: %{}, session_order: []},
+          selected_session_id: nil,
           providers: %{},
           providers_generation: 0,
           notice: nil,

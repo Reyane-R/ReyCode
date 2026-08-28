@@ -9,7 +9,7 @@ defmodule ReyCode.Orchestration.ToolApprovalTest do
       id: "invocation-1",
       message_id: "message-1",
       turn_id: "turn-1",
-      room_id: "room-1",
+      session_id: "room-1",
       status: :running,
       error: nil,
       pending_tool_review: nil

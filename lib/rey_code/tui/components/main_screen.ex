@@ -10,9 +10,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
   alias ReyCode.TUI.Activity
   attr :modal, :any, required: true
   attr :home, :boolean, required: true
-  attr :rooms, :list, required: true
+  attr :sessions, :list, required: true
   attr :mode, :atom, required: true
-  attr :room, :map, required: true
+  attr :session, :map, required: true
   attr :projection, :map, required: true
   attr :providers, :map, required: true
   attr :messages, :list, required: true
@@ -30,10 +30,10 @@ defmodule ReyCode.TUI.Components.MainScreen do
     ~H"""
     <box :if={@modal in [nil, :slash]} class="w-screen h-screen bg">
       <box class={content_class(@home)}>
-        <.home_panel :if={@home} room={@room} recent_session_rows={@recent_session_rows}/>
-        <.room_header
-          :if={room_visible?(@home)}
-          room={@room}
+        <.home_panel :if={@home} session={@session} recent_session_rows={@recent_session_rows}/>
+        <.session_header
+          :if={session_visible?(@home)}
+          session={@session}
           activity={@activity}
           activity_frame={@activity_frame}
           git_branch={@git_branch}
@@ -41,7 +41,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           terminal_width={@terminal_width}
         />
         <.timeline
-          :if={room_visible?(@home)}
+          :if={session_visible?(@home)}
           messages={@messages}
           timeline_id={@timeline_id}
           message_width={@message_width}
@@ -54,7 +54,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
     """
   end
 
-  attr :room, :map, required: true
+  attr :session, :map, required: true
   attr :recent_session_rows, :list, required: true
 
   defp home_panel(assigns) do
@@ -63,7 +63,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box class="font-bold text-primary">Welcome to ReyCode</box>
       <box class="text-muted">One assistant by default. Task agents run only when you delegate.</box>
       <box class="pt-1 font-bold">Primary assistant</box>
-      <box class="text-muted">{primary_summary(@room)}</box>
+      <box class="text-muted">{primary_summary(@session)}</box>
       <box class="pt-1 font-bold">Quick start</box>
       <box>/  commands</box>
       <box>/agent  create a task agent with its own model</box>
@@ -71,10 +71,10 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box>/hub  inspect delegated child Invocations</box>
       <box>@file  attach a file to your message</box>
       <box class="pt-1 font-bold">Task agents</box>
-      <box :if={task_participants(@room) == []} class="text-muted">
+      <box :if={task_participants(@session) == []} class="text-muted">
         None yet. Create one only when a repeatable responsibility is worth keeping.
       </box>
-      <box :for={participant <- task_participants(@room)}>
+      <box :for={participant <- task_participants(@session)}>
         {participant.name}  ·  {Presentation.short_runtime_label(participant)}
       </box>
       <box class="pt-1 font-bold">Recent sessions</box>
@@ -86,21 +86,21 @@ defmodule ReyCode.TUI.Components.MainScreen do
     """
   end
 
-  attr :room, :map, required: true
+  attr :session, :map, required: true
   attr :activity, :map, required: true
   attr :activity_frame, :string, required: true
   attr :git_branch, :any, required: true
   attr :token_label, :string, required: true
   attr :terminal_width, :integer, required: true
 
-  defp room_header(assigns) do
+  defp session_header(assigns) do
     ~H"""
     <box class="h-3 w-full bg-surface border-b border-muted px-2 pt-1">
       <box class="inline w-full">
         <box class="font-bold">ReyCode</box>
-        <box class="text-muted">{header_context(@room, @terminal_width, @git_branch)}</box>
+        <box class="text-muted">{header_context(@session, @terminal_width, @git_branch)}</box>
         <box class="text-muted">{@token_label}</box>
-        <box class={room_status_class(@activity.header)}>
+        <box class={session_status_class(@activity.header)}>
           {Activity.text(@activity.header, @activity_frame)}
         </box>
       </box>
@@ -148,32 +148,32 @@ defmodule ReyCode.TUI.Components.MainScreen do
     """
   end
 
-  defp room_status_class(item), do: "w-full text-right text-#{Activity.color(item)}"
+  defp session_status_class(item), do: "w-full text-right text-#{Activity.color(item)}"
 
-  defp primary_summary(room) do
-    case Enum.find(room.participants, &(&1.kind == :primary)) do
+  defp primary_summary(session) do
+    case Enum.find(session.participants, &(&1.kind == :primary)) do
       nil -> "Assistant setup required"
       participant -> "#{participant.name}  ·  #{Presentation.short_runtime_label(participant)}"
     end
   end
 
-  defp task_participants(room), do: Enum.filter(room.participants, &(&1.kind == :task))
+  defp task_participants(session), do: Enum.filter(session.participants, &(&1.kind == :task))
 
-  defp primary_runtime(room) do
-    case Enum.find(room.participants, &(&1.kind == :primary)) do
+  defp primary_runtime(session) do
+    case Enum.find(session.participants, &(&1.kind == :primary)) do
       nil -> "model required"
       participant -> Presentation.short_runtime_label(participant)
     end
   end
 
-  defp header_context(room, terminal_width, git_branch) do
+  defp header_context(session, terminal_width, git_branch) do
     branch = if is_binary(git_branch), do: "  ·  " <> git_branch, else: ""
 
     "  ·  " <>
-      primary_runtime(room) <>
+      primary_runtime(session) <>
       branch <>
       "  ·  " <>
-      workspace_context(room.workspace, terminal_width)
+      workspace_context(session.workspace, terminal_width)
   end
 
   defp workspace_context(path, terminal_width) do
@@ -204,8 +204,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
     end
   end
 
-  defp room_visible?(true), do: false
-  defp room_visible?(_home), do: true
+  defp session_visible?(true), do: false
+  defp session_visible?(_home), do: true
 
   defp content_class(true), do: "grid grid-cols-1 grid-rows-2 h-full w-full overflow-hidden"
   defp content_class(_home), do: "grid grid-cols-1 grid-rows-3 h-full w-full overflow-hidden"

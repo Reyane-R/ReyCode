@@ -57,7 +57,7 @@ defmodule ReyCode.TUI do
   def switch_focus(_event, term) do
     next =
       if term.focused == "prompt",
-        do: State.timeline_id(term.assigns.selected_room_id),
+        do: State.timeline_id(term.assigns.selected_session_id),
         else: "prompt"
 
     {:noreply, focus(term, next)}
@@ -87,7 +87,7 @@ defmodule ReyCode.TUI do
     do: Modals.module!(modal).submit(term)
 
   def submit(_event, %{assigns: %{modal: nil}} = term) do
-    draft = Map.get(term.assigns.drafts, term.assigns.selected_room_id, "")
+    draft = Map.get(term.assigns.drafts, term.assigns.selected_session_id, "")
     command = String.trim(draft)
 
     cond do
@@ -130,7 +130,7 @@ defmodule ReyCode.TUI do
   end
 
   defp expand_mentions(term, draft) do
-    workspace = term.assigns.projection.rooms[term.assigns.selected_room_id].workspace
+    workspace = term.assigns.projection.sessions[term.assigns.selected_session_id].workspace
 
     case Mentions.expand(draft, workspace, max_bytes: term.assigns.config.tools.read.max_bytes) do
       {:ok, expanded, _paths} ->
@@ -154,17 +154,17 @@ defmodule ReyCode.TUI do
   defp mention_notice(token, _reason), do: "Cannot attach #{token}: unreadable"
 
   defp send_message(term, draft) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
-    follow_up? = room.active_turn_id != nil or room.queued_turn_ids != []
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+    follow_up? = session.active_turn_id != nil or session.queued_turn_ids != []
 
     case Engine.post_message(
-           term.assigns.selected_room_id,
+           term.assigns.selected_session_id,
            draft,
            :direct,
            term.assigns.engine
          ) do
       {:ok, _turn_id} ->
-        drafts = Map.put(term.assigns.drafts, term.assigns.selected_room_id, "")
+        drafts = Map.put(term.assigns.drafts, term.assigns.selected_session_id, "")
         notice = if follow_up?, do: "Follow-up queued", else: nil
         {:noreply, assign(term, drafts: drafts, notice: notice, home: false)}
 
@@ -185,11 +185,13 @@ defmodule ReyCode.TUI do
       with {:ok, session_term} <- State.ensure_session(term, command),
            :ok <-
              Engine.run_owner_command(
-               session_term.assigns.selected_room_id,
+               session_term.assigns.selected_session_id,
                command,
                session_term.assigns.engine
              ) do
-        drafts = Map.put(session_term.assigns.drafts, session_term.assigns.selected_room_id, "")
+        drafts =
+          Map.put(session_term.assigns.drafts, session_term.assigns.selected_session_id, "")
+
         {:noreply, assign(session_term, drafts: drafts, notice: nil, home: false)}
       else
         {:error, reason} ->
@@ -233,10 +235,10 @@ defmodule ReyCode.TUI do
   end
 
   defp do_handle_event(:input, %{"key" => "Escape"}, term) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
 
-    if room && room.active_turn_id do
-      case Engine.cancel_turn(room.active_turn_id, "Cancelled by user", term.assigns.engine) do
+    if session && session.active_turn_id do
+      case Engine.cancel_turn(session.active_turn_id, "Cancelled by user", term.assigns.engine) do
         :ok -> {:noreply, assign(term, notice: "Task cancelled")}
         {:error, _reason} -> {:noreply, term}
       end

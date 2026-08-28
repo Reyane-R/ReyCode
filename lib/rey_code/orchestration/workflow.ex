@@ -1,8 +1,8 @@
 defmodule ReyCode.Orchestration.Workflow do
-  @moduledoc "Scheduling contract for room turn strategies."
+  @moduledoc "Scheduling contract for session turn strategies."
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.{EventEntries, Invocation, Message, Projection, Room, Turn}
+  alias ReyCode.Orchestration.{EventEntries, Invocation, Message, Projection, Session, Turn}
 
   @type spec :: %{
           participant_id: String.t(),
@@ -18,8 +18,8 @@ defmodule ReyCode.Orchestration.Workflow do
           {:advance, [EventEntries.event_entry()]}
           | {:retry, [EventEntries.event_entry()], spec()}
 
-  @callback plan(Room.t(), Turn.t(), Projection.t()) :: [spec()]
-  @callback advance(Room.t(), Turn.t(), Projection.t()) ::
+  @callback plan(Session.t(), Turn.t(), Projection.t()) :: [spec()]
+  @callback advance(Session.t(), Turn.t(), Projection.t()) ::
               :wait | {:continue, [spec()]} | {:complete, atom()}
   @callback finalize(Invocation.t(), Message.t(), invocation_outcome(), keyword()) ::
               finalization()
@@ -39,7 +39,7 @@ defmodule ReyCode.Orchestration.Workflow do
     Enum.map(turn.invocation_order, &projection.invocations[&1])
   end
 
-  def advance_parallel(_room, turn, projection) do
+  def advance_parallel(_session, turn, projection) do
     invocations = invocations(turn, projection)
 
     if invocations != [] and Enum.all?(invocations, &terminal?/1) do

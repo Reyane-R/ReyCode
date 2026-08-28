@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.Squad.Seat do
-  @moduledoc "Room-specific provider/model assignment for one squad Role."
+  @moduledoc "Session-specific provider/model assignment for one squad Role."
 
   @fields [:id, :role_id, :name, :perspective, :provider, :model]
 

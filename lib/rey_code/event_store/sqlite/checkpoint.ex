@@ -12,10 +12,11 @@ defmodule ReyCode.EventStore.SQLite.Checkpoint do
 
   alias ReyCode.Hashing
 
-  @projection_version 2
+  @projection_version 3
+  @legacy_projection_version 2
   @retention 3
 
-  @required_keys ~w(rooms room_order messages turns invocations)a
+  @required_keys ~w(sessions session_order messages turns invocations)a
 
   @doc "Returns the checkpoint wire-format version this build understands."
   @spec projection_version() :: pos_integer()
@@ -58,25 +59,61 @@ defmodule ReyCode.EventStore.SQLite.Checkpoint do
   @spec decode(term(), term(), term(), term(), pos_integer()) ::
           {:ok, map()} | {:error, term()}
   def decode(encoded, version, sequence, checksum, max_bytes) do
-    with true <- version == @projection_version || {:error, {:unsupported_projection, version}},
-         true <- is_binary(encoded) || {:error, :invalid_checkpoint},
-         true <- byte_size(encoded) <= max_bytes || {:error, :checkpoint_too_large},
-         true <-
-           Hashing.sha256_hex(encoded) == checksum || {:error, :checkpoint_checksum_mismatch},
+    with :ok <- validate_version(version),
+         :ok <- validate_payload(encoded, max_bytes),
+         :ok <- validate_checksum(encoded, checksum),
          {:ok, wire} <- Jason.decode(encoded),
          {:ok, projection} <- decode_term(wire),
-         true <- valid_projection?(projection, sequence) || {:error, :invalid_checkpoint} do
+         {:ok, projection} <- normalize_projection_keys(projection),
+         :ok <- validate_projection(projection, sequence) do
       {:ok, projection}
-    else
-      {:error, _reason} = error -> error
-      false -> {:error, :invalid_checkpoint}
     end
   end
 
+  defp validate_version(@projection_version), do: :ok
+  defp validate_version(@legacy_projection_version), do: :ok
+  defp validate_version(version), do: {:error, {:unsupported_projection, version}}
+
+  defp validate_payload(encoded, max_bytes) when is_binary(encoded) do
+    if byte_size(encoded) <= max_bytes,
+      do: :ok,
+      else: {:error, :checkpoint_too_large}
+  end
+
+  defp validate_payload(_encoded, _max_bytes), do: {:error, :invalid_checkpoint}
+
+  defp validate_checksum(encoded, checksum) do
+    if Hashing.sha256_hex(encoded) == checksum,
+      do: :ok,
+      else: {:error, :checkpoint_checksum_mismatch}
+  end
+
+  defp validate_projection(projection, sequence) do
+    if valid_projection?(projection, sequence),
+      do: :ok,
+      else: {:error, :invalid_checkpoint}
+  end
+
   defp valid_projection?(projection, sequence) do
-    is_map(projection) and projection[:sequence] == sequence and
+    projection[:sequence] == sequence and
       Enum.all?(@required_keys, &Map.has_key?(projection, &1))
   end
+
+  defp normalize_projection_keys(%{} = projection) do
+    {legacy_sessions, projection} = Map.pop(projection, :rooms)
+    {legacy_order, projection} = Map.pop(projection, :room_order)
+
+    projection =
+      projection
+      |> put_legacy(:sessions, legacy_sessions)
+      |> put_legacy(:session_order, legacy_order)
+
+    {:ok, projection}
+  end
+
+  defp normalize_projection_keys(_projection), do: {:error, :invalid_checkpoint}
+  defp put_legacy(map, _key, nil), do: map
+  defp put_legacy(map, key, value), do: Map.put_new(map, key, value)
 
   defp decode_term(["atom", value]) when is_binary(value) do
     {:ok, String.to_existing_atom(value)}

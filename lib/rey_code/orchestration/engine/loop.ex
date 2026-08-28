@@ -525,7 +525,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp open_delegation_wave(state, invocation, run, plan) do
-    room = state.projection.rooms[invocation.room_id]
+    session = state.projection.sessions[invocation.session_id]
     turn = state.projection.turns[invocation.turn_id]
     depth = invocation.delegation_depth + 1
 
@@ -553,7 +553,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
             ]
       end
 
-    case prepare_wave_children(invocation, room, child_refs) do
+    case prepare_wave_children(invocation, session, child_refs) do
       {:ok, prepared} ->
         specs = Enum.map(prepared, &wave_child_spec(&1, invocation, run, depth))
         ids = Enum.map(prepared, &{&1.child_id, &1.message_id})
@@ -574,7 +574,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
             EventEntries.tool_run_requested(invocation, run),
             EventEntries.tool_run_started(invocation, %{run | status: :ready})
           ] ++
-            EventEntries.open_invocations(room, turn, specs, ids) ++ delegation_entries
+            EventEntries.open_invocations(session, turn, specs, ids) ++ delegation_entries
 
         next =
           prepared
@@ -591,10 +591,10 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     end
   end
 
-  defp prepare_wave_children(invocation, room, child_refs) do
+  defp prepare_wave_children(invocation, session, child_refs) do
     Enum.reduce_while(child_refs, {:ok, []}, fn {plan, child_id, message_id, dependencies},
                                                 {:ok, prepared} ->
-      case delegation_workspace(invocation, room, plan, child_id) do
+      case delegation_workspace(invocation, session, plan, child_id) do
         {:ok, workspace} ->
           child = %{
             plan: plan,
@@ -647,7 +647,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp open_detached_delegation(state, invocation, run, plan) do
-    room = state.projection.rooms[invocation.room_id]
+    session = state.projection.sessions[invocation.session_id]
     turn_id = Identity.new_id("turn")
     source_message_id = Identity.new_id("msg")
     child_id = Identity.new_id("inv")
@@ -656,7 +656,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
     turn = %Turn{
       id: turn_id,
-      room_id: room.id,
+      session_id: session.id,
       user_message_id: source_message_id,
       input_kind: :detached,
       mode: :delegate,
@@ -668,7 +668,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       context_through_sequence: state.projection.sequence
     }
 
-    case delegation_workspace(invocation, room, plan, child_id) do
+    case delegation_workspace(invocation, session, plan, child_id) do
       {:ok, workspace} ->
         child_spec = %{
           participant_id: plan.participant.id,
@@ -708,7 +708,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
             ) ++
             [EventEntries.turn_started(turn)] ++
             EventEntries.open_invocations(
-              room,
+              session,
               %{turn | status: :running},
               [child_spec],
               [{child_id, child_message_id}]
@@ -740,13 +740,13 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp open_child_delegation(state, invocation, run, plan) do
-    room = state.projection.rooms[invocation.room_id]
+    session = state.projection.sessions[invocation.session_id]
     turn = state.projection.turns[invocation.turn_id]
     child_id = Identity.new_id("inv")
     child_message_id = Identity.new_id("msg")
     depth = invocation.delegation_depth + 1
 
-    case delegation_workspace(invocation, room, plan, child_id) do
+    case delegation_workspace(invocation, session, plan, child_id) do
       {:ok, workspace} ->
         child_spec = %{
           participant_id: plan.participant.id,
@@ -767,7 +767,9 @@ defmodule ReyCode.Orchestration.Engine.Loop do
             EventEntries.tool_run_requested(invocation, run),
             EventEntries.tool_run_started(invocation, %{run | status: :ready})
           ] ++
-            EventEntries.open_invocations(room, turn, [child_spec], [{child_id, child_message_id}]) ++
+            EventEntries.open_invocations(session, turn, [child_spec], [
+              {child_id, child_message_id}
+            ]) ++
             [EventEntries.delegation_opened(invocation, run, child_id, child_message_id, depth)]
 
         next =
@@ -784,9 +786,9 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     end
   end
 
-  defp delegation_workspace(invocation, room, %{isolate?: false}, _child_id) do
+  defp delegation_workspace(invocation, session, %{isolate?: false}, _child_id) do
     context = invocation.execution_context
-    path = context.workspace || room.workspace
+    path = context.workspace || session.workspace
 
     roots =
       if context.workspace_roots == [], do: [Path.expand(path)], else: context.workspace_roots
@@ -799,8 +801,8 @@ defmodule ReyCode.Orchestration.Engine.Loop do
      }}
   end
 
-  defp delegation_workspace(invocation, room, %{isolate?: true}, child_id) do
-    source = invocation.execution_context.workspace || room.workspace
+  defp delegation_workspace(invocation, session, %{isolate?: true}, child_id) do
+    source = invocation.execution_context.workspace || session.workspace
 
     case DelegationWorktree.create(source, child_id) do
       {:ok, isolation} ->
@@ -846,7 +848,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
   defp invocation_workspace(state, invocation) do
     context = invocation.execution_context
-    workspace = context.workspace || state.projection.rooms[invocation.room_id].workspace
+    workspace = context.workspace || state.projection.sessions[invocation.session_id].workspace
 
     roots =
       if context.workspace_roots == [],

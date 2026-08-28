@@ -183,17 +183,17 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
       restart: :temporary
     )
 
-    {:ok, room_id} = Engine.create_room("Tier Two", workspace, @engine)
-    room = Engine.snapshot(@engine).rooms[room_id]
-    primary = Enum.find(room.participants, &(&1.kind == :primary))
-    :ok = Engine.configure_participants(room_id, [primary.id], :simulator, nil, @engine)
-    %{room_id: room_id, primary_id: primary.id}
+    {:ok, session_id} = Engine.create_blank_session("Tier Two", workspace, @engine)
+    session = Engine.snapshot(@engine).sessions[session_id]
+    primary = Enum.find(session.participants, &(&1.kind == :primary))
+    :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
+    %{session_id: session_id, primary_id: primary.id}
   end
 
   test "question pauses one Invocation, Plan remains durable, and answer resumes", %{
-    room_id: room_id
+    session_id: session_id
   } do
-    {:ok, turn_id} = Engine.post_message(room_id, "question", :direct, @engine)
+    {:ok, turn_id} = Engine.post_message(session_id, "question", :direct, @engine)
 
     invocation =
       Wait.projection(@engine, fn projection ->
@@ -226,11 +226,11 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
   end
 
   test "smol tier freezes a 32k budget and stops before another provider round", %{
-    room_id: room_id,
+    session_id: session_id,
     primary_id: primary_id
   } do
-    assert :ok = Engine.configure_participant_tier(room_id, primary_id, :smol, @engine)
-    {:ok, turn_id} = Engine.post_message(room_id, "budget", :direct, @engine)
+    assert :ok = Engine.configure_participant_tier(session_id, primary_id, :smol, @engine)
+    {:ok, turn_id} = Engine.post_message(session_id, "budget", :direct, @engine)
     Wait.terminal_turn(@engine, turn_id)
 
     projection = Engine.snapshot(@engine)

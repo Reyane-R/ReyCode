@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.Participant do
-  @moduledoc "A configured room participant or squad role in the orchestration projection."
+  @moduledoc "A configured session participant or squad role in the orchestration projection."
 
   alias ReyCode.Orchestration.ModelTier
 

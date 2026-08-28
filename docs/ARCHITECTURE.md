@@ -56,7 +56,7 @@ The active transcript shows only useful execution context:
   `.git/HEAD` with no process execution.
 - **Timeline:** user messages and addressed responses; assistant messages
   list their tool runs as collapsed one-line blocks (`Tool · read · path ·
-  ok`). Tool-run rows are precomputed in `State.room_messages` from
+  ok`). Tool-run rows are precomputed in `State.session_messages` from
   `invocation.tool_run_order`/`tool_runs`.
 - **Composer:** Enter sends. Typing `/` opens the command palette. `@path`
   and `#path` tokens attach a workspace file's content to the message
@@ -65,8 +65,9 @@ The active transcript shows only useful execution context:
   notice).
 - **Focus:** Tab moves directly between prompt and transcript.
 
-`Room` remains an internal event-sourced aggregate for compatibility. It is
-never rendered or named by the TUI.
+`Session` is the sole durable conversation aggregate and the user-facing TUI
+concept. Historical Event/SQLite wire fields retain their `room` names only at
+the append-only storage compatibility seam.
 
 The TUI is rendered primarily through
 `lib/rey_code/tui/components/main_screen.ex`.
@@ -132,11 +133,11 @@ to the next:
 
 ```elixir
 state
-|> update_room(room_id, fn room -> ... end)
+|> update_session(session_id, fn session -> ... end)
 |> put_sequence(event.sequence)
 ```
 
-This reads as: "start with state, update the room, then put the sequence."
+This reads as: "start with state, update the session, then put the sequence."
 
 ### 2.4. Four patterns you'll see in every file
 
@@ -144,7 +145,7 @@ This reads as: "start with state, update the room, then put the sequence."
 has one:
 
 ```elixir
-defstruct id: nil, room_id: nil, body: nil, status: nil
+defstruct id: nil, session_id: nil, body: nil, status: nil
 ```
 
 You access fields with dot syntax: `message.body`. Bracket access
@@ -154,7 +155,7 @@ You access fields with dot syntax: `message.body`. Bracket access
 `{:error, reason}`. Callers pattern-match on the tag:
 
 ```elixir
-case Engine.post_message(room_id, body, mode) do
+case Engine.post_message(session_id, body, mode) do
   {:ok, turn_id} -> ...
   {:error, :empty_message} -> ...
 end
@@ -165,8 +166,8 @@ end
 
 ```elixir
 with {:ok, body} <- Validation.message(raw_body),
-     :ok <- Admission.admit_turn(room, state) do
-  Lifecycle.queue_message(state, room_id, body, mode)
+     :ok <- Admission.admit_turn(session, state) do
+  Lifecycle.queue_message(state, session_id, body, mode)
 end
 ```
 
@@ -253,7 +254,7 @@ what happens, in order:
    ProcessHub            Owns bounded named background processes and retained logs
    Orchestration.Supervisor
      ├── DynamicSupervisor  Spawns temporary Agent worker processes
-     └── Engine            The brain: rooms, turns, scheduling
+     └── Engine            The brain: sessions, turns, scheduling
    Breeze.Server         Renders the terminal UI (only if a TTY is attached)
    ```
 
@@ -298,12 +299,12 @@ lib/rey_code/orchestration/engine.ex
 lib/rey_code/orchestration/engine/*.ex
 ```
 
-The Engine is the central GenServer. It owns all durable state: rooms, turns,
+The Engine is the central GenServer. It owns all durable state: sessions, turns,
 invocations, and admission control (how many AI calls run at once). Every
 user-facing command goes through the Engine API:
 
-- `Engine.create_room(title, workspace)` → creates a room
-- `Engine.post_message(room_id, body, mode)` → starts a turn
+- `Engine.create_blank_session(title, workspace)` → creates a Session
+- `Engine.post_message(session_id, body, mode)` → starts a turn
 - `Engine.resolve_tool_run(invocation_id, run_id, decision)` → approves/denies a tool
 - `Engine.resolve_gate(turn_id, ...)` → resolves a squad gate
 - `Engine.cancel_turn(turn_id, reason)` → stops a running turn
@@ -314,7 +315,7 @@ clauses, which delegate to focused modules:
 
 | Module | Responsibility |
 |---|---|
-| `Engine.Rooms` | Create rooms, configure participants |
+| `Engine.Sessions` | Create sessions, configure participants |
 | `Engine.Turns` | Post messages, cancel turns, resolve gates |
 | `Engine.Lifecycle` | Queue messages, start turns, schedule invocations |
 | `Engine.Loop` | Tool-loop state machine (rounds, tool runs, frame recording) |
@@ -343,6 +344,10 @@ An event looks like:
   "recorded_at": "2026-08-23T..."
 }
 ```
+
+`aggregate_type: "room"`, `room_id`, and `room_created` are frozen storage-era
+names. The Projector converts them to the Session domain model; normal code
+never uses Room vocabulary.
 
 Events are appended in batches per SQLite transaction. The `EventStore` is a
 single-writer GenServer — one writer, one sequence — so there are no
@@ -452,13 +457,13 @@ Let's trace what happens when a user types "Fix the login bug" and presses
 
 ### Step 2: TUI → Engine
 
-`Engine.post_message(room_id, "Fix the login bug", :compare)` sends a
+`Engine.post_message(session_id, "Fix the login bug", :compare)` sends a
 synchronous `GenServer.call` to the Engine process.
 
 ### Step 3: Engine → Validation → Event Store
 
 `Engine.Turns.post_message/4` validates the message isn't empty, checks that
-all room participants have configured providers, and verifies admission
+all session participants have configured providers, and verifies admission
 (concurrency limits aren't exceeded). Then it calls
 `Lifecycle.queue_message/5`.
 
@@ -489,7 +494,7 @@ concurrency limits and, if there's capacity, spawns an Agent process.
 ### Step 6: Agent → Agent Loop → Provider
 
 The Agent process calls `AgentLoop.run/1`. The Engine builds an
-`InvocationRequest` from the durable room context — all previous messages plus
+`InvocationRequest` from the durable session context — all previous messages plus
 the current one. The Agent Loop calls `Provider.Catalog.resolve_when_ready/3`
 to get a frozen runtime, then calls the provider's `stream/3`.
 
@@ -556,13 +561,13 @@ lib/rey_code/
 ├── event_store/                ← SQLite adapter, NDJSON import, transactions
 ├── orchestration/
 │   ├── engine.ex               ← Central GenServer, public API
-│   ├── engine/                 ← Lifecycle, admission, loops, rooms, turns
+│   ├── engine/                 ← Lifecycle, admission, loops, sessions, turns
 │   ├── projector.ex            ← Pure event → projection transitions
 │   ├── projection.ex           ← Projection struct
 │   ├── event_entries.ex        ← Event data constructors
 │   ├── context.ex              ← Conversation context for provider requests
 │   ├── invocation_request.ex   ← Request data sent to Agent workers
-│   ├── room.ex, turn.ex, message.ex, invocation.ex  ← Domain records
+│   ├── session.ex, turn.ex, message.ex, invocation.ex  ← Domain records
 │   ├── provider_round.ex, tool_run.ex, tool_runs.ex  ← Loop records
 │   ├── squad.ex                ← Squad roster and phase definitions
 │   ├── squad_fsm.ex            ← Pure squad state machine
@@ -688,8 +693,8 @@ The `data/2` function builds the map that gets rendered. Let's add a
 ### 10.2. Read the function
 
 ```elixir
-def data(room, projection) do
-  case turn(room, projection) do
+def data(session, projection) do
+  case turn(session, projection) do
     nil -> nil
     turn ->
       %{
@@ -783,10 +788,10 @@ defmodule ReyCode.EngineTest do
   test "completes a compare turn" do
     # Arrange
     {:ok, engine} = start_engine()
-    {:ok, room_id} = Engine.create_room("test", engine)
+    {:ok, session_id} = Engine.create_room("test", engine)
 
     # Act
-    {:ok, turn_id} = Engine.post_message(room_id, "hello", :compare, engine)
+    {:ok, turn_id} = Engine.post_message(session_id, "hello", :compare, engine)
 
     # Assert
     assert eventually(fn ->

@@ -8,7 +8,7 @@ defmodule ReyCode.ExportMixTaskTest do
 
   test "exports an explicitly selected Session as Markdown and HTML" do
     projection = Engine.snapshot()
-    room_id = List.last(projection.room_order)
+    session_id = List.last(projection.session_order)
 
     root =
       Path.join(
@@ -22,23 +22,23 @@ defmodule ReyCode.ExportMixTaskTest do
 
     assert capture_export([
              "--session",
-             room_id,
+             session_id,
              "--format",
              "markdown",
              "--output",
              markdown
-           ]) =~ "Exported #{room_id}"
+           ]) =~ "Exported #{session_id}"
 
-    assert File.read!(markdown) =~ "Session: `#{room_id}`"
+    assert File.read!(markdown) =~ "Session: `#{session_id}`"
 
     assert capture_export([
              "--session",
-             room_id,
+             session_id,
              "--format",
              "html",
              "--output",
              html
-           ]) =~ "Exported #{room_id}"
+           ]) =~ "Exported #{session_id}"
 
     assert File.read!(html) =~ "<!doctype html>"
   end

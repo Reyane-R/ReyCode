@@ -6,9 +6,9 @@ defmodule ReyCode.TUI.WorkCommand do
 
   @spec run(map(), String.t(), term()) :: {:noreply, map()}
   def run(term, "/steer", body) do
-    room = Map.get(term.assigns.projection.rooms, term.assigns.selected_room_id)
+    session = Map.get(term.assigns.projection.sessions, term.assigns.selected_session_id)
 
-    case room && room.active_turn_id do
+    case session && session.active_turn_id do
       nil ->
         {:noreply, SlashPalette.close(term, "No active work to steer")}
 
@@ -18,7 +18,7 @@ defmodule ReyCode.TUI.WorkCommand do
   end
 
   def run(term, "/unqueue", nil) do
-    case Engine.cancel_latest_follow_up(term.assigns.selected_room_id, term.assigns.engine) do
+    case Engine.cancel_latest_follow_up(term.assigns.selected_session_id, term.assigns.engine) do
       :ok ->
         {:noreply, SlashPalette.close(term, "Newest follow-up cancelled")}
 

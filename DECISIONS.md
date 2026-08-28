@@ -16,11 +16,30 @@ live in [History](#history).
 ReyCode is a **standalone harness** (D20/D22): terminal-native,
 personal-first, with OpenCode's UX feel and omp-grade depth. The user sees
 sessions, one primary assistant, and explicit independently configured task
-agents. Internal Room aggregates and advanced orchestration workflows never
-appear in the default interface. OpenCode remains one provider among several,
+agents. Advanced orchestration workflows never appear in the default
+interface. OpenCode remains one provider among several,
 not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
+
+### D32 — Session is the sole conversation aggregate (Executed — 2026-08-28)
+
+The 1:1 Room/Session split no longer earns a second domain concept. `Session`
+is now the typed aggregate carrying Workspace, Participants, Message order,
+context compaction, and active/queued Turn scheduling. Projection fields are
+`sessions`/`session_order`; domain records and APIs use `session_id`; no
+in-memory Room alias or compatibility shim remains.
+
+Append-only storage keeps its historical wire vocabulary indefinitely:
+`room_created`, payload keys `room_id`/`parent_room_id`, aggregate type `room`,
+the SQLite `room_id` column/index, and projection-version-2 checkpoint keys
+`rooms`/`room_order`. Projector and checkpoint decoding are the only
+compatibility seams. Projection version 3 writes `sessions`/`session_order` and
+accepts version 2 by normalizing those legacy keys before typed execution.
+
+This supersedes D26. The collapse is semantic deletion plus a mechanical
+cutover, not a database rewrite; existing Events remain byte-identical and
+replay to the same Sessions.
 
 ### D31 — Human questions, WorkPlans, and ModelTiers are Invocation seams (Executed — 2026-08-27)
 
@@ -64,7 +83,7 @@ The depth-1 `spawn_task` seam expands without restoring fixed Squad orchestratio
   background Turn, returns its durable Turn/Invocation receipt to the source
   immediately, and delivers the Task Participant's terminal Message through
   the ordinary Session transcript. A background Turn never occupies
-  `Room.active_turn_id`; it still owns its Invocation, approvals, cancellation,
+  `Session.active_turn_id`; it still owns its Invocation, approvals, cancellation,
   recovery, Outcome, and usage.
 
 This supersedes D27's fan-out retirement only at the model-directed tool seam;
@@ -135,7 +154,7 @@ starts no work. Reading/attaching file contents, LSP completion, shell
 completion, and extension commands stay out of #78.
 
 **Activity seam:** one deep, pure `ReyCode.TUI.Activity` presenter maps the
-selected Session's internal Room ID, immutable Projection, and `now_ms` to
+selected Session ID, immutable Projection, and `now_ms` to
 bounded view rows for provider, ToolRun, delegation, retry, queue, approval,
 and terminal states. It does not scan hidden Sessions on each tick. Header,
 message placeholder, and timeline rows consume that shared result instead of
@@ -224,21 +243,11 @@ history behind a home screen; ordinary messages create one Invocation; custom
 Task Participants persist with independent models; one explicit Delegation
 creates one Invocation for its addressed Task Participant.
 
-### D26 — Sessions hide Room aggregates (Policy — 2026-08-24)
+### D26 — Sessions hide Room aggregates (Superseded by D32 — 2026-08-28)
 
-Room remains the event-sourced aggregate for compatibility, but it is not a
-user concept. Startup and `/new` create a clean durable Session on first input
-by copying the Workspace's Primary Participant and Task Participant profiles.
-`/resume` explicitly opens the latest prior Session. The TUI never renders room
-names, room navigation, channel-like `#` labels, or automatic workflow modes.
-
-This keeps persistence compatibility without forcing orchestration vocabulary
-onto ordinary coding work. A fresh Session excludes every prior transcript
-event while retaining agent profiles and their independent model selections.
-
-Acceptance: startup contains no room terminology or prior transcript; first
-input creates a distinct durable Session; `/new` creates another clean Session;
-`/resume` restores prior history; no room sidebar or mode controls are present.
+This policy hid the historical Room aggregate from the product while retaining
+it internally. D32 completed the cutover: Session is now the aggregate and the
+old names remain only in the frozen append-only wire format.
 
 ### D1 — Personal-first scope (Policy)
 

@@ -1,5 +1,5 @@
 defmodule ReyCode.Orchestration.Engine.Identity do
-  @moduledoc "Pure helpers for generating aggregate IDs and room slugs."
+  @moduledoc "Pure helpers for generating aggregate IDs and session slugs."
 
   alias ReyCode.Orchestration.Projection
 
@@ -19,15 +19,15 @@ defmodule ReyCode.Orchestration.Engine.Identity do
     |> String.replace(~r/[^a-z0-9]+/, "-")
     |> String.trim("-")
     |> case do
-      "" -> "room"
+      "" -> "session"
       slug -> slug
     end
   end
 
-  @doc "Disambiguates a base slug against the room slugs in a projection."
+  @doc "Disambiguates a base slug against the session slugs in a projection."
   @spec unique_slug(String.t(), Projection.t()) :: String.t()
   def unique_slug(base, projection) do
-    used = MapSet.new(projection.rooms, fn {_id, room} -> room.slug end)
+    used = MapSet.new(projection.sessions, fn {_id, session} -> session.slug end)
 
     Stream.iterate(1, &(&1 + 1))
     |> Enum.find_value(fn

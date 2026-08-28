@@ -12,7 +12,7 @@ defmodule ReyCode.Orchestration.SteeringTest do
 
     pending_context =
       Context.messages(
-        projection.rooms["room-1"],
+        projection.sessions["room-1"],
         projection.turns["turn-1"],
         invocation,
         projection
@@ -45,7 +45,7 @@ defmodule ReyCode.Orchestration.SteeringTest do
 
     context =
       Context.messages(
-        projection.rooms["room-1"],
+        projection.sessions["room-1"],
         projection.turns["turn-1"],
         invocation,
         projection

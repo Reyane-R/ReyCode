@@ -45,12 +45,12 @@ defmodule ReyCode.TUI.Settings do
 
   @doc "Returns the initial settings-wizard state for an optional session."
   @spec initial(String.t() | nil) :: map()
-  def initial(room_id \\ nil) do
+  def initial(session_id \\ nil) do
     %{
       step: :participants,
       index: 0,
       participant_ids: [],
-      room_id: room_id,
+      session_id: session_id,
       query: "",
       provider: nil
     }
@@ -61,7 +61,7 @@ defmodule ReyCode.TUI.Settings do
   def open(term) do
     Component.assign(term,
       modal: :settings,
-      settings: initial(term.assigns.selected_room_id),
+      settings: initial(term.assigns.selected_session_id),
       notice: nil
     )
   end
@@ -70,7 +70,7 @@ defmodule ReyCode.TUI.Settings do
   @spec open_for(map(), String.t()) :: map()
   def open_for(term, participant_id) do
     settings = %{
-      initial(term.assigns.selected_room_id)
+      initial(term.assigns.selected_session_id)
       | step: :providers,
         participant_ids: [participant_id]
     }
@@ -81,14 +81,14 @@ defmodule ReyCode.TUI.Settings do
   @doc "Opens model confirmation for one revalidated provider/model."
   @spec open_at(map(), atom(), String.t()) :: map()
   def open_at(term, provider, model) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
-    primary = Enum.find(room.participants, &(&1.kind == :primary))
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+    primary = Enum.find(session.participants, &(&1.kind == :primary))
     provider_entry = Map.get(term.assigns.providers, provider)
 
     if (primary && provider_entry && provider_entry.status == :configured) and
          model in provider_entry.models do
       settings = %{
-        initial(term.assigns.selected_room_id)
+        initial(term.assigns.selected_session_id)
         | step: :models,
           participant_ids: [primary.id],
           provider: provider,
@@ -120,8 +120,8 @@ defmodule ReyCode.TUI.Settings do
   @doc "Confirms the selected option and advances or completes the wizard."
   @spec confirm(map()) :: map()
   def confirm(%{assigns: %{settings: %{step: :participants}}} = term) do
-    room = term.assigns.projection.rooms[term.assigns.selected_room_id]
-    option = Enum.at(participant_options(room, term.assigns.mode), term.assigns.settings.index)
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+    option = Enum.at(participant_options(session, term.assigns.mode), term.assigns.settings.index)
 
     term
     |> update(fn settings ->
@@ -235,8 +235,8 @@ defmodule ReyCode.TUI.Settings do
 
   @doc "Returns configurable agent options for the current session."
   @spec participant_options(map(), atom()) :: [map()]
-  def participant_options(room, _mode) do
-    participants = Enum.reject(room.participants, &(Map.get(&1, :kind) == :legacy))
+  def participant_options(session, _mode) do
+    participants = Enum.reject(session.participants, &(Map.get(&1, :kind) == :legacy))
 
     [%{label: "All agents", ids: Enum.map(participants, & &1.id)}] ++
       Enum.map(participants, &%{label: &1.name, ids: [&1.id]})
@@ -281,7 +281,7 @@ defmodule ReyCode.TUI.Settings do
   end
 
   defp option_count(%{assigns: %{settings: %{step: :participants}}} = term) do
-    term.assigns.projection.rooms[term.assigns.selected_room_id]
+    term.assigns.projection.sessions[term.assigns.selected_session_id]
     |> participant_options(term.assigns.mode)
     |> length()
   end
@@ -296,7 +296,7 @@ defmodule ReyCode.TUI.Settings do
 
   defp save(term, provider, model) do
     case Engine.configure_participants(
-           term.assigns.settings.room_id,
+           term.assigns.settings.session_id,
            term.assigns.settings.participant_ids,
            provider,
            model,
