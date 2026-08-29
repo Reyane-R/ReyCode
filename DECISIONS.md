@@ -1,7 +1,7 @@
 # Decisions
 
 > **Who this is for.** This is the team's architectural decision log — meeting
-> notes, not a tutorial. It uses internal identifiers (D1–D24), PR and issue
+> notes, not a tutorial. It uses internal identifiers (D1–D35), PR and issue
 > numbers, and assumes familiarity with the codebase. Newcomers: skip this
 > file; start with the [Documentation Index](docs/README.md) instead. Read a
 > decision here only when you want the recorded *why* behind a specific design.
@@ -21,6 +21,28 @@ interface. OpenCode remains one provider among several,
 not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
+
+### D36 — Workspace command approvals are narrow presentation-independent policy (Executed — 2026-08-29)
+
+Familiar Bash commands may bypass repetitive owner prompts without weakening
+the durable approval boundary:
+
+- A Workspace may define versioned allow rules in
+  `.reycode/approval_rules.json`. Rules cover Bash only and are either exact
+  commands or one trailing ` *` prefix wildcard.
+- Wildcards match only the base command and its arguments. Shell control
+  operators are rejected before matching; unknown tools, write, and other
+  mutating tool classes retain their existing authorization.
+- Rule count, file bytes, command bytes, and pattern bytes are bounded.
+  Missing, malformed, oversized, and symlinked files fail closed to the normal
+  approval prompt. Rules are evaluated when the ToolRun is claimed and are not
+  copied into durable Events.
+- A terminal bell is a presentation-only edge signal derived by comparing
+  projected pending-request IDs. It emits once per newly pending approval and
+  grants no authority.
+
+This keeps the EventStore authoritative for each ToolRun's resolved
+authorization while allowing repository-local, reviewable command policy.
 
 ### D35 — Agent-authored rationale lives in ProjectMemory (Executed — 2026-08-28)
 
@@ -519,7 +541,7 @@ Release-gate authority is explicit and frozen at turn start:
   preserving headless behavior; `wait` = human review). Invalid values fail
   before any provider work.
 - The Finalizer consults the turn's recorded authority (`human_release_review?/1`
-  in `engine.ex`), not the global env at finalize time — replays are identical
+  in `ReyCode.Orchestration.Engine.Lifecycle` (`lib/rey_code/orchestration/engine/lifecycle.ex`)), not the global env at finalize time — replays are identical
   regardless of launch interface.
 - `workflow_version` bumped to `squad-v3`; v2 events replay with authority
   inferred as the TUI-era default (`"human"`).
@@ -692,8 +714,9 @@ resolved path and validated version.
 ReyCode owns execution. Concretely:
 
 - Providers emit tool **requests**; ReyCode executes them against the workspace
-  through `ReyCode.ToolRegistry` (seven tools: read, write, edit, bash, grep,
-  glob, list) and feeds results back into the conversation loop inside one
+  through `ReyCode.ToolRegistry` (sixteen tools: read, write, edit, bash, grep,
+  glob, list, lsp, git, process, debug, eval, memory, web_search, read_url,
+  artifact_read) and feeds results back into the conversation loop inside one
   invocation.
 - `ReyCode.AgentLoop` owns the tool-loop driver; `ReyCode.Provider` behaviour
   carries the request/response tool protocol; the simulator is the contract

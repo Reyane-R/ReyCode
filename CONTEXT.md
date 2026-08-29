@@ -26,13 +26,13 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Message** — Durable communication authored by an Operator or produced by an Invocation.
 
-**DelegationContract** — Frozen optional JSON output schema and workspace-isolation choice for one delegated child Invocation.
+**DelegationContract** — Frozen optional JSON output schema and workspace-isolation choice for one delegated child Invocation. Realized in code by `ReyCode.Orchestration.Delegation.Plan` (`output_schema`, `isolate?`) and `ReyCode.Orchestration.InvocationExecution`; `ReyCode.Orchestration.WorkingContract` is an unrelated prompt-traceability helper.
 
-**IsolationWorktree** — Temporary detached git worktree owned by one delegated child. A successful non-empty patch pauses for an Owner Apply/Discard decision; Apply patch-checks and updates the source Workspace, while Discard removes the worktree without changing the source.
+**IsolationWorktree** — Temporary detached git worktree owned by one delegated child. A successful non-empty patch pauses for an Owner Apply/Discard decision; Apply patch-checks and updates the source Workspace, while Discard removes the worktree without changing the source. Implemented by `ReyCode.Orchestration.DelegationWorktree`.
 
 **DelegationWave** — Bounded set of child Invocations opened atomically by one parent ToolRun from frozen shared context and ordered task contracts. Worker children enter admission together; an optional IntegrationOwner starts only after every worker is terminal; an attached parent resumes only after the full Wave is terminal.
 
-**IntegrationOwner** — Task Participant designated in one DelegationWave to receive the worker reports after the worker barrier and produce the Wave's final integration report.
+**IntegrationOwner** — Task Participant designated in one DelegationWave to receive the worker reports after the worker barrier and produce the Wave's final integration report. In code this is `ReyCode.Orchestration.Delegation.BatchPlan.integrator`; there is no standalone `IntegrationOwner` module.
 
 **PeerMessage** — Bounded durable message sent between active child Invocations in the same DelegationWave and included in the target's next ProviderRound context.
 
@@ -62,7 +62,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **BackgroundProcess** — Named bounded host process owned by ProcessHub, with supervised lifecycle and bounded retained output.
 
-**InvocationWorker** — Supervised process executing one Invocation.
+**InvocationWorker** — Conceptual supervised process executing one Invocation. In code this is the Agent process supervised under the Orchestration `DynamicSupervisor`; there is no standalone `InvocationWorker` module (see `lib/rey_code/orchestration/engine/client.ex`).
 
 **AgentLoop** — Provider/tool continuation algorithm for an Invocation.
 
@@ -73,7 +73,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **ToolRun** — Durable authorization and execution lifecycle for one ToolCall.
 **ToolRunInspector** — Bounded read-only presentation of ToolRuns, their owning Invocations, authorization, arguments, output, errors, and lifecycle timestamps.
 
-**ToolArtifact** — Bounded retained ToolRun output spooled outside the Event log when inline output crosses the configured byte threshold. Provider and Operator access is by opaque `artifact://` identifier and bounded byte windows.
+**ToolArtifact** — Bounded retained ToolRun output spooled outside the Event log when inline output crosses the configured byte threshold. Provider and Operator access is by opaque `artifact://` identifier and bounded byte windows. Implemented by `ReyCode.ArtifactStore`.
 
 
 **ToolAsk** — Pending owner decision recorded when a ToolRun execution needs approval, addressed by request id.
@@ -88,7 +88,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ModelTier** — Participant model-cost/capability designation: smol, default, or slow. The tier freezes a TokenBudget when an Invocation opens; it never changes that Invocation's provider/model identity.
 
-**TokenBudget** — Maximum provider-reported token count admitted for one Invocation. Unknown usage remains unknown; the TUI presents a soft warning at 80 percent, and once known usage reaches the budget no further ProviderRound starts.
+**TokenBudget** — Maximum provider-reported token count admitted for one Invocation. Unknown usage remains unknown; the TUI presents a soft warning at 80 percent, and once known usage reaches the budget no further ProviderRound starts. In code it is not a struct: the frozen budget is `ReyCode.Orchestration.ModelTier` policy state carried on the Invocation's execution context (`token_budget_tokens`, `used_tokens`).
 
 **spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant.
 
@@ -100,13 +100,13 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Failure** — Internal typed description of a failure category, message, retryability, and optional cause.
 
-**GitReview** — Bounded Projection of repository status, diff checks, and prioritized whitespace findings before approved Git mutation.
+**GitReview** — Bounded Projection of repository status, diff checks, and prioritized whitespace findings before approved Git mutation. Implemented by `ReyCode.TUI.MergeReview` (Owner Apply/Discard surface for isolated delegation patches) and `ReyCode.Tool.Git`; there is no standalone `GitReview` module.
 
-**DebugSession** — Supervised DAP conversation with one debugger process for inspection and controlled execution.
+**DebugSession** — Supervised DAP conversation with one debugger process for inspection and controlled execution. Implemented by `ReyCode.Tool.Debug` (one bounded DAP session) supervised by `ReyCode.DebuggerHub`; there is no `DebugSession` module.
 
-**EvaluationKernel** — Supervised persistent Python or JavaScript process retaining one bounded namespace for approved code evaluation.
+**EvaluationKernel** — Supervised persistent Python or JavaScript process retaining one bounded namespace for approved code evaluation. Implemented by `ReyCode.EvalHub`; there is no `EvaluationKernel` module.
 
-**ProjectMemory** — Append-only SQLite facts, lessons, decisions, and assumptions scoped to one Workspace. Decision and assumption values preserve rationale, alternatives, and concrete evidence; the Operator browses current and invalidated entries through `/decisions`.
+**ProjectMemory** — Append-only SQLite facts, lessons, decisions, and assumptions scoped to one Workspace. Decision and assumption values preserve rationale, alternatives, and concrete evidence; the Operator browses current and invalidated entries through `/decisions`. Implemented by `ReyCode.Memory.Store` (append-only store) and `ReyCode.Tool.Memory`, browsed through `ReyCode.TUI.Decisions` (`/decisions`).
 
 **Advisor** — Opt-in Task Participant used for explicit advisory review; its output is a Recommendation, not an authoritative Resolution.
 
@@ -116,26 +116,13 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ProviderRegistry** — Static definitions of supported provider identities and adapters.
 
-**ProviderProfile** — Configuration of one API-compatible provider identity.
+**ProviderProfile** — Configuration of one API-compatible provider identity. In code this is `ReyCode.Provider.OpenAICompatible.Profile` plus `RuntimeConfig` provider profiles; there is no `ReyCode.Provider.Profile` module.
 
 **ProviderCatalog** — Transient discovery, readiness, model availability, and runtime resolution.
 
 **ProviderRuntime** — Frozen invocation-time adapter capability and focused policy.
 
 ## Squad workflow
-
-**GitReview** — Bounded repository status, diff, conflict, and prioritized finding projection.
-
-**DebugSession** — Supervised Debug Adapter Protocol conversation with one debugger process.
-
-**EvaluationKernel** — Supervised persistent Python or JavaScript process retaining one bounded namespace.
-
-**ProjectMemory** — Append-only SQLite facts, lessons, decisions, and assumptions scoped to one Workspace. Decision and assumption values preserve rationale, alternatives, and concrete evidence; the Operator browses current and invalidated entries through `/decisions`.
-
-**Advisor** — Opt-in Task Participant whose output is a Recommendation, not an authoritative Resolution.
-
-**AgentHub** — TUI projection and control surface for delegated child Invocations.
-
 
 **Role** — Stable squad responsibility definition.
 

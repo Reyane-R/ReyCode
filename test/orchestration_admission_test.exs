@@ -80,6 +80,7 @@ defmodule ReyCode.Orchestration.AdmissionTest do
 
     assert :ok = Engine.cancel_turn(turn_id, "User stopped the turn", @engine)
     assert_receive {:DOWN, ^worker_ref, :process, ^worker, _reason}, 1_000
+    wait_until_gone(@agent_registry, running_id)
 
     projection = Engine.snapshot(@engine)
     turn = projection.turns[turn_id]
@@ -88,6 +89,19 @@ defmodule ReyCode.Orchestration.AdmissionTest do
     assert Enum.all?(turn.invocation_order, &(projection.invocations[&1].status == :cancelled))
     assert EventStore.load(store) |> Enum.any?(&(&1.type == :invocation_cancelled))
     assert Registry.lookup(@agent_registry, running_id) == []
+  end
+
+  defp wait_until_gone(registry, key, attempts \\ 100)
+
+  defp wait_until_gone(_registry, _key, 0), do: flunk("registry entry never cleared")
+
+  defp wait_until_gone(registry, key, attempts) do
+    if Registry.lookup(registry, key) == [] do
+      :ok
+    else
+      Process.sleep(20)
+      wait_until_gone(registry, key, attempts - 1)
+    end
   end
 
   defp start_engine(store, limits) do

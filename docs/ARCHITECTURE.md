@@ -20,7 +20,7 @@ When you run `mix run --no-halt`, ReyCode starts at a clean session home:
 │  One assistant by default. Task agents run only on demand.  │
 │                                                             │
 │  Primary assistant                                          │
-│  Assistant  ·  gpt-5.6-sol                                  │
+│  Assistant  ·  <model set via /model>                         │
 │                                                             │
 │  Quick start                                                 │
 │  /agent  create a task agent with its own model              │
@@ -239,8 +239,7 @@ what happens, in order:
 3. **Create the data directory.** The SQLite database directory is created if
    it doesn't exist.
 
-4. **Start the supervision tree.** Eleven processes are started in order. If an
-   earlier one fails, all later ones are stopped (`rest_for_one` strategy):
+4. **Start the supervision tree.** Up to eleven processes start in order (ten headless without `Breeze.Server`; eleven when a TTY is attached). If an earlier one fails, all later ones are stopped (`rest_for_one` strategy):
 
    ```
    AgentRegistry         A phonebook for Agent processes (unique keys)
@@ -248,10 +247,10 @@ what happens, in order:
    EventStore            The SQLite database process
    ProviderTaskSupervisor  Runs short-lived discovery tasks
    Provider.Catalog      Discovers what AI models are available
-   DebuggerHub            Owns bounded DAP debugger sessions
-   EvalHub                Owns persistent Python/JavaScript kernels
-   Memory.Store           Owns append-only SQLite project memory
    ProcessHub            Owns bounded named background processes and retained logs
+   DebuggerHub           Owns bounded DAP debugger sessions
+   EvalHub               Owns persistent Python/JavaScript kernels
+   Memory.Store          Owns append-only SQLite project memory
    Orchestration.Supervisor
      ├── DynamicSupervisor  Spawns temporary Agent worker processes
      └── Engine            The brain: sessions, turns, scheduling

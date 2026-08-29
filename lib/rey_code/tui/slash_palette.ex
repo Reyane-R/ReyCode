@@ -159,6 +159,24 @@ defmodule ReyCode.TUI.SlashPalette do
     )
   end
 
+  @doc "Starts file completion for the mention token at the composer cursor."
+  @spec start_file_mention(map(), String.t(), non_neg_integer()) :: map()
+  def start_file_mention(term, value, cursor) do
+    term
+    |> Component.assign(
+      drafts: Map.put(term.assigns.drafts, term.assigns.selected_session_id, value),
+      modal: :slash,
+      slash: %{
+        query: value,
+        cursor: cursor,
+        index: 0,
+        accepted_id: nil,
+        restore_draft: nil
+      }
+    )
+    |> close_completed_file_mention()
+  end
+
   @doc "Returns visible contextual completion rows around the selection."
   @spec rows(map(), pos_integer()) :: [{Completion.Candidate.t(), non_neg_integer()}]
   def rows(%{slash: nil}, _terminal_height), do: []
@@ -203,6 +221,15 @@ defmodule ReyCode.TUI.SlashPalette do
   @doc "Returns the style class for a palette command description."
   def description_class(index, index), do: "text-bg"
   def description_class(_index, _selected), do: "text-muted"
+  @doc "Names the empty state for the active completion source."
+  @spec empty_label(map()) :: String.t()
+  def empty_label(%{slash: %{query: query, cursor: cursor}}) do
+    if Completion.file_mention_at?(query, cursor),
+      do: "No matching files",
+      else: "No matching commands"
+  end
+
+  def empty_label(_assigns), do: "No matching commands"
 
   @doc "Moves the selected candidate by an offset, wrapping at either end."
   @spec move(map(), integer()) :: map()
@@ -221,6 +248,9 @@ defmodule ReyCode.TUI.SlashPalette do
       nil ->
         term
 
+      %{kind: :file} = candidate ->
+        accept_file_candidate(term, context, candidate)
+
       candidate ->
         {:ok, query, cursor, accepted_id} = Completion.accept(context, candidate)
         set_query(term, query, cursor, accepted_id)
@@ -232,7 +262,8 @@ defmodule ReyCode.TUI.SlashPalette do
   def set_query(term, query, cursor \\ nil, accepted_id \\ nil)
 
   def set_query(%{assigns: %{slash: slash}} = term, query, cursor, accepted_id) do
-    Component.assign(term,
+    term
+    |> Component.assign(
       drafts: Map.put(term.assigns.drafts, term.assigns.selected_session_id, query),
       slash: %{
         slash
@@ -242,6 +273,7 @@ defmodule ReyCode.TUI.SlashPalette do
           accepted_id: accepted_id
       }
     )
+    |> close_completed_file_mention()
   end
 
   @doc "Closes the palette and focuses the prompt."
@@ -295,6 +327,9 @@ defmodule ReyCode.TUI.SlashPalette do
     context = completion_context(term.assigns)
 
     case Enum.at(Completion.candidates(context), slash.index) do
+      %{kind: :file} = candidate ->
+        {:noreply, accept_file_candidate(term, context, candidate)}
+
       nil ->
         {:noreply, term |> clear_draft() |> close("Unknown command: #{slash.query}")}
 
@@ -321,6 +356,17 @@ defmodule ReyCode.TUI.SlashPalette do
       {:ok, parsed} -> run_parsed(term, parsed)
       {:error, reason} -> {:noreply, Component.assign(term, notice: command_notice(reason))}
     end
+  end
+
+  defp accept_file_candidate(term, context, candidate) do
+    {:ok, query, cursor, accepted_id} = Completion.accept(context, candidate)
+    term |> set_query(query, cursor, accepted_id) |> close()
+  end
+
+  defp close_completed_file_mention(term) do
+    context = completion_context(term.assigns)
+
+    if Completion.file_mention_complete?(context), do: close(term), else: term
   end
 
   defp run_parsed(term, %{command: command} = parsed)

@@ -162,6 +162,29 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     assert message.body =~ "tool results"
   end
 
+  test "Workspace approval rules execute familiar Bash commands without pausing", %{
+    workspace: workspace
+  } do
+    rules = %{"version" => 1, "allow" => %{"bash" => ["printf approved"]}}
+    File.mkdir_p!(Path.join(workspace, ".reycode"))
+    File.write!(Path.join(workspace, ".reycode/approval_rules.json"), Jason.encode!(rules))
+
+    %{store: store} =
+      start_engine(workspace,
+        tool_requests: [%{tool: "bash", arguments: %{"command" => "printf approved"}}]
+      )
+
+    assert {:ok, session_id} = Engine.create_blank_session("Workspace Rules", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Run the command", :compare, @engine)
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+    assert [requested] = events_of_type(store, :tool_run_requested)
+    assert requested.data["authorization"] == "allow"
+    assert [completed] = events_of_type(store, :tool_run_completed)
+    assert completed.data["result"]["output"] == "approved"
+    assert events_of_type(store, :tool_ask_requested) == []
+  end
+
   test "tool failures are durable results and the provider can recover", %{workspace: workspace} do
     %{store: store} =
       start_engine(workspace,

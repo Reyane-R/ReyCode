@@ -82,6 +82,10 @@ if [ "\$1" = "update" ]; then
   rm -f "\$update_script"
   exit \$status
 fi
+if [ "\$1" = "run" ]; then
+  shift
+  exec "${INSTALL_DIR}/bin/rey_code" eval 'ReyCode.CLI.Run.main(System.argv())' "\$@"
+fi
 if [ \$# -eq 0 ]; then
   set -- start
 fi

@@ -59,7 +59,12 @@ defmodule ReyCode.TUI.Components.MainScreen do
           activity_frame={@activity_frame}
         />
         <.composer draft={@draft} notice={@notice} budget_notice={@budget_notice}/>
-        <.slash_palette modal={@modal} slash_rows={@slash_rows} slash_style={@slash_style}/>
+        <.slash_palette
+          modal={@modal}
+          slash_rows={@slash_rows}
+          slash_style={@slash_style}
+          slash_empty_label={@slash_empty_label}
+        />
       </box>
     </box>
     """
@@ -113,12 +118,20 @@ defmodule ReyCode.TUI.Components.MainScreen do
     <box class="h-3 w-full bg-surface border-b border-muted px-2 pt-1">
       <box class="inline w-full">
         <box class="font-bold">ReyCode</box>
-        <box class="text-muted">{header_context(@session, @terminal_width, @git_branch)}</box>
+        <box class="text-muted">
+          {header_context(
+            @session,
+            @terminal_width,
+            @git_branch,
+            @token_label,
+            Activity.header_text(@activity.header, @activity_frame)
+          )}
+        </box>
         <box :if={@question_label != ""} class="pl-2 text-warning">{@question_label}</box>
         <box class={@token_label_class}>{@token_label}</box>
         <box :if={@update_notice} class="pl-2 text-warning">{@update_notice}</box>
         <box class={session_status_class(@activity.header)}>
-          {Activity.text(@activity.header, @activity_frame)}
+          {Activity.header_text(@activity.header, @activity_frame)}
         </box>
       </box>
     </box>
@@ -135,12 +148,15 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <.textarea
         id="prompt"
         textarea-value={@draft}
-        textarea-placeholder="Ask anything…  / for commands"
+        textarea-placeholder="Ask anything…  / for commands  ·  @ for files"
         textarea-submit-on-enter={true}
         br-change="prompt_changed"
         br-submit="prompt_submitted"
-        class="w-full h-2 border focus:border-primary bg-surface"
+        class={composer_input_class(@notice, @budget_notice)}
       />
+      <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="text-muted">
+        Enter send  ·  Shift+Enter newline  ·  ↑/↓ history
+      </box>
       <box :if={not is_nil(@notice)} class="text-error">{@notice}</box>
       <box :if={not is_nil(@budget_notice)} class="text-warning">{@budget_notice}</box>
     </box>
@@ -150,6 +166,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :modal, :any, required: true
   attr :slash_rows, :list, required: true
   attr :slash_style, :map, required: true
+
+  attr :slash_empty_label, :string, required: true
 
   defp slash_palette(assigns) do
     ~H"""
@@ -162,12 +180,29 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box class={row.command_class}>{row.command}</box>
         <box class={row.description_class}>{row.description}</box>
       </box>
-      <box :if={@slash_rows == []} class="w-full px-1 text-muted">No matching commands</box>
+      <box
+        :if={@slash_rows == [] and @slash_empty_label == "No matching commands"}
+        class="w-full px-1 text-muted"
+      >
+        No matching commands
+      </box>
+      <box :if={@slash_rows == [] and @slash_empty_label == "No matching files"}>
+        No matching files
+      </box>
     </box>
     """
   end
 
-  defp session_status_class(item), do: "w-full text-right text-#{Activity.color(item)}"
+  # Inline (not w-full): inside the header's inline flow a w-full box only
+  # receives the leftover width, so a long status would wrap into fragments
+  # and spill out of the fixed-height header box.
+  defp session_status_class(item), do: "text-#{Activity.color(item)}"
+
+  defp composer_input_class(nil, nil),
+    do: "w-full h-4 border focus:border-primary bg-surface"
+
+  defp composer_input_class(_notice, _budget_notice),
+    do: "w-full h-2 border focus:border-primary bg-surface"
 
   defp primary_summary(session) do
     case Enum.find(session.participants, &(&1.kind == :primary)) do
@@ -185,20 +220,30 @@ defmodule ReyCode.TUI.Components.MainScreen do
     end
   end
 
-  defp header_context(session, terminal_width, git_branch) do
+  defp header_context(session, terminal_width, git_branch, token_label, status_text) do
+    runtime = primary_runtime(session)
     branch = if is_binary(git_branch), do: "  ·  " <> git_branch, else: ""
 
+    # The header is one terminal line, and Breeze inline boxes abut without
+    # gutters. Reserve every other segment's exact length plus a safety
+    # margin; the workspace absorbs the remainder and the floor only holds
+    # when every other segment is already bounded (branch ≤ 20 via State).
+    reserved =
+      String.length("ReyCode") + String.length(runtime) + String.length(branch) +
+        String.length("  ·  ") + String.length(token_label) +
+        String.length(status_text) + 10
+
     "  ·  " <>
-      primary_runtime(session) <>
+      runtime <>
       branch <>
       "  ·  " <>
-      workspace_context(session.workspace, terminal_width)
+      workspace_context(session.workspace, max(terminal_width - reserved, 12))
   end
 
-  defp workspace_context(path, terminal_width) do
+  defp workspace_context(path, max_length) do
     path
     |> compact_home()
-    |> middle_truncate(max(terminal_width - 18, 20))
+    |> middle_truncate(max(max_length, 12))
   end
 
   defp compact_home(path) do

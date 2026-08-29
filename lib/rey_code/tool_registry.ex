@@ -10,7 +10,7 @@ defmodule ReyCode.ToolRegistry do
   belong to the adapter implementation.
   """
 
-  alias ReyCode.Security.Workspace
+  alias ReyCode.Security.{ApprovalRules, Workspace}
 
   alias ReyCode.Tool.{
     BackgroundProcess,
@@ -57,18 +57,11 @@ defmodule ReyCode.ToolRegistry do
   @spec dispatch(Request.t(), ReyCode.RuntimeConfig.t()) :: decision()
   def dispatch(%Request{} = request, policy) do
     request = with_policy_roots(request, policy)
-    name = to_string(request.tool)
 
-    case Map.fetch(@tools, name) do
-      {:ok, _module} ->
-        if requires_approval?(request) do
-          {:ask, request}
-        else
-          {:ok, execute(request, policy)}
-        end
-
-      :error ->
-        {:deny, :unknown_tool}
+    case authorization(request, request.workspace) do
+      :allow -> {:ok, execute(request, policy)}
+      :ask -> {:ask, request}
+      :denied -> {:deny, :unknown_tool}
     end
   end
 
@@ -115,6 +108,18 @@ defmodule ReyCode.ToolRegistry do
     do: approval_required?(tool, arguments)
 
   def requires_approval?(tool), do: MapSet.member?(@ask_tools, to_string(tool))
+  @doc "Returns the fail-closed authorization for a tool call in one Workspace."
+  @spec authorization(Request.t() | map(), String.t()) :: :allow | :ask | :denied
+  def authorization(%{tool: tool} = call, workspace) do
+    name = to_string(tool)
+
+    cond do
+      not Map.has_key?(@tools, name) -> :denied
+      not requires_approval?(call) -> :allow
+      ApprovalRules.allows?(workspace, call) -> :allow
+      true -> :ask
+    end
+  end
 
   defp approval_required?(tool, arguments) do
     MapSet.member?(@ask_tools, to_string(tool)) or

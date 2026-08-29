@@ -55,8 +55,12 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
           <box :for={row <- visible_notes(item)} class="pl-2 w-full overflow-hidden text-muted">
             · {row}
           </box>
-          <box :for={row <- item.tool_run_rows} class={tool_row_class(row)}>
-            Tool · {Activity.text(row, @activity_frame)}
+          <box :for={row <- item.tool_run_rows} class="w-full">
+            <box class={tool_row_class(row)}>Tool · {Activity.text(row, @activity_frame)}</box>
+            <box :for={line <- row.diff_lines} class={diff_line_class(line)}>  {line}</box>
+            <box :if={row.diff_truncated?} class="pl-4 w-full text-muted">
+              … diff preview truncated · /runs inspect arguments
+            </box>
           </box>
         </box>
       </box>
@@ -110,6 +114,10 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   end
 
   defp tool_row_class(row), do: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}"
+  defp diff_line_class("+" <> _line), do: "pl-4 w-full text-success"
+  defp diff_line_class("-" <> _line), do: "pl-4 w-full text-error"
+  defp diff_line_class("@@" <> _line), do: "pl-4 w-full text-secondary"
+  defp diff_line_class(_line), do: "pl-4 w-full text-muted"
 
   defp visible_notes(%{note_rows: notes}) when is_list(notes),
     do: Enum.take(notes, -@max_visible_notes)

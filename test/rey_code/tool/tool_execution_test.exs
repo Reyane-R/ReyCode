@@ -320,8 +320,15 @@ defmodule ReyCode.ToolExecutionTest do
     test "creates a file within the root" do
       path = Path.join(@workspace, "created.txt")
 
-      assert %Result{ok: true, metadata: %{"bytes" => 2}} =
+      assert %Result{ok: true, metadata: metadata} =
                run("write", %{path: path, content: "hi"})
+
+      assert metadata["bytes"] == 2
+
+      assert metadata["_tui_diff"] == %{
+               "lines" => ["@@ created @@", "+hi"],
+               "truncated" => false
+             }
 
       assert File.read!(path) == "hi"
     end
@@ -363,6 +370,22 @@ defmodule ReyCode.ToolExecutionTest do
 
       refute File.exists?(path)
     end
+
+    test "fails closed when the target parent is a file" do
+      blocker = Path.join(@workspace, "blocker")
+      File.write!(blocker, "x")
+
+      assert %Result{ok: false, error: :enotdir} =
+               run("write", %{path: Path.join(blocker, "child.txt"), content: "x"})
+    end
+
+    test "fails closed when the target is a directory" do
+      directory = Path.join(@workspace, "target-dir")
+      File.mkdir_p!(directory)
+
+      assert %Result{ok: false, error: :eisdir} =
+               run("write", %{path: directory, content: "x"})
+    end
   end
 
   describe "edit" do
@@ -380,13 +403,25 @@ defmodule ReyCode.ToolExecutionTest do
                metadata: %{
                  "patches" => 2,
                  "source_hash" => source_hash,
-                 "result_hash" => result_hash
+                 "result_hash" => result_hash,
+                 "_tui_diff" => preview
                }
              } = run("edit", edit_args(path, patches))
 
       assert File.read!(path) == "AAA bbb CCC"
       assert source_hash == ReyCode.Hashing.sha256_hex("aaa bbb ccc")
       assert result_hash == ReyCode.Hashing.sha256_hex("AAA bbb CCC")
+
+      assert preview["lines"] == [
+               "@@ patch 1 @@",
+               "-aaa",
+               "+AAA",
+               "@@ patch 2 @@",
+               "-ccc",
+               "+CCC"
+             ]
+
+      refute preview["truncated"]
     end
 
     test "rejects a numeric new_string instead of deleting the match" do

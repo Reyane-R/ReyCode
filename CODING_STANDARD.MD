@@ -48,7 +48,7 @@ Idiomatic Elixir/OTP governs language mechanics. TigerStyle is adapted through `
 - Decoded maps normalize into structs before normal execution.
 - State transitions accept only valid source states.
 - IDs, statuses, outcomes, phases, and authorities use validated known values.
-- External strings never create atoms dynamically.
+- External strings never create atoms dynamically. (Enforced by the custom `StringToAtom` credo check in `credo_checks/`.)
 
 ## Deep modules
 
@@ -164,7 +164,8 @@ For pipelines, the transformed value is normally the first parameter.
 - Stable internal records are structs with concrete types.
 - Wire/event/checkpoint maps are explicit and string-keyed where required.
 - Struct field access uses dot syntax.
-- Struct bracket access is prohibited.
+- Struct bracket access is prohibited. (Enforced by the custom `StructBracketAccess` and `ListBracketAccess` credo checks in `credo_checks/`.)
+- HTTP is performed only through `:httpc` and every call passes a `:timeout`. (Enforced by the custom `ForbiddenHttpClients` and `RequireHttpTimeout` credo checks in `credo_checks/`.)
 - Generic map fallbacks exist only at open-data or compatibility seams.
 - Behavior belonging to a lifecycle is not distributed across arbitrary callers.
 - Physical storage representation does not leak through deep interfaces.

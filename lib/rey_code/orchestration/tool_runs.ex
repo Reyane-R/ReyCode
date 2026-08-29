@@ -77,7 +77,7 @@ defmodule ReyCode.Orchestration.ToolRuns do
       "output" => result["output"],
       "error" => nil,
       "truncated" => !!result["truncated"],
-      "metadata" => result["metadata"] || %{}
+      "metadata" => provider_metadata(result["metadata"])
     })
   end
 
@@ -87,7 +87,7 @@ defmodule ReyCode.Orchestration.ToolRuns do
       "output" => nil,
       "error" => error || Atom.to_string(status),
       "truncated" => !!result["truncated"],
-      "metadata" => (result && result["metadata"]) || %{}
+      "metadata" => provider_metadata(result && result["metadata"])
     })
   end
 
@@ -100,6 +100,9 @@ defmodule ReyCode.Orchestration.ToolRuns do
       "metadata" => %{}
     })
   end
+
+  defp provider_metadata(metadata) when is_map(metadata), do: Map.delete(metadata, "_tui_diff")
+  defp provider_metadata(_metadata), do: %{}
 
   defp actionable(invocation, call) do
     case run_for_call(invocation, call.id) do

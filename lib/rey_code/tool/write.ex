@@ -3,7 +3,7 @@ defmodule ReyCode.Tool.Write do
   @behaviour ReyCode.Tool
 
   alias ReyCode.RuntimeConfig.Tools.Write, as: WritePolicy
-  alias ReyCode.Tool.{Request, Result, Support}
+  alias ReyCode.Tool.{DiffPreview, Request, Result, Support}
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
@@ -15,10 +15,16 @@ defmodule ReyCode.Tool.Write do
          :ok <- Support.require_present(path, :missing_path),
          :ok <- require_size(content, max_bytes),
          {:ok, canonical} <- Support.within_roots(path, request) do
+      previous = previous_content(canonical, max_bytes)
+
       case File.write(canonical, content) do
         :ok ->
           Result.ok("wrote #{canonical}",
-            metadata: %{"path" => canonical, "bytes" => byte_size(content)}
+            metadata: %{
+              "path" => canonical,
+              "bytes" => byte_size(content),
+              "_tui_diff" => DiffPreview.write(previous, content)
+            }
           )
 
         {:error, reason} ->
@@ -26,6 +32,22 @@ defmodule ReyCode.Tool.Write do
       end
     else
       {:error, reason} -> Result.error(reason)
+    end
+  end
+
+  defp previous_content(path, max_bytes) do
+    case File.stat(path) do
+      {:error, :enoent} ->
+        :missing
+
+      {:ok, %File.Stat{type: :regular, size: size}} when size <= max_bytes ->
+        case File.read(path) do
+          {:ok, content} when is_binary(content) -> content
+          {:error, _reason} -> :unavailable
+        end
+
+      _other ->
+        :unavailable
     end
   end
 

@@ -80,6 +80,7 @@ defmodule ReyCode.TUI.State do
         tool_review: ToolReview.initial(),
         operator_question: OperatorQuestion.initial(),
         prompt_history: PromptHistory.initial(),
+        prompt_recall: PromptHistory.recall_initial(),
         work_plan_invocation_id: nil,
         merge_review: MergeReview.initial(),
         model_tiers: ModelTiers.initial(),
@@ -98,7 +99,13 @@ defmodule ReyCode.TUI.State do
         notice: nil
       )
 
-    {:ok, reconcile_animation(term, now_ms)}
+    term = reconcile_animation(term, now_ms)
+
+    if Settings.first_run_required?(projection, term.assigns.selected_session_id) do
+      {:ok, Settings.open_first_run(term)}
+    else
+      {:ok, term}
+    end
   end
 
   @doc "Adds transient values consumed by the extracted renderer."
@@ -153,6 +160,7 @@ defmodule ReyCode.TUI.State do
       recent_session_rows: recent_session_rows(assigns),
       slash_rows: slash_rows(assigns, height),
       slash_style: SlashPalette.style(width, height, assigns),
+      slash_empty_label: SlashPalette.empty_label(assigns),
       tool_review_options: ToolReview.options()
     )
   end
@@ -195,9 +203,21 @@ defmodule ReyCode.TUI.State do
 
   defp git_branch(workspace) do
     case File.read(Path.join(workspace, ".git/HEAD")) do
-      {:ok, "ref: refs/heads/" <> branch} -> "⑂ " <> String.trim(branch)
+      {:ok, "ref: refs/heads/" <> branch} -> "⑂ " <> middle_truncate(String.trim(branch), 20)
       {:ok, _detached} -> "⑂ detached"
       _other -> nil
+    end
+  end
+
+  defp middle_truncate(value, max_length) do
+    if String.length(value) <= max_length do
+      value
+    else
+      left_length = div(max_length - 3, 2)
+      right_length = max_length - 3 - left_length
+
+      String.slice(value, 0, left_length) <>
+        "..." <> String.slice(value, -right_length, right_length)
     end
   end
 
@@ -319,15 +339,30 @@ defmodule ReyCode.TUI.State do
   defp format_tokens(value), do: Integer.to_string(value)
 
   defp slash_rows(assigns, height) do
-    Enum.map(SlashPalette.rows(assigns, height), fn {candidate, index} ->
-      %{
-        command: candidate.label,
-        description: candidate.detail,
-        option_class: SlashPalette.option_class(index, assigns.slash.index),
-        command_class: SlashPalette.command_class(candidate.kind, index, assigns.slash.index),
-        description_class: SlashPalette.description_class(index, assigns.slash.index)
-      }
-    end)
+    rows =
+      Enum.map(SlashPalette.rows(assigns, height), fn {candidate, index} ->
+        %{
+          command: candidate.label,
+          description: candidate.detail,
+          option_class: SlashPalette.option_class(index, assigns.slash.index),
+          command_class: SlashPalette.command_class(candidate.kind, index, assigns.slash.index),
+          description_class: SlashPalette.description_class(index, assigns.slash.index)
+        }
+      end)
+
+    if rows == [] and not is_nil(assigns.slash) do
+      [
+        %{
+          command: SlashPalette.empty_label(assigns),
+          description: "",
+          option_class: "inline w-full px-1 bg-panel",
+          command_class: "pr-1 text-muted",
+          description_class: "text-muted"
+        }
+      ]
+    else
+      rows
+    end
   end
 
   @doc """
@@ -427,7 +462,11 @@ defmodule ReyCode.TUI.State do
   @spec assign_draft(map(), String.t()) :: map()
   def assign_draft(term, value) do
     drafts = Map.put(term.assigns.drafts, term.assigns.selected_session_id, value)
-    Component.assign(term, drafts: drafts)
+
+    Component.assign(term,
+      drafts: drafts,
+      prompt_recall: PromptHistory.recall_initial()
+    )
   end
 
   @doc "Creates and selects a fresh titled durable session for the session's first input."
@@ -541,12 +580,29 @@ defmodule ReyCode.TUI.State do
 
         run ->
           run = Map.put_new(run, :id, run_id)
-          [Activity.tool(run, workspace, now_ms, target_graphemes: target_graphemes)]
+          item = Activity.tool(run, workspace, now_ms, target_graphemes: target_graphemes)
+          preview = tool_diff_preview(run)
+
+          [
+            item
+            |> Map.put(:diff_lines, preview["lines"])
+            |> Map.put(:diff_truncated?, preview["truncated"])
+          ]
       end
     end)
   end
 
   defp tool_run_rows(_invocation, _workspace, _now_ms, _target_graphemes), do: []
+
+  defp tool_diff_preview(%{result: %{"metadata" => %{"_tui_diff" => preview}}})
+       when is_map(preview) do
+    %{
+      "lines" => Map.get(preview, "lines", []),
+      "truncated" => !!Map.get(preview, "truncated")
+    }
+  end
+
+  defp tool_diff_preview(_run), do: %{"lines" => [], "truncated" => false}
 
   # Activity trail shown beside the reply: newest lines win, older ones
   # collapse into a "+k more" marker rendered by the timeline.

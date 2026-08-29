@@ -87,4 +87,39 @@ defmodule ReyCode.TUI.CompletionTest do
 
     assert Enum.map(Completion.candidates(context), & &1.label) == ["alpha/", "alpine/"]
   end
+
+  test "fuzzy file mentions are bounded to regular workspace files" do
+    workspace =
+      Path.join(
+        System.tmp_dir!(),
+        "rey-code-file-completion-#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(Path.join(workspace, "docs"))
+    File.mkdir_p!(Path.join(workspace, ".git"))
+    File.write!(Path.join(workspace, "docs/alpha guide.md"), "guide")
+    File.write!(Path.join(workspace, ".git/config"), "hidden")
+    on_exit(fn -> File.rm_rf!(workspace) end)
+
+    context =
+      Completion.new(
+        draft: "Review @ag",
+        commands: @commands,
+        workspace: workspace,
+        scan_timeout_ms: 1_000
+      )
+
+    assert [candidate] = Completion.candidates(context)
+    assert candidate.label == "@docs/alpha guide.md"
+
+    assert {:ok, ~s(Review @"docs/alpha guide.md" ), 30, "file:docs/alpha guide.md"} =
+             Completion.accept(context, candidate)
+  end
+
+  test "recognizes file mentions only in ordinary message tokens" do
+    assert Completion.file_mention_at?("Review @lib/foo.ex", 18)
+    assert Completion.file_mention_at?("Review #lib/foo.ex", 18)
+    refute Completion.file_mention_at?("/steer inspect @lib/foo.ex", 26)
+    refute Completion.file_mention_at?("Review lib/foo.ex", 17)
+  end
 end
