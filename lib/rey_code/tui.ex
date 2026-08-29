@@ -14,6 +14,8 @@ defmodule ReyCode.TUI do
   alias ReyCode.TUI.Components.Modals
 
   alias ReyCode.TUI.{
+    Attention,
+    Completion,
     Keybindings,
     Mentions,
     OperatorQuestion,
@@ -50,6 +52,18 @@ defmodule ReyCode.TUI do
       action("app.session.tree", "Session Tree", ["^B"], &__MODULE__.open_session_tree/2),
       action("app.tools.inspect", "ToolRun Inspector", ["^O"], &__MODULE__.open_tool_inspector/2),
       action("app.history.search", "Prompt history", ["^R"], &__MODULE__.open_prompt_history/2),
+      action(
+        "app.history.previous",
+        "Previous prompt",
+        ["ArrowUp"],
+        &__MODULE__.recall_previous/2
+      ),
+      action(
+        "app.history.next",
+        "Next prompt",
+        ["ArrowDown"],
+        &__MODULE__.recall_next/2
+      ),
       action(
         "app.agents.configure",
         "Configure agents",
@@ -127,6 +141,17 @@ defmodule ReyCode.TUI do
     do: {:noreply, PromptHistory.open(term)}
 
   def open_prompt_history(_event, term), do: {:noreply, term}
+  @doc "Recalls the previous one-line prompt without stealing multiline cursor movement."
+  def recall_previous(_event, %{assigns: %{modal: nil}, focused: "prompt"} = term),
+    do: PromptHistory.recall(term, :previous)
+
+  def recall_previous(_event, _term), do: :continue
+
+  @doc "Recalls the next one-line prompt without stealing multiline cursor movement."
+  def recall_next(_event, %{assigns: %{modal: nil}, focused: "prompt"} = term),
+    do: PromptHistory.recall(term, :next)
+
+  def recall_next(_event, _term), do: :continue
 
   def retry_latest(_event, %{assigns: %{modal: nil}} = term), do: Recovery.retry_latest(term)
   def retry_latest(_event, term), do: {:noreply, term}
@@ -224,9 +249,14 @@ defmodule ReyCode.TUI do
            term.assigns.engine
          ) do
       {:ok, _turn_id} ->
-        drafts = Map.put(term.assigns.drafts, term.assigns.selected_session_id, "")
         notice = if follow_up?, do: "Follow-up queued", else: nil
-        {:noreply, assign(term, drafts: drafts, notice: notice, home: false)}
+
+        next =
+          term
+          |> State.assign_draft("")
+          |> assign(notice: notice, home: false)
+
+        {:noreply, next}
 
       {:error, {:participants_unconfigured, _participant_ids}} ->
         {:noreply, assign(term, notice: "Configure the Assistant model with /agents")}
@@ -249,10 +279,12 @@ defmodule ReyCode.TUI do
                command,
                session_term.assigns.engine
              ) do
-        drafts =
-          Map.put(session_term.assigns.drafts, session_term.assigns.selected_session_id, "")
+        next =
+          session_term
+          |> State.assign_draft("")
+          |> assign(notice: nil, home: false)
 
-        {:noreply, assign(session_term, drafts: drafts, notice: nil, home: false)}
+        {:noreply, next}
       else
         {:error, reason} ->
           {:noreply, assign(term, notice: "Could not run command: #{reason}")}
@@ -282,7 +314,11 @@ defmodule ReyCode.TUI do
 
   def handle_event(event, payload, term), do: do_handle_event(event, payload, term)
 
-  defp do_handle_event("prompt_changed", %{value: value}, term), do: prompt_changed(term, value)
+  defp do_handle_event("prompt_changed", payload, term) do
+    value = Map.get(payload, :value, Map.get(payload, "value", ""))
+    cursor = Map.get(payload, :cursor, Map.get(payload, "cursor", String.length(value)))
+    prompt_changed(term, value, cursor)
+  end
 
   defp do_handle_event("prompt_submitted", %{value: value}, term) do
     term
@@ -309,11 +345,19 @@ defmodule ReyCode.TUI do
 
   defp do_handle_event(_, _, term), do: {:noreply, term}
 
-  defp prompt_changed(%{assigns: %{modal: modal}} = term, value) do
-    if is_nil(modal) and String.starts_with?(value, "/") do
-      {:noreply, SlashPalette.start(term, value)}
-    else
-      {:noreply, State.assign_draft(term, value)}
+  defp prompt_changed(%{assigns: %{modal: modal}} = term, value, cursor) do
+    cond do
+      not is_nil(modal) ->
+        {:noreply, State.assign_draft(term, value)}
+
+      String.starts_with?(value, "/") ->
+        {:noreply, SlashPalette.start(term, value)}
+
+      Completion.file_mention_at?(value, cursor) ->
+        {:noreply, SlashPalette.start_file_mention(term, value, cursor)}
+
+      true ->
+        {:noreply, State.assign_draft(term, value)}
     end
   end
 
@@ -323,6 +367,7 @@ defmodule ReyCode.TUI do
   end
 
   def handle_info({:projection_snapshot, projection}, term) do
+    :ok = Attention.notify(term.assigns.projection, projection)
     {:noreply, State.projection_updated(term, projection)}
   end
 

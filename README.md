@@ -4,13 +4,17 @@ ReyCode is a terminal-native coding harness with OMP-style sessions: one
 Primary Assistant for ordinary conversation and explicit task agents for
 specialized work.
 
-ReyCode owns the agent loop and tool execution itself. Providers stream
-responses; ReyCode executes tools through its trusted workspace registry with
-durable authorization and owner approval. OpenCode is one provider among
-several behind the `ReyCode.Provider` behaviour. A deterministic simulator
-remains available for automated FSM, failure-injection, and Monte Carlo
-testing. OpenCode credentials remain in OpenCode; ReyCode discovers its
-configured models and stores each agent profile's runtime and model selection.
+## Why ReyCode
+
+ReyCode is a durable orchestration layer for terminal coding agents, not a model
+client. Providers like OpenCode own the model conversation; ReyCode owns the
+agent loop, trusted tool execution with owner approval, event-sourced history
+that survives restarts and Session forks, and multi-agent squad workflows with a
+release gate. A deterministic simulator backs automated FSM, failure-injection,
+and Monte Carlo testing. Use ReyCode when you want tools run against your
+workspace under your control, work that resumes after a crash, or several
+specialized agents on one task; OpenCode alone suffices if you only need to talk
+to a model in a terminal.
 
 Active decisions and their acceptance criteria are recorded in
 [DECISIONS.md](DECISIONS.md).
@@ -20,11 +24,27 @@ to find the right doc, or jump straight to the
 [Architecture Guide](docs/ARCHITECTURE.md) — it walks through the entire
 program end-to-end, from keypress to database.
 
+
+## Quickstart
+
+```sh
+mix deps.get && mix run --no-halt
+```
+
+Opens a clean session in your terminal. Then:
+
+- `/agent` — create a task agent with its own provider and model
+- `/task` — delegate one task to that agent
+
+That's the whole loop. Squad workflows, project memory, and release gating are
+opt-in. The [Run](#run) section lists every command; [Install](#install) covers
+release builds and updates.
+
 ## Install
 
 ReyCode is an Elixir application, so you need the Elixir language and the
 Erlang/OTP runtime before you can run anything. **This project requires Elixir
-`~> 1.19` and Erlang/OTP 27 or newer** (`mix.exs` pins the constraint; CI
+`~> 1.19` and Erlang/OTP 27 or newer** (`mix.exs` pins the Elixir constraint; Erlang/OTP 27+ is a runtime requirement, not a code pin. CI
 builds against Elixir 1.19.5 on OTP 28.3.1). Check what you have:
 
 ```sh
@@ -136,8 +156,24 @@ mix deps.get
 mix run --no-halt
 ```
 
-Startup opens a clean session home. No prior transcript is shown. The first
-message creates a fresh durable Session with one Primary Assistant.
+For one bounded, non-interactive Turn, use the installed launcher or its source
+equivalent:
+
+```sh
+reycode run -p "Summarize the failing tests"
+printf '%s\n' "Name the riskiest module" | reycode run --json
+mix rey_code.run --workspace "$PWD" "Review this Workspace"
+```
+
+One-shot mode creates a fresh durable Session, reuses the latest Primary
+Assistant runtime assignment, and prints only the response (or a JSON report).
+It exits nonzero instead of waiting when a tool approval or OperatorQuestion
+needs an interactive owner. `--timeout-ms` defaults to 600000.
+
+Startup opens a clean session home. On the first pristine Session, ReyCode
+automatically opens guided Primary Assistant provider and model selection; `R`
+rechecks provider discovery. After setup, no prior transcript is shown. The
+first message creates a fresh durable Session with one Primary Assistant.
 
 Task agents are opt-in durable profiles:
 
@@ -157,7 +193,8 @@ total bytes are bounded, and the durable Invocation records the combined
 content digest and exact source paths so restart behavior cannot drift.
 
 - `Enter` or `Ctrl+S`: send the current draft
-
+- `Shift+Enter` or `Ctrl+J`: insert a newline
+- `↑` / `↓`: recall prior Operator prompts while the draft is one line; multiline drafts retain cursor navigation
 - `/` or `Ctrl+P`: open a compact command palette; typing searches the full registry
 - `/help`: open the deterministic capability reference without invoking a provider
 - `/new` or `Ctrl+N`: start a clean Session
@@ -190,7 +227,8 @@ content digest and exact source paths so restart behavior cannot drift.
 │
 - `!cmd`: run a shell command in the workspace; output lands in the transcript
 - `@file` / `#file`: attach a file's content to the next message (workspace
-  files only, 512 KB per file, 2 MB total)
+  files only, 512 KB per file, 2 MB total). Typing `@` or `#` opens bounded
+  recursive fuzzy file completion; paths containing spaces are quoted.
 - `Tab`: move between the prompt and current transcript
 - `Ctrl+A`: open the newest waiting OperatorQuestion
 - `Ctrl+B`: open Session Tree
@@ -222,6 +260,9 @@ has executing provider/tool/delegation work. Queued work and owner approval are
 truthfully static (`… · Queued`, `Ⅱ · Paused · bash approval required`);
 terminal completed/partial/reworked/failed/cancelled Outcomes use stable,
 distinct glyphs.
+Completed `edit` and `write` ToolRuns render bounded exact before/after fragments
+directly below their activity row. The full ToolRun remains available through
+`/runs`; presentation-only diff metadata is never sent back to the provider.
 
 Native agents that surface intermediate reasoning render dimmed activity lines
 under the message (`· note`), collapsed behind `+k more activity` when the
@@ -283,9 +324,10 @@ In the command palette, `/` shows common commands plus controls relevant to
 current work; typing searches the full registry. Arrow keys move the selection,
 Tab accepts the highlighted completion without executing it, Shift+Tab moves
 backward, Enter runs it, and Escape returns to the draft. Commands complete
-current task Participants, provider/models, Sessions, and immediate workspace
-directories. Dynamic arguments are revalidated when submitted. `/cancel` stops
-the current task and `/tools` reviews a pending tool approval.
+current task Participants, provider/models, and Sessions. `@` and `#` mentions
+fuzzy-search a bounded recursive Workspace file index. Dynamic arguments are
+revalidated when submitted. `/cancel` stops the current task and `/tools`
+reviews a pending tool approval.
 
 Developer environment tools include structured Git status/diff/review/commit and
 conflict-resolution operations, DAP debugger sessions, persistent Python and
@@ -309,10 +351,10 @@ with a `.pre-sqlite-backup` rollback copy.
 ```text
 
 ReyCode.Application                     rest-for-one dependency supervision
-|-- ReyCode.AgentRegistry                unique process registry for Agent workers
-|-- ReyCode.EventRegistry                duplicate process registry for subscriptions
+|-- AgentRegistry (registered `Registry`)     unique process registry for Agent workers
+|-- EventRegistry (registered `Registry`)     duplicate process registry for subscriptions
 |-- ReyCode.EventStore                   transactional SQLite event store
-|-- ReyCode.ProviderTaskSupervisor       bounded discovery task supervisor
+|-- ProviderTaskSupervisor (registered `Task.Supervisor`)  bounded discovery task supervisor
 |-- ReyCode.Provider.Catalog             transient provider discovery and runtime resolution
 |-- ReyCode.ProcessHub                   supervised bounded background processes
 |-- ReyCode.Orchestration.Supervisor     engine/worker restart boundary
@@ -352,9 +394,8 @@ The squad leader automatically approves, requests targeted rework, or aborts at
 the story, specification, and code gates. Release-gate authority is frozen at
 turn start and is explicit: `--release auto` (the default for headless) keeps
 the leader authoritative, while `--release wait` makes the human owner
-authoritative. In the TUI, the leader's release-gate decision is always a
-recommendation and the human project owner is authoritative: `/release` may
-approve, return the work to integration, or abort.
+authoritative. The gate is resolved through the headless squad runner's `a`/`r`/`b`
+prompt — approve, return to integration, or abort — not a TUI command.
 
 Downstream gate rework repeats from integration through validation. The default
 rework budget is three cycles. When the budget is exhausted, the leader cannot
@@ -618,7 +659,26 @@ gated. Debugger, evaluation, and memory mutation calls are also approval-gated.
 Web search requires an explicitly configured endpoint and key environment
 variable; credentials are read at invocation time and never persisted.
 
-When a tool needs approval, a banner appears above the current transcript:
+A Workspace can auto-allow familiar Bash commands with
+`.reycode/approval_rules.json`:
+
+```json
+{
+  "version": 1,
+  "allow": {
+    "bash": ["git status", "mix test *"]
+  }
+}
+```
+
+Rules are per Workspace. Each entry is either an exact command or one trailing
+` *` wildcard; the wildcard matches the base command and its arguments.
+Commands containing shell control operators never match. Missing, malformed,
+oversized, or symlinked rule files fail closed and leave the ordinary approval
+gate in place. Rules cannot allow unknown tools or change read-only policy.
+
+When a tool needs approval, ReyCode emits one terminal bell for the newly
+pending durable request and a banner appears above the current transcript:
 
     tool approval required  /  write  /  /tools
 

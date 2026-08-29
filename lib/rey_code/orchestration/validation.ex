@@ -13,6 +13,10 @@ defmodule ReyCode.Orchestration.Validation do
   @max_cancellation_reason_bytes 1_000
   @max_gate_reason_bytes 1_000
 
+  @doc "Returns the shared maximum accepted Operator message size."
+  @spec message_max_bytes() :: pos_integer()
+  def message_max_bytes, do: @max_message_bytes
+
   @spec session(term(), term()) :: {:ok, String.t(), String.t()} | {:error, atom()}
   @spec session(term(), term(), keyword()) :: {:ok, String.t(), String.t()} | {:error, atom()}
   def session(title, workspace, opts \\ []) do

@@ -56,6 +56,70 @@ defmodule ReyCode.TUITest do
     refute session_screen =~ "#"
   end
 
+  test "composer supports multiline drafts without submitting" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    type(session, "first line")
+
+    assert {:noreply, "prompt", _changed?} =
+             Breeze.Test.input(session, %{"shiftKey" => true, "key" => "Enter"})
+
+    type(session, "second line")
+
+    assert Breeze.Test.metadata(session).assigns.drafts
+           |> Map.values()
+           |> Enum.member?("first line\nsecond line")
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowUp")
+
+    assert Enum.member?(
+             Map.values(Breeze.Test.metadata(session).assigns.drafts),
+             "first line\nsecond line"
+           )
+  end
+
+  test "up and down recall prompts while preserving the current scratch draft" do
+    %{engine: engine, session_id: session_id} = start_isolated_stack([])
+    assert {:ok, turn_id} = Engine.post_message(session_id, "previous prompt", :direct, engine)
+    assert wait_until_turn_status(engine, turn_id, :completed)
+
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    type(session, "scratch")
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "previous prompt"
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowDown")
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "scratch"
+  end
+
+  test "fuzzy file mention completion inserts the selected workspace path" do
+    workspace =
+      Path.join(System.tmp_dir!(), "rey-code-tui-files-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(workspace, "lib"))
+    File.write!(Path.join(workspace, "lib/fuzzy_target.ex"), "value = 1\n")
+    on_exit(fn -> File.rm_rf!(workspace) end)
+
+    %{engine: engine} = start_isolated_stack(workspace_roots: [workspace])
+    assert {:ok, session_id} = Engine.create_blank_session("File completion", workspace, engine)
+
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    type(session, "Read @fzt")
+    assert Breeze.Test.metadata(session).assigns.modal == :slash
+    assert Breeze.Test.render!(session) =~ "@lib/fuzzy_target.ex"
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Tab")
+    metadata = Breeze.Test.metadata(session)
+    assert metadata.assigns.modal == nil
+    assert metadata.assigns.drafts[session_id] == "Read @lib/fuzzy_target.ex "
+  end
+
   test "/new starts another clean durable session" do
     %{engine: engine} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
@@ -249,6 +313,27 @@ defmodule ReyCode.TUITest do
     assert screen =~ "omp/openai-codex/gpt-5.4-mini"
   end
 
+  test "opens guided Primary provider and model setup on first run" do
+    %{engine: engine, config: config} =
+      start_isolated_stack(default_provider: :unconfigured)
+
+    session = start_session({120, 32}, engine: engine, config: config)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    metadata = Breeze.Test.metadata(session)
+    assert metadata.assigns.modal == :settings
+    assert metadata.assigns.settings.step == :providers
+    assert metadata.assigns.settings.participant_ids == ["assistant"]
+    assert metadata.assigns.settings.onboarding?
+
+    screen = Breeze.Test.render!(session)
+    assert screen =~ "Set up your Assistant"
+    assert screen =~ "Choose a provider runtime, then select the model"
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
+    assert Breeze.Test.metadata(session).assigns.modal == nil
+  end
+
   test "/connect opens provider settings without model completion" do
     %{engine: engine} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
@@ -438,7 +523,22 @@ defmodule ReyCode.TUITest do
   test "exposes only session-level global shortcuts" do
     keys = Enum.map(ReyCode.TUI.global_keybindings(), &elem(&1, 0))
 
-    assert keys == ["Tab", "^N", "^P", "^S", "^A", "^B", "^O", "^R", "^G", "^T", "^Q"]
+    assert keys == [
+             "Tab",
+             "^N",
+             "^P",
+             "^S",
+             "^A",
+             "^B",
+             "^O",
+             "^R",
+             "ArrowUp",
+             "ArrowDown",
+             "^G",
+             "^T",
+             "^Q"
+           ]
+
     assert Enum.uniq(keys) == keys
   end
 
@@ -472,6 +572,9 @@ defmodule ReyCode.TUITest do
 
     assert screen =~ "Tool ·"
     assert screen =~ "Read · <outside workspace>"
+    assert screen =~ "@@ patch 1 @@"
+    assert screen =~ "-hello"
+    assert screen =~ "+hello world"
 
     assert screen =~ "✓"
   end
@@ -1401,7 +1504,7 @@ defmodule ReyCode.TUITest do
     projection = Engine.subscribe(engine)
     session_id = List.first(projection.session_order)
 
-    %{engine: engine, store: store, session_id: session_id}
+    %{engine: engine, store: store, session_id: session_id, config: config}
   end
 
   defp open_first_session(session) do
@@ -1515,7 +1618,12 @@ defmodule ReyCode.TUITest do
             "output" => "hello world\n",
             "error" => nil,
             "truncated" => false,
-            "metadata" => %{}
+            "metadata" => %{
+              "_tui_diff" => %{
+                "lines" => ["@@ patch 1 @@", "-hello", "+hello world"],
+                "truncated" => false
+              }
+            }
           }
         }
       },

@@ -59,7 +59,12 @@ defmodule ReyCode.TUI.Components.MainScreen do
           activity_frame={@activity_frame}
         />
         <.composer draft={@draft} notice={@notice} budget_notice={@budget_notice}/>
-        <.slash_palette modal={@modal} slash_rows={@slash_rows} slash_style={@slash_style}/>
+        <.slash_palette
+          modal={@modal}
+          slash_rows={@slash_rows}
+          slash_style={@slash_style}
+          slash_empty_label={@slash_empty_label}
+        />
       </box>
     </box>
     """
@@ -135,12 +140,15 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <.textarea
         id="prompt"
         textarea-value={@draft}
-        textarea-placeholder="Ask anything…  / for commands"
+        textarea-placeholder="Ask anything…  / for commands  ·  @ for files"
         textarea-submit-on-enter={true}
         br-change="prompt_changed"
         br-submit="prompt_submitted"
-        class="w-full h-2 border focus:border-primary bg-surface"
+        class={composer_input_class(@notice, @budget_notice)}
       />
+      <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="text-muted">
+        Enter send  ·  Shift+Enter newline  ·  ↑/↓ history
+      </box>
       <box :if={not is_nil(@notice)} class="text-error">{@notice}</box>
       <box :if={not is_nil(@budget_notice)} class="text-warning">{@budget_notice}</box>
     </box>
@@ -150,6 +158,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :modal, :any, required: true
   attr :slash_rows, :list, required: true
   attr :slash_style, :map, required: true
+
+  attr :slash_empty_label, :string, required: true
 
   defp slash_palette(assigns) do
     ~H"""
@@ -162,12 +172,29 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box class={row.command_class}>{row.command}</box>
         <box class={row.description_class}>{row.description}</box>
       </box>
-      <box :if={@slash_rows == []} class="w-full px-1 text-muted">No matching commands</box>
+      <box
+        :if={@slash_rows == [] and @slash_empty_label == "No matching commands"}
+        class="w-full px-1 text-muted"
+      >
+        No matching commands
+      </box>
+      <box
+        :if={@slash_rows == [] and @slash_empty_label == "No matching files"}
+        class="w-full px-1 text-muted"
+      >
+        No matching files
+      </box>
     </box>
     """
   end
 
   defp session_status_class(item), do: "w-full text-right text-#{Activity.color(item)}"
+
+  defp composer_input_class(nil, nil),
+    do: "w-full h-4 border focus:border-primary bg-surface"
+
+  defp composer_input_class(_notice, _budget_notice),
+    do: "w-full h-2 border focus:border-primary bg-surface"
 
   defp primary_summary(session) do
     case Enum.find(session.participants, &(&1.kind == :primary)) do

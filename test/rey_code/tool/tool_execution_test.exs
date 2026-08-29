@@ -320,8 +320,15 @@ defmodule ReyCode.ToolExecutionTest do
     test "creates a file within the root" do
       path = Path.join(@workspace, "created.txt")
 
-      assert %Result{ok: true, metadata: %{"bytes" => 2}} =
+      assert %Result{ok: true, metadata: metadata} =
                run("write", %{path: path, content: "hi"})
+
+      assert metadata["bytes"] == 2
+
+      assert metadata["_tui_diff"] == %{
+               "lines" => ["@@ created @@", "+hi"],
+               "truncated" => false
+             }
 
       assert File.read!(path) == "hi"
     end
@@ -380,13 +387,25 @@ defmodule ReyCode.ToolExecutionTest do
                metadata: %{
                  "patches" => 2,
                  "source_hash" => source_hash,
-                 "result_hash" => result_hash
+                 "result_hash" => result_hash,
+                 "_tui_diff" => preview
                }
              } = run("edit", edit_args(path, patches))
 
       assert File.read!(path) == "AAA bbb CCC"
       assert source_hash == ReyCode.Hashing.sha256_hex("aaa bbb ccc")
       assert result_hash == ReyCode.Hashing.sha256_hex("AAA bbb CCC")
+
+      assert preview["lines"] == [
+               "@@ patch 1 @@",
+               "-aaa",
+               "+AAA",
+               "@@ patch 2 @@",
+               "-ccc",
+               "+CCC"
+             ]
+
+      refute preview["truncated"]
     end
 
     test "rejects a numeric new_string instead of deleting the match" do

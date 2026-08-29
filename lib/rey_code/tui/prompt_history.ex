@@ -11,6 +11,21 @@ defmodule ReyCode.TUI.PromptHistory do
 
   @spec initial() :: map()
   def initial, do: %{index: 0, query: ""}
+  @doc "Returns the local shell-style recall cursor for one composer."
+  @spec recall_initial() :: map()
+  def recall_initial, do: %{session_id: nil, index: nil, scratch: ""}
+
+  @doc "Recalls an older or newer prompt when the composer contains one line."
+  @spec recall(map(), :previous | :next) :: {:noreply, map()} | :continue
+  def recall(term, direction) when direction in [:previous, :next] do
+    draft = Map.get(term.assigns.drafts, term.assigns.selected_session_id, "")
+
+    if String.contains?(draft, "\n") do
+      :continue
+    else
+      recall_one_line(term, draft, direction)
+    end
+  end
 
   @spec open(map()) :: map()
   def open(term) do
@@ -114,6 +129,40 @@ defmodule ReyCode.TUI.PromptHistory do
     assigns
     |> prompts()
     |> Enum.filter(&(query == "" or String.contains?(String.downcase(&1), query)))
+  end
+
+  defp recall_one_line(term, draft, direction) do
+    history = prompts(term.assigns)
+    recall = term.assigns.prompt_recall
+    session_id = term.assigns.selected_session_id
+    recall = if recall.session_id == session_id, do: recall, else: recall_initial()
+
+    case recall_index(recall.index, direction, length(history)) do
+      :unchanged ->
+        :continue
+
+      :scratch ->
+        {:noreply,
+         assign_recalled_draft(term, recall.scratch, %{recall_initial() | session_id: session_id})}
+
+      index ->
+        scratch = if is_nil(recall.index), do: draft, else: recall.scratch
+        next = %{session_id: session_id, index: index, scratch: scratch}
+        {:noreply, assign_recalled_draft(term, Enum.at(history, index), next)}
+    end
+  end
+
+  defp recall_index(nil, :previous, count) when count > 0, do: 0
+  defp recall_index(nil, _direction, _count), do: :unchanged
+
+  defp recall_index(index, :previous, count) when index + 1 < count, do: index + 1
+  defp recall_index(_index, :previous, _count), do: :unchanged
+  defp recall_index(0, :next, _count), do: :scratch
+  defp recall_index(index, :next, _count), do: index - 1
+
+  defp assign_recalled_draft(term, draft, recall) do
+    drafts = Map.put(term.assigns.drafts, term.assigns.selected_session_id, draft)
+    Component.assign(term, drafts: drafts, prompt_recall: recall)
   end
 
   defp move(term, offset) do

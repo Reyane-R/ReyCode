@@ -10,8 +10,59 @@ defmodule ReyCode.TUI.SettingsTest do
              participant_ids: [],
              session_id: "room-1",
              query: "",
-             provider: nil
+             provider: nil,
+             onboarding?: false
            }
+  end
+
+  test "first-run setup targets the pristine unconfigured Primary Assistant" do
+    session = %{
+      participants: [
+        %{id: "builder", name: "Builder", kind: :primary, provider: :unconfigured, model: nil}
+      ],
+      message_order: []
+    }
+
+    projection = %{session_order: ["room-1"], sessions: %{"room-1" => session}}
+    term = term(projection: projection)
+
+    assert Settings.first_run_required?(projection, "room-1")
+
+    opened = Settings.open_first_run(term)
+    assert opened.assigns.modal == :settings
+    assert opened.assigns.settings.step == :providers
+    assert opened.assigns.settings.participant_ids == ["builder"]
+    assert opened.assigns.settings.onboarding?
+
+    closed = Settings.back(opened)
+    assert closed.assigns.modal == nil
+    assert closed.focused == "prompt"
+  end
+
+  test "first-run setup does not interrupt configured, used, or multi-Session workspaces" do
+    configured = %{
+      participants: [
+        %{id: "builder", kind: :primary, provider: :opencode, model: "openai/gpt"}
+      ],
+      message_order: []
+    }
+
+    projection = %{session_order: ["room-1"], sessions: %{"room-1" => configured}}
+    refute Settings.first_run_required?(projection, "room-1")
+
+    unconfigured =
+      put_in(projection, [:sessions, "room-1", :participants, Access.at(0)], %{
+        id: "builder",
+        kind: :primary,
+        provider: :unconfigured,
+        model: nil
+      })
+
+    used = put_in(unconfigured, [:sessions, "room-1", :message_order], ["message-1"])
+    refute Settings.first_run_required?(used, "room-1")
+
+    multiple = %{unconfigured | session_order: ["room-1", "room-2"]}
+    refute Settings.first_run_required?(multiple, "room-1")
   end
 
   test "move/2 wraps participant selection" do

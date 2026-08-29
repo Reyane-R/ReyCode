@@ -329,7 +329,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       workspace_roots: workspace_roots
     }
 
-    authorization = tool_authorization(call)
+    authorization = tool_authorization(call, workspace)
     run = %{run | authorization: authorization}
     entries = tool_run_request_entries(invocation, run, authorization)
     next = Persistence.append_and_apply!(state, entries)
@@ -407,13 +407,8 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   defp authorization_action(:ask), do: :await
   defp authorization_action(:denied), do: :denied
 
-  defp tool_authorization(call) do
-    cond do
-      ToolRegistry.requires_approval?(call) -> :ask
-      call.tool in ToolRegistry.tool_names() -> :allow
-      true -> :denied
-    end
-  end
+  defp tool_authorization(call, workspace),
+    do: ToolRegistry.authorization(call, workspace)
 
   defp tool_run_request_entries(invocation, run, :denied) do
     [

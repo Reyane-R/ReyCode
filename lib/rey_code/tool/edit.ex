@@ -14,7 +14,7 @@ defmodule ReyCode.Tool.Edit do
 
   alias ReyCode.Hashing
   alias ReyCode.RuntimeConfig.Tools.Edit, as: EditPolicy
-  alias ReyCode.Tool.{Request, Result, Support}
+  alias ReyCode.Tool.{DiffPreview, Request, Result, Support}
 
   @hash_pattern ~r/\A[0-9a-f]{64}\z/
 
@@ -128,7 +128,8 @@ defmodule ReyCode.Tool.Edit do
           "patches" => length(patches),
           "source_hash" => source_hash,
           "result_hash" => result_hash,
-          "bytes" => byte_size(updated)
+          "bytes" => byte_size(updated),
+          "_tui_diff" => DiffPreview.edits(patches)
         }
       )
     else

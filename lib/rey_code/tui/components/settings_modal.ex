@@ -13,10 +13,13 @@ defmodule ReyCode.TUI.Components.SettingsModal do
     ~H"""
     <box class="w-screen h-screen bg px-4 pt-2">
       <box class="inline w-full border-b border-muted pb-1">
-        <box class="font-bold text-primary">Configure agents</box>
-        <box class="w-full text-right text-muted">{header_controls(@term.settings.step)}</box>
+        <box class="font-bold text-primary">{title(@term.settings)}</box>
+        <box class="w-full text-right text-muted">{header_controls(@term.settings)}</box>
       </box>
       <box class="pt-1 text-muted">{step_label(@term.settings.step)}</box>
+      <box :if={@term.settings.onboarding?} class="pt-1 text-muted">
+        Choose a provider runtime, then select the model the Assistant should use.
+      </box>
       <box :if={@term.settings.step == :participants} class="pt-2 w-full">
         <box class="font-bold">Choose an agent</box>
         <box
@@ -62,8 +65,12 @@ defmodule ReyCode.TUI.Components.SettingsModal do
     """
   end
 
-  defp header_controls(:providers), do: "Esc back   R recheck"
-  defp header_controls(_step), do: "Esc back"
+  defp title(%{onboarding?: true}), do: "Set up your Assistant"
+  defp title(_settings), do: "Configure agents"
+
+  defp header_controls(%{onboarding?: true, step: :providers}), do: "Esc close   R recheck"
+  defp header_controls(%{step: :providers}), do: "Esc back   R recheck"
+  defp header_controls(_settings), do: "Esc back"
 
   defp step_label(:participants), do: "choose agents"
   defp step_label(:providers), do: "choose runtime"

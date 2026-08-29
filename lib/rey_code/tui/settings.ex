@@ -52,7 +52,8 @@ defmodule ReyCode.TUI.Settings do
       participant_ids: [],
       session_id: session_id,
       query: "",
-      provider: nil
+      provider: nil,
+      onboarding?: false
     }
   end
 
@@ -77,6 +78,34 @@ defmodule ReyCode.TUI.Settings do
 
     Component.assign(term, modal: :settings, settings: settings, notice: nil)
   end
+
+  @doc "Opens the provider/model path for an unconfigured first-run Primary Assistant."
+  @spec open_first_run(map()) :: map()
+  def open_first_run(term) do
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+    primary = Enum.find(session.participants, &(&1.kind == :primary))
+
+    settings = %{
+      initial(term.assigns.selected_session_id)
+      | step: :providers,
+        participant_ids: [primary.id],
+        onboarding?: true
+    }
+
+    Component.assign(term, modal: :settings, settings: settings, notice: nil)
+  end
+
+  @doc "Whether the durable projection is a pristine Session needing Primary runtime setup."
+  @spec first_run_required?(map(), String.t() | nil) :: boolean()
+  def first_run_required?(%{session_order: [only_id], sessions: sessions}, selected_id)
+      when only_id == selected_id do
+    session = Map.get(sessions, selected_id)
+    primary = session && Enum.find(session.participants, &(&1.kind == :primary))
+
+    not is_nil(primary) and session.message_order == [] and runtime_missing?(primary)
+  end
+
+  def first_run_required?(_projection, _session_id), do: false
 
   @doc "Opens model confirmation for one revalidated provider/model."
   @spec open_at(map(), atom(), String.t()) :: map()
@@ -165,6 +194,12 @@ defmodule ReyCode.TUI.Settings do
   @doc "Returns to the previous settings step or closes the wizard."
   @spec back(map()) :: map()
   def back(%{assigns: %{settings: %{step: :participants}}} = term) do
+    term
+    |> Component.assign(modal: nil, notice: nil)
+    |> View.focus("prompt")
+  end
+
+  def back(%{assigns: %{settings: %{step: :providers, onboarding?: true}}} = term) do
     term
     |> Component.assign(modal: nil, notice: nil)
     |> View.focus("prompt")
@@ -311,6 +346,18 @@ defmodule ReyCode.TUI.Settings do
         Component.assign(term, notice: "Could not configure agents: #{reason}")
     end
   end
+
+  defp runtime_missing?(nil), do: true
+
+  defp runtime_missing?(%{provider: provider})
+       when provider in [nil, :unconfigured, "unconfigured"],
+       do: true
+
+  defp runtime_missing?(%{provider: provider}) when provider in [:simulator, "simulator"],
+    do: false
+
+  defp runtime_missing?(%{model: model}),
+    do: not is_binary(model) or String.trim(model) == ""
 
   defp update(term, update) do
     Component.assign(term, settings: update.(term.assigns.settings))

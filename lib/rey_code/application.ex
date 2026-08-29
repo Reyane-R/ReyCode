@@ -73,6 +73,25 @@ defmodule ReyCode.Application do
   end
 
   @doc false
+  @spec ensure_started_without_tui() :: {:ok, [atom()]} | {:error, term()}
+  def ensure_started_without_tui do
+    previous = Application.get_env(:rey_code, :start_tui, :not_configured)
+    Application.put_env(:rey_code, :start_tui, false)
+
+    try do
+      Application.ensure_all_started(:rey_code)
+    after
+      restore_tui_config(previous)
+    end
+  end
+
+  defp restore_tui_config(:not_configured),
+    do: Application.delete_env(:rey_code, :start_tui)
+
+  defp restore_tui_config(value),
+    do: Application.put_env(:rey_code, :start_tui, value)
+
+  @doc false
   def storage_paths do
     case Application.get_env(:rey_code, :event_path) do
       nil ->

@@ -12,6 +12,8 @@ defmodule ReyCode.TUI.Completion do
   @default_max_candidates 50
   @default_scan_timeout_ms 50
   @unranked_palette_priority 1_000_000
+  @default_file_scan_entry_count 2_000
+  @ignored_directory_names ~w(.git _build deps node_modules)
 
   defmodule Candidate do
     @moduledoc false
@@ -111,6 +113,37 @@ defmodule ReyCode.TUI.Completion do
     |> Enum.map(&candidate(&1, position))
   end
 
+  @doc "Returns whether the cursor is inside an ordinary-message file mention."
+  @spec file_mention_at?(String.t(), non_neg_integer()) :: boolean()
+  def file_mention_at?(draft, cursor) do
+    position = token_position(draft, cursor)
+
+    not String.starts_with?(String.trim_leading(draft), "/") and
+      match?(<<sigil, _rest::binary>> when sigil in [?@, ?#], position.query)
+  end
+
+  @doc "Returns whether the active mention token names an existing contained file."
+  @spec file_mention_complete?(Context.t()) :: boolean()
+  def file_mention_complete?(%Context{workspace: workspace} = context)
+      when is_binary(workspace) do
+    position = token_position(context.draft, context.cursor)
+
+    with <<_sigil, token::binary>> <- position.query,
+         relative <- unquote_token(token),
+         false <- Path.type(relative) == :absolute,
+         false <- Enum.any?(Path.split(relative), &(&1 in ["..", "~"])),
+         {:ok, root} <- CanonicalPath.resolve(workspace),
+         {:ok, file} <- CanonicalPath.resolve(Path.join(root, relative)),
+         true <- contained?(file, root),
+         true <- File.regular?(file) do
+      true
+    else
+      _other -> false
+    end
+  end
+
+  def file_mention_complete?(_context), do: false
+
   @doc "Accepts one candidate by replacing only its declared grapheme range."
   @spec accept(Context.t(), Candidate.t()) :: {:ok, String.t(), non_neg_integer(), String.t()}
   def accept(%Context{draft: draft}, %Candidate{} = candidate) do
@@ -141,6 +174,10 @@ defmodule ReyCode.TUI.Completion do
   @spec move(non_neg_integer(), non_neg_integer(), integer()) :: non_neg_integer()
   def move(index, 0, _offset), do: index
   def move(index, count, offset), do: Integer.mod(index + offset, count)
+
+  defp source(context, %{query: <<sigil, _rest::binary>>} = position)
+       when sigil in [?@, ?#],
+       do: file_source(context, position)
 
   defp source(context, %{command: nil} = position), do: command_source(context, position)
 
@@ -244,6 +281,87 @@ defmodule ReyCode.TUI.Completion do
         relative
       )
     end)
+  end
+
+  defp file_source(%Context{workspace: nil}, _position), do: []
+
+  defp file_source(context, %{query: <<sigil, _partial::binary>>}) do
+    task = Task.async(fn -> scan_files(context.workspace) end)
+
+    entries =
+      case Task.yield(task, context.scan_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+        {:ok, values} -> values
+        _other -> []
+      end
+
+    Enum.map(entries, fn relative ->
+      mention = <<sigil>> <> relative
+
+      %{
+        id: "file:" <> relative,
+        kind: :file,
+        label: mention,
+        detail: "workspace file",
+        insertion: <<sigil>> <> quote_mention_path(relative),
+        suffix: " ",
+        dynamic_id: nil,
+        value: relative,
+        payload: relative
+      }
+    end)
+  end
+
+  defp scan_files(workspace) do
+    case CanonicalPath.resolve(workspace) do
+      {:ok, root} -> collect_files([{root, ""}], [], 0)
+      {:error, _reason} -> []
+    end
+  end
+
+  defp collect_files([], files, _visited_count), do: Enum.reverse(files)
+
+  defp collect_files(_pending, files, visited_count)
+       when visited_count >= @default_file_scan_entry_count,
+       do: Enum.reverse(files)
+
+  defp collect_files([{directory, relative_directory} | pending], files, visited_count) do
+    remaining_count = @default_file_scan_entry_count - visited_count
+
+    entries =
+      case File.ls(directory) do
+        {:ok, names} -> names |> Enum.sort() |> Enum.take(remaining_count)
+        {:error, _reason} -> []
+      end
+
+    {directories, files, visited_count} =
+      Enum.reduce(entries, {[], files, visited_count}, fn name, accumulator ->
+        collect_file_entry(name, accumulator, directory, relative_directory)
+      end)
+
+    collect_files(Enum.reverse(directories) ++ pending, files, visited_count)
+  end
+
+  defp collect_file_entry(name, {directories, files, count}, directory, relative_directory) do
+    path = Path.join(directory, name)
+    relative = Path.join(relative_directory, name)
+
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: :regular}} ->
+        {directories, [relative | files], count + 1}
+
+      {:ok, %File.Stat{type: :directory}} when name in @ignored_directory_names ->
+        {directories, files, count + 1}
+
+      {:ok, %File.Stat{type: :directory}} ->
+        {[{path, relative} | directories], files, count + 1}
+
+      _other ->
+        {directories, files, count + 1}
+    end
+  end
+
+  defp quote_mention_path(path) do
+    if String.match?(path, ~r/\s/u), do: inspect(path), else: path
   end
 
   defp scan_directories(workspace, partial) do
