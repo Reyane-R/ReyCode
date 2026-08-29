@@ -12,6 +12,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.{EventStore, RuntimeConfig}
+  alias ReyCode.Memory.Store, as: MemoryStore
   alias ReyCode.Orchestration.{Engine, Squad}
   alias ReyCode.Test.Wait
 
@@ -187,6 +188,57 @@ defmodule ReyCode.AgentLoopApprovalTest do
         Process.sleep(25)
         approve_until_phase(turn_id, phase, attempts - 1)
     end
+  end
+
+  test "approved memory decision records rationale through the durable tool lifecycle", %{
+    workspace_a: workspace
+  } do
+    if is_nil(Process.whereis(MemoryStore)) do
+      memory_path =
+        Path.join(
+          System.tmp_dir!(),
+          "rey_code_memory_approval_#{System.unique_integer([:positive])}.sqlite3"
+        )
+
+      start_supervised!({MemoryStore, name: MemoryStore, path: memory_path})
+      on_exit(fn -> File.rm(memory_path) end)
+    end
+
+    store =
+      start_engine(
+        simulator_opts: [
+          seed: 0,
+          delay_ms: 0,
+          jitter_ms: 0,
+          failure_rate: 0.0,
+          tool_requests: [
+            %{
+              tool: "memory",
+              arguments: %{
+                "action" => "retain",
+                "kind" => "decision",
+                "key" => "event-store",
+                "value" => "Use SQLite",
+                "rationale" => "single writer",
+                "evidence" => "lib/rey_code/event_store/sqlite.ex"
+              }
+            }
+          ]
+        ]
+      )
+
+    assert {:ok, session_id} = Engine.create_blank_session("Decision Loop", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Choose storage", :direct, @engine)
+    assert resolve_all_waiting(turn_id, :approve).outcome == :completed
+    completed = events_of_type(store, :tool_run_completed)
+    assert [%{data: %{"result" => %{"ok" => true}}}] = completed
+
+    projection = Engine.snapshot(@engine)
+    [invocation_id] = projection.turns[turn_id].invocation_order
+    project = projection.invocations[invocation_id].execution_context.workspace
+    assert {:ok, [memory]} = MemoryStore.list(project, ["decision"], 10)
+    assert Jason.decode!(memory.value)["rationale"] == "single writer"
+    assert memory.tags == ["decision"]
   end
 
   test "approve executes the persisted request once and completes the conversation", %{

@@ -75,6 +75,16 @@ defmodule ReyCode.ToolRegistryTest do
            )
   end
 
+  test "memory decisions remain owner-approved while recall stays read-only" do
+    assert ToolRegistry.requires_approval?(
+             request("memory", %{action: "retain", kind: "decision", key: "storage"})
+           )
+
+    refute ToolRegistry.requires_approval?(
+             request("memory", %{action: "recall", query: "storage"})
+           )
+  end
+
   test "tool_names/0 lists the sixteen supported tools" do
     assert Enum.sort(ToolRegistry.tool_names()) ==
              Enum.sort([

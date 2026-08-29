@@ -700,12 +700,14 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert "ask_operator" in names
       assert "update_plan" in names
       assert "read" in names
+      assert "memory" in names
 
       spawn_task = Enum.find(tools, &(&1["function"]["name"] == "spawn_task"))
       spawn_tasks = Enum.find(tools, &(&1["function"]["name"] == "spawn_tasks"))
       send_peer = Enum.find(tools, &(&1["function"]["name"] == "send_peer"))
       ask_operator = Enum.find(tools, &(&1["function"]["name"] == "ask_operator"))
       update_plan = Enum.find(tools, &(&1["function"]["name"] == "update_plan"))
+      memory = Enum.find(tools, &(&1["function"]["name"] == "memory"))
 
       assert spawn_task["type"] == "function"
       assert spawn_task["function"]["parameters"]["properties"]["agent"]
@@ -719,6 +721,15 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       assert update_plan["function"]["parameters"]["properties"]["action"]["enum"] ==
                ["init", "start", "done", "block", "unblock", "drop"]
+
+      assert memory["function"]["description"] =~ "Record kind=decision"
+      assert memory["function"]["description"] =~ "ask_operator"
+
+      assert memory["function"]["parameters"]["properties"]["kind"]["enum"] ==
+               ~w(decision assumption fact lesson)
+
+      assert memory["function"]["parameters"]["properties"]["evidence"]["description"] =~
+               "Concrete"
 
       edit = Enum.find(tools, &(&1["function"]["name"] == "edit"))
       edit_parameters = edit["function"]["parameters"]

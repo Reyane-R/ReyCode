@@ -2,6 +2,7 @@ defmodule ReyCode.TUI.State do
   @moduledoc "Shared terminal state initialization and projection updates for the root view."
 
   alias Breeze.{Component, View}
+  alias ReyCode.Memory.Store, as: MemoryStore
   alias ReyCode.Orchestration.{Engine, ModelTier}
   alias ReyCode.Provider.{Catalog, Presentation}
   alias ReyCode.RuntimeConfig
@@ -13,6 +14,7 @@ defmodule ReyCode.TUI.State do
     AnimationClock,
     Artifacts,
     ContextBoundary,
+    Decisions,
     Delegation,
     Hotkeys,
     MergeReview,
@@ -36,6 +38,7 @@ defmodule ReyCode.TUI.State do
     engine = Keyword.get(opts, :engine, Engine)
     provider_catalog = Keyword.get(opts, :provider_catalog, Catalog)
     config = Keyword.get_lazy(opts, :config, &ReyCode.RuntimeConfig.fresh/0)
+    memory_store = Keyword.get(opts, :memory_store, MemoryStore)
     projection = Engine.subscribe(engine)
     catalog_snapshot = Catalog.subscribe(provider_catalog)
     keybindings = ReyCode.TUI.resolved_keybindings(config)
@@ -60,6 +63,7 @@ defmodule ReyCode.TUI.State do
         provider_catalog: provider_catalog,
         providers: catalog_snapshot.providers,
         providers_generation: catalog_snapshot.generation,
+        memory_store: memory_store,
         projection: projection,
         selected_session_id: List.last(projection.session_order),
         drafts: %{},
@@ -71,6 +75,7 @@ defmodule ReyCode.TUI.State do
         artifacts: Artifacts.initial(),
         agent_profile: AgentProfile.initial(),
         delegation: Delegation.initial(),
+        decisions: Decisions.initial(),
         hotkeys: Hotkeys.initial(),
         tool_review: ToolReview.initial(),
         operator_question: OperatorQuestion.initial(),

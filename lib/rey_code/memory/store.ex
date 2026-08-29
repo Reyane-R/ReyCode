@@ -8,6 +8,8 @@ defmodule ReyCode.Memory.Store do
   @max_value_bytes 32_768
   @max_entries 10_000
   @max_recall 100
+  @max_list 100
+  @record_kinds ~w(decision assumption fact lesson)
 
   @type memory :: %{
           id: String.t(),
@@ -34,8 +36,24 @@ defmodule ReyCode.Memory.Store do
   def learn(project, key, value, tags \\ [], server \\ __MODULE__),
     do: GenServer.call(server, {:learn, project, key, value, tags})
 
+  @doc "Records one typed project memory while preserving the legacy retain/learn actions."
+  @spec record(String.t(), String.t(), String.t(), String.t(), [String.t()], GenServer.server()) ::
+          {:ok, memory()} | {:error, atom()}
+  def record(project, kind, key, value, tags \\ [], server \\ __MODULE__),
+    do: GenServer.call(server, {:record, project, kind, key, value, tags})
+
   def recall(project, query, count \\ 20, server \\ __MODULE__),
     do: GenServer.call(server, {:recall, project, query, count})
+
+  @doc "Lists newest current memories, including invalidated entries, with optional kinds."
+  @spec list(String.t(), [String.t()], pos_integer(), GenServer.server()) ::
+          {:ok, [memory()]} | {:error, atom()}
+  def list(project, kinds \\ [], count \\ @max_list, server \\ __MODULE__),
+    do: GenServer.call(server, {:list, project, kinds, count})
+
+  @doc "Returns the closed set of typed memory kinds."
+  @spec record_kinds() :: [String.t()]
+  def record_kinds, do: @record_kinds
 
   def forget(project, key, server \\ __MODULE__),
     do: GenServer.call(server, {:forget, project, key})
@@ -77,6 +95,37 @@ defmodule ReyCode.Memory.Store do
     end
   end
 
+  def handle_call({:record, project, kind, key, value, tags}, _from, state) do
+    with :ok <- valid_text(project),
+         :ok <- valid_kind(kind),
+         :ok <- valid_text(key),
+         :ok <- valid_value(value),
+         {:ok, tags} <- valid_tags(tags),
+         :ok <- capacity(state, project),
+         {:ok, memory} <- append(state, project, kind, key, value, tags, true) do
+      {:reply, {:ok, memory}, put_memory(state, memory)}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:list, project, kinds, count}, _from, state) do
+    with :ok <- valid_text(project),
+         :ok <- valid_kinds(kinds),
+         true <- is_integer(count) and count > 0 do
+      entries =
+        state.memories
+        |> Map.values()
+        |> Enum.filter(&(&1.project == project and (kinds == [] or &1.kind in kinds)))
+        |> Enum.sort_by(& &1.created_at, :desc)
+        |> Enum.take(min(count, @max_list))
+
+      {:reply, {:ok, entries}, state}
+    else
+      _invalid -> {:reply, {:error, :invalid_memory_list}, state}
+    end
+  end
+
   def handle_call({:recall, project, query, count}, _from, state) do
     if is_binary(project) and is_binary(query) do
       entries =
@@ -102,7 +151,7 @@ defmodule ReyCode.Memory.Store do
 
       memory ->
         {:ok, invalidated} =
-          append(state, project, "invalidated", key, memory.value, memory.tags, false)
+          append(state, project, memory.kind, key, memory.value, memory.tags, false)
 
         {:reply, :ok, put_memory(state, invalidated)}
     end
@@ -200,6 +249,15 @@ defmodule ReyCode.Memory.Store do
 
     Map.put(memories, {project, key}, memory)
   end
+
+  defp valid_kind(kind) when kind in @record_kinds, do: :ok
+  defp valid_kind(_kind), do: {:error, :invalid_memory_kind}
+
+  defp valid_kinds(kinds) when is_list(kinds) do
+    if Enum.all?(kinds, &(&1 in @record_kinds)), do: :ok, else: {:error, :invalid_memory_kind}
+  end
+
+  defp valid_kinds(_kinds), do: {:error, :invalid_memory_kind}
 
   defp valid_text(value) when is_binary(value) and byte_size(value) > 0, do: :ok
   defp valid_text(_), do: {:error, :invalid_memory_text}

@@ -10,6 +10,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   alias ReyCode.Capabilities
   alias ReyCode.Failure
+  alias ReyCode.Memory.Store
   alias ReyCode.Provider.{Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, RequestShape, Stream}
   alias ReyCode.RuntimeConfig
@@ -356,6 +357,13 @@ defmodule ReyCode.Provider.OpenAICompatible do
     do:
       "Run bounded Python or JavaScript code in a persistent kernel; host execution requires approval"
 
+  defp wire_tool_description("memory") do
+    "Store and retrieve bounded workspace memory. Record kind=decision when choosing an " <>
+      "approach the Operator did not specify; record kind=assumption when proceeding on " <>
+      "something unverified. Cite rationale and concrete evidence. Use ask_operator instead " <>
+      "when materially different paths require human judgment."
+  end
+
   defp wire_tool_description(name), do: "ReyCode workspace tool #{name}"
 
   defp tool_schema("spawn_task") do
@@ -583,9 +591,29 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp tool_schema("memory") do
     object_schema(
       %{
-        "action" => %{"type" => "string", "enum" => ~w(retain recall learn forget reflect)},
-        "key" => %{"type" => "string"},
-        "value" => %{"type" => "string"},
+        "action" => %{
+          "type" => "string",
+          "enum" => ~w(retain recall learn forget reflect)
+        },
+        "kind" => %{
+          "type" => "string",
+          "enum" => Store.record_kinds(),
+          "description" => "Typed trace category; omit to preserve legacy retain/learn behavior"
+        },
+        "key" => %{"type" => "string", "description" => "Stable concise memory key"},
+        "value" => %{
+          "type" => "string",
+          "description" => "Fact, lesson, decision, or assumption statement"
+        },
+        "rationale" => %{
+          "type" => "string",
+          "description" => "Why this path was chosen or assumed"
+        },
+        "alternatives" => %{"type" => "string", "description" => "Viable alternatives considered"},
+        "evidence" => %{
+          "type" => "string",
+          "description" => "Concrete file, ToolRun, output, or source evidence"
+        },
         "query" => %{"type" => "string"},
         "tags" => %{"type" => "array", "items" => %{"type" => "string"}}
       },

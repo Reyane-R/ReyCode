@@ -22,6 +22,30 @@ not the runtime. Personal-first scope (D1) still governs sequencing.
 
 ## Active decisions
 
+### D35 — Agent-authored rationale lives in ProjectMemory (Executed — 2026-08-28)
+
+Assumptions and implementation choices must be traceable without becoming
+orchestration state:
+
+- ProjectMemory is the workspace-scoped home for facts, lessons, decisions,
+  and assumptions. Typed decision/assumption values preserve the statement,
+  rationale, viable alternatives, and concrete evidence inside the existing
+  bounded value column; no database migration or second memory store is added.
+- The memory tool, schema, and frozen coding prompt share one contract: ask the
+  Operator when materially different paths require human judgment; otherwise
+  record an unstated assumption or chosen approach before proceeding. Memory
+  mutation remains owner-approved.
+- `/decisions` is a bounded Operator view over current ProjectMemory state,
+  including invalidated entries. Session export explicitly receives decision
+  memories rather than reading them inside its pure renderer.
+- Workspace rationale survives Session forks by design. Choices that must
+  travel with the repository belong in its `DECISIONS.md` through an approved
+  edit; workspace-local rationale stays in ProjectMemory.
+
+Agent-authored prose does not enter the orchestration EventStore: replay remains
+bounded to business transitions, while ProjectMemory keeps its own append-only
+event table and capacity limits.
+
 ### D34 — Session Cartography is a Projection-first control surface (Executed — 2026-08-28)
 
 ReyCode exposes the durable orchestration graph through six bounded terminal

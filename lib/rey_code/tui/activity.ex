@@ -532,6 +532,7 @@ defmodule ReyCode.TUI.Activity do
   defp active_tool_label("spawn_tasks"), do: "Delegating"
   defp active_tool_label("send_peer"), do: "Messaging"
   defp active_tool_label("process"), do: "Supervising"
+  defp active_tool_label("memory"), do: "Recording"
   defp active_tool_label(_name), do: "Working"
 
   defp terminal_tool_label("read"), do: "Read"
@@ -544,6 +545,7 @@ defmodule ReyCode.TUI.Activity do
   defp terminal_tool_label("spawn_tasks"), do: "Delegated"
   defp terminal_tool_label("send_peer"), do: "Messaged"
   defp terminal_tool_label("process"), do: "Managed"
+  defp terminal_tool_label("memory"), do: "Recorded"
   defp terminal_tool_label(name), do: humanize(name)
 
   defp tool_target(name, arguments, workspace, target_graphemes) do
@@ -572,6 +574,11 @@ defmodule ReyCode.TUI.Activity do
   end
 
   defp raw_tool_target("send_peer", arguments, _workspace), do: argument(arguments, "target")
+
+  defp raw_tool_target("memory", arguments, _workspace),
+    do:
+      argument(arguments, "key") || argument(arguments, "query") || argument(arguments, "action")
+
   defp raw_tool_target(_name, arguments, _workspace), do: first_argument(arguments)
 
   defp path_target(nil, _workspace), do: nil

@@ -17,6 +17,7 @@ defmodule ReyCode.TUI.SlashPalette do
     Cancellation,
     Completion,
     ContextBoundary,
+    Decisions,
     Delegation,
     Help,
     Hotkeys,
@@ -374,6 +375,7 @@ defmodule ReyCode.TUI.SlashPalette do
 
   defp run_action(term, :artifacts, nil), do: {:noreply, Artifacts.open(term)}
   defp run_action(term, :context_boundary, nil), do: {:noreply, ContextBoundary.open(term)}
+  defp run_action(term, :decisions, nil), do: {:noreply, Decisions.open(term)}
   defp run_action(term, :hotkeys, nil), do: {:noreply, Hotkeys.open(term)}
   defp run_action(term, :prompt_history, nil), do: {:noreply, PromptHistory.open(term)}
   defp run_action(term, :retry, nil), do: Recovery.retry_latest(term)

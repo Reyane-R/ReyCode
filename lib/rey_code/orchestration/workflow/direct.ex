@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
   @moduledoc "Plans one invocation for ordinary conversation or explicit delegation."
   use ReyCode.Orchestration.Workflow
 
-  alias ReyCode.Orchestration.Workflow
+  alias ReyCode.Orchestration.{Workflow, WorkingContract}
 
   @impl true
   def plan(session, turn, _projection) do
@@ -38,18 +38,21 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
   end
 
   defp system_prompt(participant, false, false, _task) do
-    "You are #{participant.name}, the session's primary coding assistant. " <>
-      "Responsibility: #{participant.perspective}."
+    ("You are #{participant.name}, the session's primary coding assistant. " <>
+       "Responsibility: #{participant.perspective}.")
+    |> WorkingContract.append()
   end
 
   defp system_prompt(participant, true, false, _task) do
-    "You are the #{participant.name} task agent. " <>
-      "Standing responsibility: #{participant.perspective}. Complete only the delegated task."
+    ("You are the #{participant.name} task agent. " <>
+       "Standing responsibility: #{participant.perspective}. Complete only the delegated task.")
+    |> WorkingContract.append()
   end
 
   defp system_prompt(participant, true, true, task) do
-    "You are the #{participant.name} task agent. " <>
-      "Standing responsibility: #{participant.perspective}. " <>
-      "Complete the detached task and report the result.\n\nDetached task:\n#{task}"
+    ("You are the #{participant.name} task agent. " <>
+       "Standing responsibility: #{participant.perspective}. " <>
+       "Complete the detached task and report the result.\n\nDetached task:\n#{task}")
+    |> WorkingContract.append()
   end
 end

@@ -106,7 +106,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **EvaluationKernel** — Supervised persistent Python or JavaScript process retaining one bounded namespace for approved code evaluation.
 
-**ProjectMemory** — Append-only SQLite facts and lessons scoped to one Workspace.
+**ProjectMemory** — Append-only SQLite facts, lessons, decisions, and assumptions scoped to one Workspace. Decision and assumption values preserve rationale, alternatives, and concrete evidence; the Operator browses current and invalidated entries through `/decisions`.
 
 **Advisor** — Opt-in Task Participant used for explicit advisory review; its output is a Recommendation, not an authoritative Resolution.
 
@@ -130,7 +130,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **EvaluationKernel** — Supervised persistent Python or JavaScript process retaining one bounded namespace.
 
-**ProjectMemory** — Append-only SQLite facts and lessons scoped to one Workspace.
+**ProjectMemory** — Append-only SQLite facts, lessons, decisions, and assumptions scoped to one Workspace. Decision and assumption values preserve rationale, alternatives, and concrete evidence; the Operator browses current and invalidated entries through `/decisions`.
 
 **Advisor** — Opt-in Task Participant whose output is a Recommendation, not an authoritative Resolution.
 

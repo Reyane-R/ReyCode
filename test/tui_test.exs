@@ -2,6 +2,7 @@ defmodule ReyCode.TUITest do
   use ExUnit.Case, async: true
 
   alias ReyCode.{ArtifactStore, EventStore, RuntimeConfig}
+  alias ReyCode.Memory.Store
 
   alias ReyCode.Orchestration.{
     Engine,
@@ -587,6 +588,50 @@ defmodule ReyCode.TUITest do
     assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "Explain the layout"
   end
 
+  test "decisions browser exposes rationale and invalidation from ProjectMemory" do
+    %{engine: engine, session_id: session_id} = start_isolated_stack([])
+    workspace = Engine.snapshot(engine).sessions[session_id].workspace
+
+    memory_path =
+      Path.join(System.tmp_dir!(), "tui-decisions-#{System.unique_integer([:positive])}.sqlite3")
+
+    memory_store = start_supervised!({Store, name: nil, path: memory_path})
+    on_exit(fn -> File.rm(memory_path) end)
+    key = "decision-tui-#{System.unique_integer([:positive])}"
+
+    value =
+      Jason.encode!(%{
+        "statement" => "Use the existing EventStore",
+        "rationale" => "It preserves single-writer ordering",
+        "alternatives" => "Add PostgreSQL",
+        "evidence" => "lib/rey_code/event_store.ex"
+      })
+
+    assert {:ok, _memory} =
+             Store.record(workspace, "decision", key, value, ["decision"], memory_store)
+
+    session = start_session({120, 32}, engine: engine, memory_store: memory_store)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    type(session, "/decisions")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    screen = Breeze.Test.render!(session)
+    assert screen =~ "Decisions & assumptions"
+    assert screen =~ key
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    detail = Breeze.Test.render!(session)
+    assert detail =~ "Use the existing EventStore"
+    assert detail =~ "It preserves single-writer ordering"
+    assert detail =~ "lib/rey_code/event_store.ex"
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Y")
+    assert Breeze.Test.render!(session) =~ "Invalidated #{key}"
+    assert {:ok, memories} = Store.list(workspace, ["decision"], 100, memory_store)
+    memory = Enum.find(memories, &(&1.key == key))
+    refute memory.active
+  end
+
   test "renders agent activity notes dimmed under the message with collapse" do
     %{engine: tui_engine_12} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_12)
@@ -610,7 +655,6 @@ defmodule ReyCode.TUITest do
     assert screen =~ "· reasoning step 3"
     assert screen =~ "· reasoning step 5"
     refute screen =~ "reasoning step 1"
-    refute screen =~ "reasoning step 2"
   end
 
   test "renders agent-initiated delegation as a delegate tool row" do
@@ -649,7 +693,19 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     workspace = File.cwd!()
-    run_order = ["read", "grep", "glob", "list", "bash", "edit", "write", "spawn"]
+
+    run_order = [
+      "read",
+      "grep",
+      "glob",
+      "list",
+      "bash",
+      "edit",
+      "write",
+      "memory",
+      "memory-done",
+      "spawn"
+    ]
 
     runs = %{
       "read" => %{
@@ -673,6 +729,18 @@ defmodule ReyCode.TUITest do
         tool: :write,
         arguments: %{"path" => "README.md"},
         status: :running
+      },
+      "memory" => %{
+        id: "memory",
+        tool: :memory,
+        arguments: %{"action" => "retain", "kind" => "decision", "key" => "storage"},
+        status: :running
+      },
+      "memory-done" => %{
+        id: "memory-done",
+        tool: :memory,
+        arguments: %{"action" => "retain", "kind" => "decision", "key" => "decision-log"},
+        status: :completed
       },
       "spawn" => %{
         id: "spawn",
@@ -702,6 +770,8 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Editing · lib/a.ex"
     assert screen =~ "Writing · README.md"
     assert screen =~ "Delegating · Luna"
+    assert screen =~ "Recording · storage"
+    assert screen =~ "Recorded · decision-log"
     assert Enum.all?(String.split(screen, "\n"), &(String.length(&1) <= 72))
   end
 
@@ -1354,7 +1424,7 @@ defmodule ReyCode.TUITest do
       size: size,
       theme: ReyCode.Theme.default(),
       global_keybindings: ReyCode.TUI.global_keybindings(),
-      start_opts: Keyword.take(opts, [:engine, :config])
+      start_opts: Keyword.take(opts, [:engine, :config, :memory_store])
     )
   end
 

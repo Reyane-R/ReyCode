@@ -24,6 +24,11 @@ defmodule ReyCode.Capabilities do
       action: :context_boundary
     },
     %{
+      command: "/decisions",
+      description: "Browse recorded decisions and assumptions",
+      action: :decisions
+    },
+    %{
       command: "/dequeue",
       description: "Return the newest FollowUp to the composer",
       action: :dequeue

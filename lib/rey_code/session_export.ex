@@ -1,31 +1,41 @@
 defmodule ReyCode.SessionExport do
   @moduledoc "Deterministically renders one durable Session Projection as Markdown or HTML."
 
+  alias ReyCode.Memory.Store
   alias ReyCode.Orchestration.Projection
+  alias ReyCode.Provider.TextBuffer
 
   @max_export_bytes 10_000_000
+  @max_decision_count 50
+  @max_argument_bytes 200
+  @max_decision_value_bytes 2_048
 
   @type format :: :markdown | :html
 
-  @doc "Renders one Session without mutating Projection or EventStore state."
-  @spec render(Projection.t(), String.t(), format()) :: {:ok, String.t()} | {:error, atom()}
-  def render(%Projection{} = projection, session_id, format) when format in [:markdown, :html] do
+  @doc "Renders one Session and supplied decision memories without mutating either."
+  @spec render(Projection.t(), String.t(), format(), [Store.memory()]) ::
+          {:ok, String.t()} | {:error, atom()}
+  def render(%Projection{} = projection, session_id, format, decisions \\ [])
+      when format in [:markdown, :html] do
     case projection.sessions[session_id] do
       nil -> {:error, :session_not_found}
-      session -> session |> document(projection, format) |> bounded()
+      session -> session |> document(projection, format, decisions) |> bounded()
     end
   end
 
   @doc "Writes one deterministic Session export to an explicit path."
   @spec write(Projection.t(), String.t(), Path.t(), format()) :: :ok | {:error, term()}
   def write(projection, session_id, path, format) do
-    with {:ok, content} <- render(projection, session_id, format),
+    session = projection.sessions[session_id]
+    decisions = if session, do: decisions(session.workspace), else: []
+
+    with {:ok, content} <- render(projection, session_id, format, decisions),
          :ok <- File.mkdir_p(Path.dirname(path)) do
       File.write(path, content, [:binary])
     end
   end
 
-  defp document(session, projection, :markdown) do
+  defp document(session, projection, :markdown, decisions) do
     header = [
       "# ",
       session.title,
@@ -39,12 +49,19 @@ defmodule ReyCode.SessionExport do
       "\n"
     ]
 
-    [header | Enum.map(messages(session, projection), &message_markdown(&1, projection))]
+    [
+      header,
+      decisions_markdown(decisions)
+      | Enum.map(messages(session, projection), &message_markdown(&1, projection))
+    ]
     |> IO.iodata_to_binary()
   end
 
-  defp document(session, projection, :html) do
-    body = Enum.map(messages(session, projection), &message_html(&1, projection))
+  defp document(session, projection, :html, decisions) do
+    body = [
+      decisions_html(decisions)
+      | Enum.map(messages(session, projection), &message_html(&1, projection))
+    ]
 
     [
       "<!doctype html><html><head><meta charset=\"utf-8\"><title>",
@@ -92,7 +109,15 @@ defmodule ReyCode.SessionExport do
       rows =
         Enum.map(invocation.tool_run_order, fn run_id ->
           run = invocation.tool_runs[run_id]
-          ["- `", to_string(run.tool), "` — ", to_string(run.status), "\n"]
+
+          [
+            "- `",
+            to_string(run.tool),
+            "` — ",
+            to_string(run.status),
+            tool_arguments_markdown(run),
+            "\n"
+          ]
         end)
 
       if rows == [], do: "", else: ["### Tool runs\n\n", rows, "\n"]
@@ -128,6 +153,7 @@ defmodule ReyCode.SessionExport do
             html(to_string(run.tool)),
             "</code> — ",
             html(to_string(run.status)),
+            html(tool_arguments_html(run)),
             "</li>"
           ]
         end)
@@ -137,6 +163,103 @@ defmodule ReyCode.SessionExport do
       ""
     end
   end
+
+  defp decisions(workspace) do
+    case Process.whereis(Store) do
+      nil ->
+        []
+
+      _pid ->
+        case Store.list(workspace, ~w(decision assumption), @max_decision_count) do
+          {:ok, entries} -> Enum.filter(entries, & &1.active)
+          {:error, _reason} -> []
+        end
+    end
+  end
+
+  defp decisions_markdown([]), do: ""
+
+  defp decisions_markdown(entries) do
+    rows =
+      Enum.map(entries, fn entry ->
+        [
+          "- **",
+          entry.kind,
+          "** `",
+          entry.key,
+          "` — ",
+          decision_value(entry),
+          " (",
+          entry.created_at,
+          ")\n"
+        ]
+      end)
+
+    ["## Decisions & assumptions\n\n", rows, "\n"]
+  end
+
+  defp decisions_html([]), do: ""
+
+  defp decisions_html(entries) do
+    rows =
+      Enum.map(entries, fn entry ->
+        [
+          "<li><strong>",
+          html(entry.kind),
+          "</strong> <code>",
+          html(entry.key),
+          "</code> — ",
+          html(decision_value(entry)),
+          " (",
+          html(entry.created_at),
+          ")</li>"
+        ]
+      end)
+
+    ["<section><h2>Decisions &amp; assumptions</h2><ul>", rows, "</ul></section>"]
+  end
+
+  defp decision_value(entry) do
+    value =
+      case Jason.decode(entry.value) do
+        {:ok, decoded} when is_map(decoded) ->
+          [decoded["statement"], rationale(decoded["rationale"]), evidence(decoded["evidence"])]
+          |> Enum.reject(&is_nil/1)
+          |> Enum.join(" · ")
+
+        _raw ->
+          entry.value
+      end
+
+    TextBuffer.truncate_utf8(value, @max_decision_value_bytes)
+  end
+
+  defp rationale(nil), do: nil
+  defp rationale(value), do: "because #{value}"
+  defp evidence(nil), do: nil
+  defp evidence(value), do: "evidence #{value}"
+
+  defp tool_arguments_markdown(run) do
+    case tool_arguments_text(run) do
+      "" -> ""
+      text -> " · args `#{text}`"
+    end
+  end
+
+  defp tool_arguments_html(run) do
+    case tool_arguments_text(run) do
+      "" -> ""
+      text -> " · args #{text}"
+    end
+  end
+
+  defp tool_arguments_text(%{arguments: arguments}) when map_size(arguments) > 0 do
+    arguments
+    |> Jason.encode!()
+    |> TextBuffer.truncate_utf8(@max_argument_bytes)
+  end
+
+  defp tool_arguments_text(_run), do: ""
 
   defp parent_markdown(%{parent_session_id: nil}), do: ""
 

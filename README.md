@@ -178,6 +178,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/answer`: answer the newest waiting OperatorQuestion
 - `/artifacts`: inspect and page retained large ToolRun outputs
 - `/context`: inspect the latest provider-facing ContextSummary
+- `/decisions`: browse or invalidate recorded implementation decisions and assumptions
 - `/history` or `Ctrl+R`: search prior Operator prompts and restore one to the composer
 - `/hotkeys`: show effective named action bindings and their configuration source
 - `/plan`: inspect the newest Invocation WorkPlan
@@ -241,6 +242,22 @@ configured `context_budget_tokens` budget
 records a bounded extractive ContextSummary and a durable ContextBoundary. The
 timeline keeps the complete transcript and inserts a visible compaction divider;
 `/context` shows the summary sent with later Messages.
+
+## Decisions and assumptions
+
+ReyCode treats unstated assumptions and implementation choices as traceable
+work. When materially different paths require your judgment, the assistant uses
+`ask_operator`. Otherwise it records a typed `decision` or `assumption` in
+ProjectMemory before proceeding, with rationale, alternatives, and concrete
+file/ToolRun evidence. Memory mutation remains owner-approved, and the timeline
+shows the recording ToolRun as `Recorded · <key>`.
+
+Use `/decisions` to browse active and invalidated records for the current
+Workspace; `Y` invalidates a stale record without deleting its append-only
+history. Session Markdown/HTML exports include active decisions and assumptions
+plus bounded ToolRun arguments. Decisions that must travel with the repository
+belong in its `DECISIONS.md` through an approved edit; workspace-local rationale
+stays in ProjectMemory across Session forks.
 
 Successful ToolRun output larger than 16 KB is retained in the bounded artifact
 spool instead of being copied wholesale into the transcript or provider

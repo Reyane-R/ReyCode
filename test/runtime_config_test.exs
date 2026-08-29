@@ -16,6 +16,7 @@ defmodule ReyCode.RuntimeConfigTest do
 
   test "loads every declared setting with its default when unconfigured" do
     config = load_with(%{})
+    assert flatten(config) == RuntimeConfig.declared_defaults()
 
     # Settings the issue called out as previously unvalidated drift risks.
     assert %RuntimeConfig{} = config

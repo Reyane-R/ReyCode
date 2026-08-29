@@ -16,6 +16,7 @@ defmodule ReyCode.TUI.Components.Modals do
     Artifacts,
     Cancellation,
     ContextBoundary,
+    Decisions,
     Delegation,
     Help,
     Hotkeys,
@@ -42,6 +43,7 @@ defmodule ReyCode.TUI.Components.Modals do
     agent_profile: AgentProfile,
     context_boundary: ContextBoundary,
     delegation: Delegation,
+    decisions: Decisions,
     model_picker: ModelPicker,
     merge_review: MergeReview,
     hotkeys: Hotkeys,
@@ -81,6 +83,7 @@ defmodule ReyCode.TUI.Components.Modals do
   defp dispatch(:agent_hub, assigns), do: AgentHub.modal(assigns)
   defp dispatch(:agent_profile, assigns), do: AgentProfile.modal(assigns)
   defp dispatch(:context_boundary, assigns), do: ContextBoundary.modal(assigns)
+  defp dispatch(:decisions, assigns), do: Decisions.modal(assigns)
   defp dispatch(:delegation, assigns), do: Delegation.modal(assigns)
   defp dispatch(:hotkeys, assigns), do: Hotkeys.modal(assigns)
   defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)

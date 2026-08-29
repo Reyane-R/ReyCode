@@ -9,7 +9,7 @@ defmodule ReyCode.Orchestration.Delegation do
   uncertainty never opens a child Invocation.
   """
 
-  alias ReyCode.Orchestration.{Invocation, Participant, Projection}
+  alias ReyCode.Orchestration.{Invocation, Participant, Projection, WorkingContract}
   alias ReyCode.Provider.TextBuffer
 
   @tool_name "spawn_task"
@@ -168,11 +168,12 @@ defmodule ReyCode.Orchestration.Delegation do
             "Use send_peer with an exact peer name for bounded coordination."
       end
 
-    "You are the #{plan.participant.name} task agent. " <>
-      "Standing responsibility: #{plan.participant.perspective}. " <>
-      "Complete only the delegated task and report the result.\n\n" <>
-      "Delegated task:\n#{plan.brief}" <>
-      shared_context <> peer_context <> schema_instruction
+    ("You are the #{plan.participant.name} task agent. " <>
+       "Standing responsibility: #{plan.participant.perspective}. " <>
+       "Complete only the delegated task and report the result.\n\n" <>
+       "Delegated task:\n#{plan.brief}" <>
+       shared_context <> peer_context <> schema_instruction)
+    |> WorkingContract.append()
   end
 
   @doc """
