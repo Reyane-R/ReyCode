@@ -118,7 +118,15 @@ defmodule ReyCode.TUI.Components.MainScreen do
     <box class="h-3 w-full bg-surface border-b border-muted px-2 pt-1">
       <box class="inline w-full">
         <box class="font-bold">ReyCode</box>
-        <box class="text-muted">{header_context(@session, @terminal_width, @git_branch)}</box>
+        <box class="text-muted">
+          {header_context(
+            @session,
+            @terminal_width,
+            @git_branch,
+            @token_label,
+            Activity.text(@activity.header, @activity_frame)
+          )}
+        </box>
         <box :if={@question_label != ""} class="pl-2 text-warning">{@question_label}</box>
         <box class={@token_label_class}>{@token_label}</box>
         <box :if={@update_notice} class="pl-2 text-warning">{@update_notice}</box>
@@ -212,20 +220,31 @@ defmodule ReyCode.TUI.Components.MainScreen do
     end
   end
 
-  defp header_context(session, terminal_width, git_branch) do
+  defp header_context(session, terminal_width, git_branch, token_label, status_text) do
+    runtime = primary_runtime(session)
     branch = if is_binary(git_branch), do: "  ·  " <> git_branch, else: ""
 
+    # The header is one terminal line. Reserve space for every other segment
+    # (2-space gutters between inline boxes, px-2 padding, and a safety margin
+    # so sub-glyph rounding never overflows) and let the workspace absorb what
+    # remains. Any overflow splits the priority status segment across rows, so
+    # the margin errs on the generous side.
+    reserved =
+      String.length("ReyCode") + 2 + String.length(runtime) + String.length(branch) +
+        String.length("  ·  ") + String.length(token_label) + 2 +
+        String.length(status_text) + 12
+
     "  ·  " <>
-      primary_runtime(session) <>
+      runtime <>
       branch <>
       "  ·  " <>
-      workspace_context(session.workspace, terminal_width)
+      workspace_context(session.workspace, max(terminal_width - reserved, 20))
   end
 
-  defp workspace_context(path, terminal_width) do
+  defp workspace_context(path, max_length) do
     path
     |> compact_home()
-    |> middle_truncate(max(terminal_width - 18, 20))
+    |> middle_truncate(max(max_length, 20))
   end
 
   defp compact_home(path) do
