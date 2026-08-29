@@ -31,6 +31,15 @@ defmodule ReyCode.TUI.AttentionTest do
     assert Attention.new_approval_ids(empty, malformed) == MapSet.new()
   end
 
+  test "notify is silent without new approvals and signals once with a new approval" do
+    empty = %{invocations: %{}}
+    waiting = projection("run-1", :waiting_tool_approval)
+
+    assert Attention.notify(empty, empty, fn -> true end) == :ok
+    assert Attention.notify(waiting, waiting, fn -> true end) == :ok
+    assert Attention.notify(empty, %{}) == :ok
+  end
+
   defp projection(request_id, status),
     do: %{invocations: %{"inv-1" => invocation(request_id, status)}}
 

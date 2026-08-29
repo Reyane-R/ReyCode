@@ -370,6 +370,22 @@ defmodule ReyCode.ToolExecutionTest do
 
       refute File.exists?(path)
     end
+
+    test "fails closed when the target parent is a file" do
+      blocker = Path.join(@workspace, "blocker")
+      File.write!(blocker, "x")
+
+      assert %Result{ok: false, error: :enotdir} =
+               run("write", %{path: Path.join(blocker, "child.txt"), content: "x"})
+    end
+
+    test "fails closed when the target is a directory" do
+      directory = Path.join(@workspace, "target-dir")
+      File.mkdir_p!(directory)
+
+      assert %Result{ok: false, error: :eisdir} =
+               run("write", %{path: directory, content: "x"})
+    end
   end
 
   describe "edit" do

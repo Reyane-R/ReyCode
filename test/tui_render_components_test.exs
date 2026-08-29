@@ -133,6 +133,26 @@ defmodule ReyCode.TUI.RenderComponentsTest do
 
     assert screen =~ "✓ · Completed"
     refute screen =~ long_workspace
+
+    detached_dir =
+      Path.join(System.tmp_dir!(), "rey-code-detached-\#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(detached_dir, ".git"))
+    File.write!(Path.join(detached_dir, ".git/HEAD"), "0123456789abcdef0123456789abcdef\n")
+    on_exit(fn -> File.rm_rf!(detached_dir) end)
+
+    projection =
+      put_in(projection, [:sessions, session_id, Access.key(:workspace)], detached_dir)
+
+    next_sequence = Breeze.Test.metadata(session).assigns.projection.sequence + 1
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(
+               session,
+               {:projection_snapshot, %{projection | sequence: next_sequence}}
+             )
+
+    assert session |> Breeze.Test.render!() |> plain() =~ "⑂ detached"
   end
 
   defp ctrl(key), do: %{"ctrlKey" => true, "key" => key}

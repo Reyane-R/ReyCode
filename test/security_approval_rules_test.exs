@@ -63,6 +63,63 @@ defmodule ReyCode.Security.ApprovalRulesTest do
     assert ToolRegistry.authorization(%{tool: "unknown", arguments: %{}}, workspace) == :denied
   end
 
+  test "oversized, non-regular, unreadable, and empty rule files fail closed", %{
+    workspace: workspace
+  } do
+    path = rules_path(workspace)
+
+    File.write!(path, String.duplicate("x", 20_000))
+    assert {:error, :too_large} = ApprovalRules.load(workspace)
+
+    File.rm_rf!(Path.join(workspace, ".reycode/approval_rules.json"))
+    File.mkdir_p!(path)
+    assert {:error, :not_regular} = ApprovalRules.load(workspace)
+    File.rmdir!(path)
+
+    File.write!(path, Jason.encode!(document(["git status"])))
+    File.chmod!(path, 0o000)
+    assert {:error, reason} = ApprovalRules.load(workspace)
+    assert reason in [:eacces, :eperm]
+    File.chmod!(path, 0o644)
+
+    File.write!(path, "")
+    assert {:error, :invalid_json} = ApprovalRules.load(workspace)
+  end
+
+  test "non-string, untrimmed, oversized, and wildcard-violating patterns fail closed", %{
+    workspace: workspace
+  } do
+    for bad_patterns <- [
+          ["git status", 7],
+          [" git status "],
+          [String.duplicate("x", 257)],
+          ["mix * test"],
+          ["a**b"],
+          ["rm -rf ;"]
+        ] do
+      write_rules(workspace, bad_patterns)
+      assert {:error, :invalid_schema} = ApprovalRules.load(workspace)
+    end
+
+    assert {:error, :invalid_schema} = ApprovalRules.load(nil)
+  end
+
+  test "schema shape violations fail closed", %{workspace: workspace} do
+    path = rules_path(workspace)
+
+    for body <- [
+          "[1, 2]",
+          ~s({"version": 2, "allow": {"bash": ["git status"]}}),
+          ~s({"version": 1, "allow": {"bash": ["git status"]}, "extra": true}),
+          ~s({"version": 1}),
+          ~s({"allow": {"bash": ["git status"]}}),
+          ~s({"version": 1, "allow": {}})
+        ] do
+      File.write!(path, body)
+      assert {:error, :invalid_schema} = ApprovalRules.load(workspace)
+    end
+  end
+
   defp call(command), do: %{tool: "bash", arguments: %{"command" => command}}
 
   defp write_rules(workspace, patterns) do

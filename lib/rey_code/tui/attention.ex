@@ -13,9 +13,9 @@ defmodule ReyCode.TUI.Attention do
   end
 
   @doc "Signals the terminal once when the current projection introduces an approval."
-  @spec notify(map(), map()) :: :ok
-  def notify(previous, current) do
-    if MapSet.size(new_approval_ids(previous, current)) > 0 and terminal?() do
+  @spec notify(map(), map(), (-> boolean())) :: :ok
+  def notify(previous, current, terminal? \\ &terminal?/0) do
+    if MapSet.size(new_approval_ids(previous, current)) > 0 and terminal?.() do
       IO.write(:stderr, "\a")
     end
 

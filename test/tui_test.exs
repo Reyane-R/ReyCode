@@ -94,6 +94,14 @@ defmodule ReyCode.TUITest do
 
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowDown")
     assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "scratch"
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "previous prompt"
+
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowDown")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "ArrowDown")
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "scratch"
   end
 
   test "fuzzy file mention completion inserts the selected workspace path" do
@@ -102,7 +110,26 @@ defmodule ReyCode.TUITest do
 
     File.mkdir_p!(Path.join(workspace, "lib"))
     File.write!(Path.join(workspace, "lib/fuzzy_target.ex"), "value = 1\n")
-    on_exit(fn -> File.rm_rf!(workspace) end)
+    File.write!(Path.join(workspace, "lib/my spaced file.ex"), "value = 2\n")
+    File.mkdir_p!(Path.join(workspace, "sealed"))
+    File.chmod!(Path.join(workspace, "sealed"), 0)
+    bulk = Path.join(workspace, "bulk")
+    File.mkdir_p!(bulk)
+
+    Enum.each(1..2010, fn index ->
+      File.write!(Path.join(bulk, "bulk-\#{index}.txt"), "x")
+    end)
+
+    :ok =
+      :file.make_symlink(
+        to_charlist("elsewhere"),
+        to_charlist(Path.join(workspace, "dangling"))
+      )
+
+    on_exit(fn ->
+      File.chmod!(Path.join(workspace, "sealed"), 0o755)
+      File.rm_rf!(workspace)
+    end)
 
     %{engine: engine} = start_isolated_stack(workspace_roots: [workspace])
     assert {:ok, session_id} = Engine.create_blank_session("File completion", workspace, engine)
@@ -118,6 +145,12 @@ defmodule ReyCode.TUITest do
     metadata = Breeze.Test.metadata(session)
     assert metadata.assigns.modal == nil
     assert metadata.assigns.drafts[session_id] == "Read @lib/fuzzy_target.ex "
+
+    type(session, " Fix @my")
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Tab")
+
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] ==
+             "Read @lib/fuzzy_target.ex  Fix @\"lib/my spaced file.ex\" "
   end
 
   test "/new starts another clean durable session" do
@@ -575,6 +608,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ "@@ patch 1 @@"
     assert screen =~ "-hello"
     assert screen =~ "+hello world"
+    assert screen =~ "no-change line"
 
     assert screen =~ "✓"
   end
@@ -1620,7 +1654,7 @@ defmodule ReyCode.TUITest do
             "truncated" => false,
             "metadata" => %{
               "_tui_diff" => %{
-                "lines" => ["@@ patch 1 @@", "-hello", "+hello world"],
+                "lines" => ["@@ patch 1 @@", "-hello", "no-change line", "+hello world"],
                 "truncated" => false
               }
             }

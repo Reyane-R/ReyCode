@@ -39,6 +39,8 @@ defmodule ReyCode.CLI.Run do
   @doc "Runs the command and returns already-rendered stdout or stderr content."
   @spec execute([String.t()], keyword()) :: {:ok, String.t()} | {:error, String.t()}
   def execute(argv, opts \\ []) do
+    runner = Keyword.get(opts, :runner, &OneShot.run/2)
+
     with {:ok, options} <- parse(argv, opts),
          {:ok, engine} <- engine(opts) do
       run_options = %{
@@ -47,23 +49,21 @@ defmodule ReyCode.CLI.Run do
         timeout_ms: options.timeout_ms
       }
 
-      run_options
-      |> OneShot.run(engine)
-      |> render(options.json?)
+      render(runner.(run_options, engine), options.json?)
     end
   end
 
   @doc false
-  @spec main([String.t()]) :: no_return()
-  def main(argv) do
-    case execute(argv) do
+  @spec main([String.t()], (non_neg_integer() -> no_return()), keyword()) :: no_return()
+  def main(argv, halt \\ &System.halt/1, opts \\ []) do
+    case execute(argv, opts) do
       {:ok, output} ->
         IO.puts(output)
-        System.halt(0)
+        halt.(0)
 
       {:error, output} ->
         IO.puts(:stderr, output)
-        System.halt(1)
+        halt.(1)
     end
   end
 
