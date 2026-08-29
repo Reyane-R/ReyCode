@@ -131,6 +131,20 @@ defmodule ReyCode.TUI.Activity do
     |> Enum.join(" · ")
   end
 
+  @doc """
+  Renders the ambient header status without the participant target.
+
+  The target names the owning Participant, which the invocation row already
+  shows directly below; dropping it keeps the one-row header budget bounded.
+  """
+  @spec header_text(Item.t() | nil, String.t()) :: String.t()
+  def header_text(item, frame) do
+    case item do
+      nil -> ""
+      %Item{} = item -> text(%{item | target: nil}, frame)
+    end
+  end
+
   @doc "Returns a semantic color class suffix for an item."
   @spec color(Item.t() | nil) :: String.t()
   def color(%Item{state: :terminal, outcome: outcome}) when outcome in [:failed, :cancelled],
