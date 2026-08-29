@@ -78,7 +78,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     }
 
     long_workspace =
-      "/home/runner/work/" <>
+      "/opt/reycode-work/" <>
         Enum.map_join(1..10, "", &"directory-level-#{&1}/") <> "ReyCode"
 
     invocation = %{
@@ -153,6 +153,18 @@ defmodule ReyCode.TUI.RenderComponentsTest do
              )
 
     assert session |> Breeze.Test.render!() |> plain() =~ "⑂ detached"
+
+    checkout = File.cwd!()
+    projection = put_in(projection, [:sessions, session_id, Access.key(:workspace)], checkout)
+    next_sequence = Breeze.Test.metadata(session).assigns.projection.sequence + 1
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(
+               session,
+               {:projection_snapshot, %{projection | sequence: next_sequence}}
+             )
+
+    assert session |> Breeze.Test.render!() |> plain() =~ "⑂ "
   end
 
   defp ctrl(key), do: %{"ctrlKey" => true, "key" => key}
