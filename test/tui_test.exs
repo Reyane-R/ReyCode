@@ -113,12 +113,6 @@ defmodule ReyCode.TUITest do
     File.write!(Path.join(workspace, "lib/my spaced file.ex"), "value = 2\n")
     File.mkdir_p!(Path.join(workspace, "sealed"))
     File.chmod!(Path.join(workspace, "sealed"), 0)
-    bulk = Path.join(workspace, "bulk")
-    File.mkdir_p!(bulk)
-
-    Enum.each(1..2010, fn index ->
-      File.write!(Path.join(bulk, "bulk-\#{index}.txt"), "x")
-    end)
 
     :ok =
       :file.make_symlink(
