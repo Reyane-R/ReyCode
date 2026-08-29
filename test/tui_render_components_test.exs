@@ -165,6 +165,29 @@ defmodule ReyCode.TUI.RenderComponentsTest do
              )
 
     assert session |> Breeze.Test.render!() |> plain() =~ "⑂ "
+
+    long_ref_dir =
+      Path.join(System.tmp_dir!(), "rey-code-longref-\#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(Path.join(long_ref_dir, ".git"))
+
+    File.write!(
+      Path.join(long_ref_dir, ".git/HEAD"),
+      "ref: refs/heads/feature/session-capability-pass\n"
+    )
+
+    on_exit(fn -> File.rm_rf!(long_ref_dir) end)
+
+    projection = put_in(projection, [:sessions, session_id, Access.key(:workspace)], long_ref_dir)
+    next_sequence = Breeze.Test.metadata(session).assigns.projection.sequence + 1
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(
+               session,
+               {:projection_snapshot, %{projection | sequence: next_sequence}}
+             )
+
+    assert session |> Breeze.Test.render!() |> plain() =~ "⑂ feature/..."
   end
 
   defp ctrl(key), do: %{"ctrlKey" => true, "key" => key}
