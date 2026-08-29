@@ -24,6 +24,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :notice, :any, required: true
   attr :budget_notice, :any, required: true
   attr :token_label_class, :string, required: true
+  attr :update_notice, :string, required: true
 
   attr :terminal_width, :integer, required: true
   attr :terminal_height, :integer, required: true
@@ -32,7 +33,12 @@ defmodule ReyCode.TUI.Components.MainScreen do
     ~H"""
     <box :if={@modal in [nil, :slash]} class="w-screen h-screen bg">
       <box class={content_class(@home)}>
-        <.home_panel :if={@home} session={@session} recent_session_rows={@recent_session_rows}/>
+        <.home_panel
+          :if={@home}
+          session={@session}
+          recent_session_rows={@recent_session_rows}
+          update_notice={@update_notice}
+        />
         <.session_header
           :if={session_visible?(@home)}
           session={@session}
@@ -40,6 +46,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           activity_frame={@activity_frame}
           git_branch={@git_branch}
           question_label={@question_label}
+          update_notice={@update_notice}
           token_label={@token_label}
           token_label_class={@token_label_class}
           terminal_width={@terminal_width}
@@ -60,12 +67,14 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   attr :session, :map, required: true
   attr :recent_session_rows, :list, required: true
+  attr :update_notice, :string, required: true
 
   defp home_panel(assigns) do
     ~H"""
     <box class="h-full w-full px-4 pt-2 overflow-hidden">
       <box class="font-bold text-primary">Welcome to ReyCode</box>
       <box class="text-muted">One assistant by default. Task agents run only when you delegate.</box>
+      <box :if={@update_notice} class="pt-1 text-warning">{@update_notice}</box>
       <box class="pt-1 font-bold">Primary assistant</box>
       <box class="text-muted">{primary_summary(@session)}</box>
       <box class="pt-1 font-bold">Quick start</box>
@@ -95,7 +104,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :activity_frame, :string, required: true
   attr :git_branch, :any, required: true
   attr :question_label, :string, required: true
-  attr :token_label, :string, required: true
+  attr :update_notice, :string, required: true
   attr :token_label_class, :string, required: true
   attr :terminal_width, :integer, required: true
 
@@ -107,6 +116,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box class="text-muted">{header_context(@session, @terminal_width, @git_branch)}</box>
         <box :if={@question_label != ""} class="pl-2 text-warning">{@question_label}</box>
         <box class={@token_label_class}>{@token_label}</box>
+        <box :if={@update_notice} class="pl-2 text-warning">{@update_notice}</box>
         <box class={session_status_class(@activity.header)}>
           {Activity.text(@activity.header, @activity_frame)}
         </box>

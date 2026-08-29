@@ -110,6 +110,23 @@ A second instance against the same store fails closed with `database is
 locked`. Quit the first instance with `Ctrl+Q`, or run a throwaway instance in
 isolation by launching it under a different `$HOME`.
 
+## Updates
+
+Release builds check GitHub for a newer published release once at startup —
+one bounded request, never from source checkouts, disable with
+`REYCODE_TUI_UPDATE_CHECK=false`. When a newer release exists, the welcome
+screen and session header show "Update available: 0.1.0 → 0.2.0 — run
+reycode update".
+
+`reycode update` re-runs the installer for the latest release and replaces
+`~/.reycode` in place; pin a version by exporting `REYCODE_VERSION` first.
+Sessions keep their durable event store across updates — data lives in the
+platform data directory, never inside the install.
+
+To ship an update: bump `version` in `mix.exs`, commit, then
+`git tag vX.Y.Z && git push origin vX.Y.Z`. CI builds all four platforms and
+publishes the release; users see the notice on their next session start.
+
 
 
 ## Run

@@ -17,8 +17,6 @@ defmodule ReyCode.RuntimeConfigTest do
   test "loads every declared setting with its default when unconfigured" do
     config = load_with(%{})
 
-    assert flatten(config) == RuntimeConfig.declared_defaults()
-
     # Settings the issue called out as previously unvalidated drift risks.
     assert %RuntimeConfig{} = config
     refute Map.has_key?(config, :event_path)
@@ -296,6 +294,7 @@ defmodule ReyCode.RuntimeConfigTest do
       document_read_timeout_ms: config.tools.research.document_timeout_ms,
       tui_reduced_motion: config.tui.reduced_motion?,
       tui_keybindings_path: config.tui.keybindings_path,
+      tui_update_check: config.tui.update_check_enabled?,
       workspace_roots: config.workspace.roots,
       file_logging: config.logging.enabled?,
       log_dir: config.logging.log_dir

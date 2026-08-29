@@ -27,6 +27,7 @@ defmodule ReyCode.TUI.Render do
       slash_style={@slash_style}
       git_branch={@git_branch}
       question_label={@question_label}
+      update_notice={@update_notice}
       token_label_class={@token_label_class}
       token_label={@token_label}
       terminal_width={@breeze.terminal.width}

@@ -318,6 +318,10 @@ defmodule ReyCode.TUI do
   end
 
   @impl true
+  def handle_info({:update_available, notice}, term) when is_binary(notice) do
+    {:noreply, assign(term, update_notice: notice)}
+  end
+
   def handle_info({:projection_snapshot, projection}, term) do
     {:noreply, State.projection_updated(term, projection)}
   end

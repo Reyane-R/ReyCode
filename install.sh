@@ -70,6 +70,18 @@ mv "${tmp}/reycode-${VERSION#v}" "$INSTALL_DIR"
 
 cat > "${BIN_DIR}/reycode" <<EOF
 #!/bin/sh
+if [ "\$1" = "update" ]; then
+  update_script=\$(mktemp)
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -H "User-Agent: reycode-update" "https://raw.githubusercontent.com/${REPO}/main/install.sh" -o "\$update_script"
+  else
+    wget -qO "\$update_script" --header="User-Agent: reycode-update" "https://raw.githubusercontent.com/${REPO}/main/install.sh"
+  fi
+  sh "\$update_script"
+  status=\$?
+  rm -f "\$update_script"
+  exit \$status
+fi
 if [ \$# -eq 0 ]; then
   set -- start
 fi

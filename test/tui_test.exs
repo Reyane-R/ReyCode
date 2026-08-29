@@ -422,6 +422,18 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Tab")
   end
 
+  test "startup announces newer published releases with the update command" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    notice = "Update available: 0.1.0 → v9.9.9 · run `reycode update`"
+    assert {:noreply, _focused} = Breeze.Test.info(session, {:update_available, notice})
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Update available: 0.1.0 → v9.9.9 · run `reycode update`"
+  end
+
   test "exposes only session-level global shortcuts" do
     keys = Enum.map(ReyCode.TUI.global_keybindings(), &elem(&1, 0))
 

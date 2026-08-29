@@ -4,6 +4,8 @@ defmodule ReyCode.TUI.State do
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, ModelTier}
   alias ReyCode.Provider.{Catalog, Presentation}
+  alias ReyCode.RuntimeConfig
+  alias ReyCode.Update
 
   alias ReyCode.TUI.{
     Activity,
@@ -37,6 +39,8 @@ defmodule ReyCode.TUI.State do
     projection = Engine.subscribe(engine)
     catalog_snapshot = Catalog.subscribe(provider_catalog)
     keybindings = ReyCode.TUI.resolved_keybindings(config)
+
+    maybe_check_updates(self(), config)
 
     now_ms = System.system_time(:millisecond)
 
@@ -85,6 +89,7 @@ defmodule ReyCode.TUI.State do
         animation_now_ms: now_ms,
         animation_style: Keyword.get(opts, :animation_style, Spinner.style()),
         keybindings: keybindings,
+        update_notice: nil,
         notice: nil
       )
 
@@ -134,6 +139,7 @@ defmodule ReyCode.TUI.State do
       draft: Map.get(assigns.drafts, assigns.selected_session_id, ""),
       git_branch: git_branch(session && session.workspace),
       question_label: question_label(session, assigns.projection),
+      update_notice: Map.get(assigns, :update_notice),
       token_label: token_label(session, assigns.projection, assigns.config, budget),
       token_label_class: token_label_class(budget),
       budget_notice: budget_notice(budget),
@@ -557,6 +563,19 @@ defmodule ReyCode.TUI.State do
 
   defp animation_schedule(token, delay_ms),
     do: Process.send_after(self(), {:activity_tick, token}, delay_ms)
+
+  @doc """
+  Spawns the release-only update check; `auto?/1` is the injected release gate.
+  """
+  @spec maybe_check_updates(pid(), RuntimeConfig.t(), (RuntimeConfig.TUI.t() -> boolean())) ::
+          :ok
+  def maybe_check_updates(parent, config, auto? \\ &Update.auto_check?/1) do
+    if auto?.(config.tui) do
+      Task.start(fn -> Update.notify_when_newer(parent, config) end)
+    end
+
+    :ok
+  end
 
   defp animation_cancel(nil), do: false
   defp animation_cancel(timer_ref), do: Process.cancel_timer(timer_ref)
