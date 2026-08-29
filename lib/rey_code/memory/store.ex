@@ -24,9 +24,10 @@ defmodule ReyCode.Memory.Store do
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
-    case Keyword.get(opts, :name) do
-      nil -> GenServer.start_link(__MODULE__, opts)
-      name -> GenServer.start_link(__MODULE__, opts, name: name)
+    case Keyword.fetch(opts, :name) do
+      :error -> GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+      {:ok, nil} -> GenServer.start_link(__MODULE__, opts)
+      {:ok, name} -> GenServer.start_link(__MODULE__, opts, name: name)
     end
   end
 

@@ -36,6 +36,10 @@ defmodule ReyCode.Memory.StoreTest do
     assert memory.key == "build"
   end
 
+  test "application default store registers the production name" do
+    assert is_pid(Process.whereis(Store))
+  end
+
   test "lists typed decisions and assumptions including invalidated current state" do
     path =
       Path.join(
