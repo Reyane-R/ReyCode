@@ -544,7 +544,7 @@ defmodule ReyCode.TUITest do
 
   test "wraps long responses without transcript rails or excess turn spacing" do
     %{engine: tui_engine_10} = start_isolated_stack([])
-    session = start_session({120, 32}, engine: tui_engine_10)
+    session = start_session({120, 44}, engine: tui_engine_10)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     push_projection(session, long_response_projection(session))

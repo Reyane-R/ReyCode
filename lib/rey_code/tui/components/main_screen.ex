@@ -186,17 +186,17 @@ defmodule ReyCode.TUI.Components.MainScreen do
       >
         No matching commands
       </box>
-      <box
-        :if={@slash_rows == [] and @slash_empty_label == "No matching files"}
-        class="w-full px-1 text-muted"
-      >
+      <box :if={@slash_rows == [] and @slash_empty_label == "No matching files"}>
         No matching files
       </box>
     </box>
     """
   end
 
-  defp session_status_class(item), do: "w-full text-right text-#{Activity.color(item)}"
+  # Inline (not w-full): inside the header's inline flow a w-full box only
+  # receives the leftover width, so a long status would wrap into fragments
+  # and spill out of the fixed-height header box.
+  defp session_status_class(item), do: "text-#{Activity.color(item)}"
 
   defp composer_input_class(nil, nil),
     do: "w-full h-4 border focus:border-primary bg-surface"

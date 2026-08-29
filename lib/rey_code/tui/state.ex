@@ -203,9 +203,21 @@ defmodule ReyCode.TUI.State do
 
   defp git_branch(workspace) do
     case File.read(Path.join(workspace, ".git/HEAD")) do
-      {:ok, "ref: refs/heads/" <> branch} -> "⑂ " <> String.trim(branch)
+      {:ok, "ref: refs/heads/" <> branch} -> "⑂ " <> middle_truncate(String.trim(branch), 20)
       {:ok, _detached} -> "⑂ detached"
       _other -> nil
+    end
+  end
+
+  defp middle_truncate(value, max_length) do
+    if String.length(value) <= max_length do
+      value
+    else
+      left_length = div(max_length - 3, 2)
+      right_length = max_length - 3 - left_length
+
+      String.slice(value, 0, left_length) <>
+        "..." <> String.slice(value, -right_length, right_length)
     end
   end
 
