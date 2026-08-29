@@ -560,10 +560,6 @@ defmodule ReyCode.TUITest do
     user_line = Enum.find_index(lines, &String.contains?(&1, "You  ·"))
     assistant_line = Enum.find_index(lines, &String.contains?(&1, "Assistant  ·"))
 
-    if is_nil(user_line) do
-      IO.puts("\n===== CI-DEBUG SCREEN START =====\n#{screen}\n===== CI-DEBUG SCREEN END =====")
-    end
-
     assert Enum.all?(lines, &(String.length(&1) <= 120))
     assert Enum.count(lines, &String.contains?(&1, "responses must wrap")) >= 3
     refute Enum.any?(lines, &String.contains?(&1, "│ You"))
