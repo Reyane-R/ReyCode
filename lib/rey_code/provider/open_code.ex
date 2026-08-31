@@ -29,6 +29,15 @@ defmodule ReyCode.Provider.OpenCode do
       {:error, {:executable_unavailable, reason}} ->
         {:error, error(:invalid_executable, "OpenCode executable is unavailable: #{reason}")}
 
+      {:error, :workspace_outside_policy} ->
+        {:error,
+         error(
+           :invalid_workspace,
+           "Workspace #{request.workspace} is outside ReyCode's trusted roots. " <>
+             "ReyCode only runs sessions inside REYCODE_WORKSPACE_ROOTS: add this " <>
+             "project's parent directory there (comma-separated) and restart."
+         )}
+
       {:error, reason} ->
         {:error, error(:invalid_workspace, "OpenCode workspace is invalid: #{reason}")}
     end

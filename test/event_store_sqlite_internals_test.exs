@@ -7,6 +7,7 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
   use ExUnit.Case, async: true
 
   alias Exqlite.Sqlite3
+  alias ReyCode.EventStore.SQLite
   alias ReyCode.EventStore.SQLite.{Backup, Checkpoint, Migrations, Sql}
   alias ReyCode.{Failure, Hashing}
 
@@ -284,6 +285,18 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
 
       assert {:error, _reason} = Backup.verify_path(not_a_database)
       File.rm_rf!(directory)
+    end
+  end
+
+  describe "lock classification" do
+    test "recognizes busy binaries and atoms from any connection holder" do
+      assert SQLite.database_locked?("database is locked")
+      assert SQLite.database_locked?("database table is locked")
+      assert SQLite.database_locked?(:busy)
+      assert SQLite.database_locked?(:locked)
+      refute SQLite.database_locked?("no such table: events")
+      refute SQLite.database_locked?(:enoent)
+      refute SQLite.database_locked?(nil)
     end
   end
 

@@ -28,8 +28,18 @@ defmodule Mix.Tasks.ReyCode.Store do
     result = operation(args, path, opts)
 
     case result do
-      {:ok, report} -> Mix.shell().info(Jason.encode!(report, pretty: true))
-      {:error, reason} -> Mix.raise("Store operation failed: #{inspect(reason)}")
+      {:ok, report} ->
+        Mix.shell().info(Jason.encode!(report, pretty: true))
+
+      {:error, {:database_locked, path}} ->
+        Mix.raise(
+          "The store at #{path} is locked by another ReyCode instance. " <>
+            "Quit that instance (Ctrl+Q in its terminal) and retry, " <>
+            "or pass --path to a different database."
+        )
+
+      {:error, reason} ->
+        Mix.raise("Store operation failed: #{inspect(reason)}")
     end
   end
 

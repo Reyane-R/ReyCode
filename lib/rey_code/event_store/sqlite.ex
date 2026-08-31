@@ -31,6 +31,22 @@ defmodule ReyCode.EventStore.SQLite do
 
   def close(%{connection: connection}), do: Sqlite3.close(connection)
 
+  @doc """
+  Whether an open/PRAGMA failure means another process holds the store.
+
+  Exqlite surfaces SQLite busy states as `"database is locked"` binaries or
+  `:busy`/`:locked` atoms; the store's EXCLUSIVE locking mode turns any
+  concurrent holder into one of these.
+  """
+  @spec database_locked?(term()) :: boolean()
+  def database_locked?(:busy), do: true
+  def database_locked?(:locked), do: true
+
+  def database_locked?(reason) when is_binary(reason),
+    do: String.contains?(String.downcase(reason), ["locked", "busy"])
+
+  def database_locked?(_reason), do: false
+
   def load(%{connection: connection}) do
     sql = """
     SELECT payload
@@ -172,9 +188,12 @@ defmodule ReyCode.EventStore.SQLite do
       {:ok, state} ->
         {:ok, state}
 
-      {:error, _reason} = error ->
+      {:error, reason} ->
         _ = Sqlite3.close(connection)
-        error
+
+        if database_locked?(reason),
+          do: {:error, {:database_locked, path}},
+          else: {:error, reason}
     end
   rescue
     error ->

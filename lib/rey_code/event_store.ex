@@ -16,6 +16,8 @@ defmodule ReyCode.EventStore do
 
   use GenServer
 
+  require Logger
+
   alias ReyCode.Event
   alias ReyCode.{EventStore.LegacyNDJSON, EventStore.SQLite, RuntimeConfig}
   alias ReyCode.Security.CanonicalPath
@@ -194,6 +196,18 @@ defmodule ReyCode.EventStore do
             release_ownership(ownership_key)
             {:stop, reason}
         end
+
+      {:error, {:database_locked, path} = reason} ->
+        release_ownership(ownership_key)
+
+        Logger.error(
+          "Another ReyCode instance is already running against #{path}. " <>
+            "Only one instance may use a data directory: quit the running one " <>
+            "with Ctrl+Q in its terminal, or start this one with a different " <>
+            "data directory (REYCODE_DATA_DIR)."
+        )
+
+        {:stop, reason}
 
       {:error, reason} ->
         release_ownership(ownership_key)
