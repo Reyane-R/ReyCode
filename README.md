@@ -113,7 +113,7 @@ Linux x86_64/arm64), extracts it to `~/.reycode`, and puts a `reycode` launcher
 in `~/.local/bin`. Pin or relocate with environment variables:
 
 ```sh
-REYCODE_VERSION=v0.1.3 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
+REYCODE_VERSION=v0.2.0 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
   sh install.sh   # from a repository checkout
 ```
 
