@@ -25,7 +25,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     metadata = Breeze.Test.metadata(session)
     assert metadata.assigns.home == true
     assert metadata.assigns.drafts[session_id] == ""
-    assert Breeze.Test.render!(session) =~ "Welcome to ReyCode"
+    assert Breeze.Test.render!(session) =~ "OPERATOR INSTRUMENT"
   end
 
   test "session header keeps the priority status on one line with a long workspace" do
@@ -132,6 +132,11 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     screen = session |> Breeze.Test.render!() |> plain()
 
     assert screen =~ "✓ · Completed"
+    assert screen =~ "EVT "
+    assert screen =~ "TURN BUDGET TERMINAL"
+    assert screen =~ "INV 01/01"
+    assert screen =~ "GATE CLEAR"
+    assert screen =~ "OUT COMPLETED"
     refute screen =~ long_workspace
 
     detached_dir =

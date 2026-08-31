@@ -155,8 +155,9 @@ defmodule ReyCode.TUI.Activity do
   def color(%Item{state: :terminal, outcome: outcome}) when outcome in [:partial, :reworked],
     do: "warning"
 
-  def color(%Item{state: :idle}), do: "success"
-  def color(%Item{state: state}) when state in [:active, :blocked, :queued], do: "warning"
+  def color(%Item{state: :idle}), do: "muted"
+  def color(%Item{state: :active}), do: "primary"
+  def color(%Item{state: state}) when state in [:blocked, :queued], do: "warning"
   def color(_item), do: "muted"
 
   @doc "Returns the compact semantic badge used beside a message author."

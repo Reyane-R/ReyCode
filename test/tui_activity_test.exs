@@ -493,8 +493,12 @@ defmodule ReyCode.TUI.ActivityTest do
     }
 
     partial = %{failed | id: "partial", label: "Partial", outcome: :partial}
+    active = %{failed | id: "active", state: :active, outcome: nil}
+    idle = %{failed | id: "idle", state: :idle, outcome: nil}
     assert Activity.color(failed) == "error"
     assert Activity.color(partial) == "warning"
+    assert Activity.color(active) == "primary"
+    assert Activity.color(idle) == "muted"
     assert Activity.color(nil) == "muted"
 
     {projection, session_id, invocation_id} = fixture(invocation_status: :unknown)

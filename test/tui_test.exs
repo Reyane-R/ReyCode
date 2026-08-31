@@ -30,11 +30,12 @@ defmodule ReyCode.TUITest do
 
     source_session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     screen = Breeze.Test.render!(session)
-    assert screen =~ "Welcome to ReyCode"
-    assert screen =~ "One assistant by default"
-    assert screen =~ "Recent sessions"
-    assert screen =~ "Ask anything…"
-    assert screen =~ "/ for commands"
+    assert screen =~ "REYCODE"
+    assert screen =~ "OPERATOR INSTRUMENT"
+    assert screen =~ "SYSTEM / PRIMARY PARTICIPANT"
+    assert screen =~ "RECENT SESSIONS"
+    assert screen =~ "Message the Assistant"
+    assert screen =~ "commands"
     refute screen =~ "You  ·"
     refute screen =~ "# reycode"
 
@@ -160,7 +161,7 @@ defmodule ReyCode.TUITest do
 
     type(session, "/new")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
-    assert Breeze.Test.render!(session) =~ "Welcome to ReyCode"
+    assert Breeze.Test.render!(session) =~ "OPERATOR INSTRUMENT"
 
     second_baseline = Engine.snapshot(engine).sequence
     type(session, "Second session message")
@@ -301,8 +302,8 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     screen = Breeze.Test.render!(session)
-    assert screen =~ "Welcome to ReyCode"
-    assert screen =~ "Ask anything…"
+    assert screen =~ "OPERATOR INSTRUMENT"
+    assert screen =~ "Message the Assistant"
 
     type(session, "/")
     palette_screen = Breeze.Test.render!(session)
@@ -510,7 +511,7 @@ defmodule ReyCode.TUITest do
 
     for session <- [medium, wide] do
       screen = Breeze.Test.render!(session)
-      assert screen =~ "Welcome to ReyCode"
+      assert screen =~ "OPERATOR INSTRUMENT"
       refute screen =~ "ROOMS"
       refute screen =~ "Ctrl+N new"
       refute screen =~ "# reycode"
@@ -569,7 +570,7 @@ defmodule ReyCode.TUITest do
     assert Enum.uniq(keys) == keys
   end
 
-  test "wraps long responses without transcript rails or excess turn spacing" do
+  test "wraps long responses with instrument rails and bounded turn spacing" do
     %{engine: tui_engine_10} = start_isolated_stack([])
     session = start_session({120, 44}, engine: tui_engine_10)
     on_exit(fn -> Breeze.Test.stop(session) end)
@@ -597,7 +598,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Thinking"
     assert screen =~ ~r/\d+s/
 
-    assert screen =~ "Tool ·"
+    assert screen =~ "TOOL /"
     assert screen =~ "Read · <outside workspace>"
     assert screen =~ "@@ patch 1 @@"
     assert screen =~ "-hello"
@@ -783,8 +784,8 @@ defmodule ReyCode.TUITest do
 
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "+2 more activity"
-    assert screen =~ "· reasoning step 3"
-    assert screen =~ "· reasoning step 5"
+    assert screen =~ "NOTE / reasoning step 3"
+    assert screen =~ "NOTE / reasoning step 5"
     refute screen =~ "reasoning step 1"
   end
 
@@ -814,7 +815,7 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
 
     screen = session |> Breeze.Test.render!() |> plain()
-    assert screen =~ "Tool ·"
+    assert screen =~ "TOOL /"
     assert screen =~ "Delegating · Luna"
   end
 

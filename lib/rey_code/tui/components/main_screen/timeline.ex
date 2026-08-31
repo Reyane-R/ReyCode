@@ -23,43 +23,51 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
       class="h-full w-full border-none overflow-scroll mute-scrollbar-40 px-2 py-1"
     >
       <box :if={@messages == []} class="pt-4 w-full">
-        <box class="font-bold text-primary">Start a conversation</box>
+        <box class="font-bold text-primary">TIMELINE / STANDBY</box>
         <box class="pt-1 text-muted">Send a message to the Assistant or delegate with /task.</box>
       </box>
       <box :for={item <- @messages} class="w-full">
         <box :if={item.kind == :context_boundary} class="w-full py-1 text-warning">
-          ── Context compacted through sequence {item.created_sequence} · /context inspect ──
-          <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
+          EVENT / CONTEXT COMPACTED / SEQ {item.created_sequence} / /context inspect
+          <box class="pl-2 text-muted">│ {boundary_preview(item.summary)}</box>
         </box>
         <box :if={item.kind == :message} class={message_class(item)}>
           <box class="inline w-full overflow-hidden">
-            <box class={author_name_class(item)}>{item.author.name}</box>
+            <box class={author_name_class(item)}>{author_role(item)} / {item.author.name}</box>
             <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
             <box class={message_status_class(item)}>{message_status(item)}</box>
           </box>
-          <box :if={item.body != ""} class="pl-2 w-full overflow-hidden">
-            <box :for={line <- render_message(item, @message_width)} class="w-full">{line}</box>
+          <box
+            :for={line <- if item.body != "" do
+      render_message(item, @message_width)
+    else
+      []
+    end}
+            class="inline pl-2 w-full overflow-hidden"
+          >
+            <box class="text-muted">│ </box>
+            <box>{line}</box>
           </box>
           <box
             :if={item.body == "" and item.status in [:queued, :streaming]}
             class="pl-2 w-full text-muted"
           >
-            {message_placeholder(item, @activity_frame)}
+            │ {message_placeholder(item, @activity_frame)}
           </box>
           <box :if={item.error} class="pl-2 w-full overflow-hidden text-error">
-            Failed · {error_summary(item.error, @message_width)}
+            └ FAULT / {error_summary(item.error, @message_width)}
           </box>
           <box :if={note_overflow(item) > 0} class="pl-2 w-full text-muted">
-            +{note_overflow(item)} more activity
+            │ +{note_overflow(item)} more activity
           </box>
           <box :for={row <- visible_notes(item)} class="pl-2 w-full overflow-hidden text-muted">
-            · {row}
+            │ NOTE / {row}
           </box>
           <box :for={row <- item.tool_run_rows} class="w-full">
-            <box class={tool_row_class(row)}>Tool · {Activity.text(row, @activity_frame)}</box>
-            <box :for={line <- row.diff_lines} class={diff_line_class(line)}>  {line}</box>
+            <box class={tool_row_class(row)}>├ TOOL / {Activity.text(row, @activity_frame)}</box>
+            <box :for={line <- row.diff_lines} class={diff_line_class(line)}>│   {line}</box>
             <box :if={row.diff_truncated?} class="pl-4 w-full text-muted">
-              … diff preview truncated · /runs inspect arguments
+              │   … diff preview truncated / /runs inspect arguments
             </box>
           </box>
         </box>
@@ -99,6 +107,9 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   defp metadata_label(message), do: "  ·  " <> message_metadata(message)
 
+  defp author_role(%{role: :user}), do: "OPERATOR"
+  defp author_role(_message), do: "PARTICIPANT"
+
   defp message_class(%{role: :user}), do: "w-full pt-1 overflow-hidden"
   defp message_class(_message), do: "w-full overflow-hidden"
 
@@ -107,7 +118,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp author_name_class(%{author: %{id: "critic"}}), do: "font-bold text-warning"
   defp author_name_class(_message), do: "font-bold text-primary"
 
-  defp message_status(%{activity: activity}), do: Activity.badge(activity)
+  defp message_status(%{activity: activity}), do: activity |> Activity.badge() |> String.upcase()
 
   defp message_status_class(%{activity: activity}) do
     "w-full text-right text-#{Activity.color(activity)}"

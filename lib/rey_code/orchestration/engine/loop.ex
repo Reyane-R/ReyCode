@@ -19,6 +19,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
   alias ReyCode.Orchestration.Engine.{
     Admission,
+    DelegationFinalization,
     Identity,
     Lifecycle,
     Persistence,
@@ -244,13 +245,15 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   @doc "Finalizes one invocation as completed."
   @spec complete(map(), term(), term()) :: response()
   def complete(state, invocation_id, metadata) do
-    {:reply, :ok, Lifecycle.finalize_invocation(state, invocation_id, {:completed, metadata})}
+    {:reply, :ok,
+     DelegationFinalization.finalize_invocation(state, invocation_id, {:completed, metadata})}
   end
 
   @doc "Finalizes one invocation as failed."
   @spec fail(map(), term(), term()) :: response()
   def fail(state, invocation_id, error) do
-    {:reply, :ok, Lifecycle.finalize_invocation(state, invocation_id, {:failed, error})}
+    {:reply, :ok,
+     DelegationFinalization.finalize_invocation(state, invocation_id, {:failed, error})}
   end
 
   defp append_pending_frames(state, invocation, pending_frames) do
@@ -891,7 +894,12 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   defp resolve_tool_decision(state, invocation, run, :deny) do
     denial = EventEntries.tool_run_approval_resolved(invocation, run, :deny)
 
-    Lifecycle.finalize_invocation(state, invocation.id, {:failed, tool_denied_error()}, [denial])
+    DelegationFinalization.finalize_invocation(
+      state,
+      invocation.id,
+      {:failed, tool_denied_error()},
+      [denial]
+    )
   end
 
   defp tool_denied_error, do: Failure.new(:tool_denied, "Tool request denied")

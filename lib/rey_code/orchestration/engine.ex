@@ -8,6 +8,7 @@ defmodule ReyCode.Orchestration.Engine do
   alias ReyCode.Orchestration.Projector
 
   alias ReyCode.Orchestration.Engine.{
+    DelegationFinalization,
     Execution,
     Lifecycle,
     Loop,
@@ -304,7 +305,7 @@ defmodule ReyCode.Orchestration.Engine do
     do: Loop.resolve_tool_run(state, invocation_id, run_id, raw_decision)
 
   def handle_call({:resolve_merge, child_invocation_id, decision}, _from, state),
-    do: Lifecycle.resolve_merge(state, child_invocation_id, decision)
+    do: DelegationFinalization.resolve_merge(state, child_invocation_id, decision)
 
   def handle_call({:configure_squad_roles, session_id, role_ids, provider, model}, _from, state),
     do: Sessions.configure_squad_roles(state, session_id, role_ids, provider, model)

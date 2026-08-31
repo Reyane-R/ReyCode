@@ -14,7 +14,7 @@ defmodule ReyCode.Orchestration.Engine.Execution do
   """
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.Engine.{Admission, Lifecycle}
+  alias ReyCode.Orchestration.Engine.{Admission, DelegationFinalization, Lifecycle}
   alias ReyCode.Orchestration.Engine.WorkerExit
 
   @type effect :: :ignore | :release | :requeue | {:fail, Failure.t()}
@@ -88,7 +88,7 @@ defmodule ReyCode.Orchestration.Engine.Execution do
   defp apply_effect(state, _invocation_id, invocation, {:fail, error}) do
     state = Lifecycle.interrupt_started_runs(state, invocation)
 
-    Lifecycle.finalize_invocation(state, invocation.id, {:failed, error})
+    DelegationFinalization.finalize_invocation(state, invocation.id, {:failed, error})
   end
 
   defp apply_effect(state, _invocation_id, _invocation, :ignore), do: state

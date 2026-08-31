@@ -25,6 +25,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :budget_notice, :any, required: true
   attr :token_label_class, :string, required: true
   attr :update_notice, :string, required: true
+  attr :event_rail, :map, required: true
 
   attr :terminal_width, :integer, required: true
   attr :terminal_height, :integer, required: true
@@ -49,6 +50,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           update_notice={@update_notice}
           token_label={@token_label}
           token_label_class={@token_label_class}
+          event_rail={@event_rail}
           terminal_width={@terminal_width}
         />
         <.timeline
@@ -77,28 +79,45 @@ defmodule ReyCode.TUI.Components.MainScreen do
   defp home_panel(assigns) do
     ~H"""
     <box class="h-full w-full px-4 pt-2 overflow-hidden">
-      <box class="font-bold text-primary">Welcome to ReyCode</box>
-      <box class="text-muted">One assistant by default. Task agents run only when you delegate.</box>
-      <box :if={@update_notice} class="pt-1 text-warning">{@update_notice}</box>
-      <box class="pt-1 font-bold">Primary assistant</box>
-      <box class="text-muted">{primary_summary(@session)}</box>
-      <box class="pt-1 font-bold">Quick start</box>
-      <box>/  commands</box>
-      <box>/agent  create a task agent with its own model</box>
-      <box>/advise  run an explicit Advisor review</box>
-      <box>/hub  inspect delegated child Invocations</box>
-      <box>@file  attach a file to your message</box>
-      <box class="pt-1 font-bold">Task agents</box>
+      <box class="inline w-full border-b border-muted pb-1">
+        <box class="font-bold text-primary">REYCODE</box>
+        <box class="pl-2 text-muted">/ OPERATOR INSTRUMENT</box>
+        <box :if={@update_notice} class="w-full text-right text-warning">{@update_notice}</box>
+      </box>
+      <box class="pt-2 text-muted">SYSTEM / PRIMARY PARTICIPANT</box>
+      <box class="font-bold">{primary_summary(@session)}</box>
+      <box class="pt-2 text-muted">CONTROL INDEX</box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">CMD /</box>
+        <box>/  command palette</box>
+      </box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">AGENT /</box>
+        <box>/agent  create a task Participant</box>
+      </box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">REVIEW /</box>
+        <box>/advise  request an Advisor review</box>
+      </box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">HUB /</box>
+        <box>/hub  inspect child Invocations</box>
+      </box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">FILE /</box>
+        <box>@file  attach Workspace context</box>
+      </box>
+      <box class="pt-2 text-muted">TASK PARTICIPANTS / {length(task_participants(@session))}</box>
       <box :if={task_participants(@session) == []} class="text-muted">
-        None yet. Create one only when a repeatable responsibility is worth keeping.
+        STANDBY / Create one when a repeatable responsibility is worth keeping.
       </box>
       <box :for={participant <- task_participants(@session)}>
-        {participant.name}  ·  {Presentation.short_runtime_label(participant)}
+        {participant.name}  /  {Presentation.short_runtime_label(participant)}
       </box>
-      <box class="pt-1 font-bold">Recent sessions</box>
-      <box :if={@recent_session_rows == []} class="text-muted">None yet</box>
+      <box class="pt-2 text-muted">RECENT SESSIONS / {length(@recent_session_rows)}</box>
+      <box :if={@recent_session_rows == []} class="text-muted">STANDBY / No prior activity</box>
       <box :for={session <- @recent_session_rows} class="text-muted">
-        {session.title}  ·  {session.meta}
+        {session.title}  /  {session.meta}
       </box>
     </box>
     """
@@ -109,31 +128,29 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :activity_frame, :string, required: true
   attr :git_branch, :any, required: true
   attr :question_label, :string, required: true
+  attr :event_rail, :map, required: true
   attr :update_notice, :string, required: true
   attr :token_label_class, :string, required: true
   attr :terminal_width, :integer, required: true
 
   defp session_header(assigns) do
     ~H"""
-    <box class="h-3 w-full bg-surface border-b border-muted px-2 pt-1">
-      <box class="inline w-full">
-        <box class="font-bold">ReyCode</box>
+    <box class="h-5 w-full bg-surface border-b border-muted px-2">
+      <box class="inline w-full overflow-hidden">
+        <box class="font-bold text-primary">REYCODE</box>
         <box class="text-muted">
-          {header_context(
-            @session,
-            @terminal_width,
-            @git_branch,
-            @token_label,
-            Activity.header_text(@activity.header, @activity_frame)
-          )}
+          {header_context(@session, @terminal_width, @git_branch, @token_label)}
         </box>
-        <box :if={@question_label != ""} class="pl-2 text-warning">{@question_label}</box>
-        <box class={@token_label_class}>{@token_label}</box>
+        <box class={header_token_class(@token_label_class)}>{@token_label}</box>
         <box :if={@update_notice} class="pl-2 text-warning">{@update_notice}</box>
-        <box class={session_status_class(@activity.header)}>
-          {Activity.header_text(@activity.header, @activity_frame)}
-        </box>
       </box>
+      <.event_rail
+        rail={@event_rail}
+        activity={@activity.header}
+        activity_frame={@activity_frame}
+        question_label={@question_label}
+        terminal_width={@terminal_width}
+      />
     </box>
     """
   end
@@ -144,21 +161,29 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   defp composer(assigns) do
     ~H"""
-    <box class="h-6 w-full bg-surface border-t border-muted px-2 pt-1 overflow-hidden">
+    <box class="h-7 w-full bg-surface border-t border-muted px-2 overflow-hidden">
+      <box class="inline w-full">
+        <box class="text-muted">INPUT / OPERATOR</box>
+        <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="w-full text-right text-muted">
+          READY
+        </box>
+        <box :if={not is_nil(@notice)} class="w-full text-right text-error">ATTENTION</box>
+        <box :if={not is_nil(@budget_notice)} class="w-full text-right text-warning">LIMIT</box>
+      </box>
       <.textarea
         id="prompt"
         textarea-value={@draft}
-        textarea-placeholder="Ask anything…  / for commands  ·  @ for files"
+        textarea-placeholder="Message the Assistant  /  commands  @  files"
         textarea-submit-on-enter={true}
         br-change="prompt_changed"
         br-submit="prompt_submitted"
         class={composer_input_class(@notice, @budget_notice)}
       />
       <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="text-muted">
-        Enter send  ·  Shift+Enter newline  ·  ↑/↓ history
+        ENTER SEND  /  SHIFT+ENTER LINE  /  ↑↓ HISTORY
       </box>
-      <box :if={not is_nil(@notice)} class="text-error">{@notice}</box>
-      <box :if={not is_nil(@budget_notice)} class="text-warning">{@budget_notice}</box>
+      <box :if={not is_nil(@notice)} class="text-error">FAULT / {@notice}</box>
+      <box :if={not is_nil(@budget_notice)} class="text-warning">LIMIT / {@budget_notice}</box>
     </box>
     """
   end
@@ -193,13 +218,36 @@ defmodule ReyCode.TUI.Components.MainScreen do
     """
   end
 
-  # Inline (not w-full): inside the header's inline flow a w-full box only
-  # receives the leftover width, so a long status would wrap into fragments
-  # and spill out of the fixed-height header box.
-  defp session_status_class(item), do: "text-#{Activity.color(item)}"
+  attr :rail, :map, required: true
+  attr :activity, :any, required: true
+  attr :activity_frame, :string, required: true
+  attr :question_label, :string, required: true
+  attr :terminal_width, :integer, required: true
+
+  defp event_rail(assigns) do
+    ~H"""
+    <box class="inline w-full overflow-hidden">
+      <box class="font-bold text-muted">EVT {@rail.sequence}</box>
+      <box class="text-muted">  │  TURN {@rail.turn_id} </box>
+      <box class={@rail.turn_class}>{@rail.turn}</box>
+      <box class="text-muted">  │  INV </box>
+      <box class={@rail.invocation_class}>{@rail.invocations}</box>
+      <box class="text-muted">  │  GATE </box>
+      <box class={@rail.gate_class}>{@rail.gate}</box>
+      <box :if={@terminal_width >= 104} class="text-muted">  │  OUT </box>
+      <box :if={@terminal_width >= 104} class={@rail.outcome_class}>{@rail.outcome}</box>
+      <box :if={@terminal_width >= 120 and @question_label != ""} class="pl-2 text-warning">
+        {@question_label}
+      </box>
+      <box :if={@terminal_width >= 96} class={event_activity_class(@activity)}>
+        {Activity.header_text(@activity, @activity_frame)}
+      </box>
+    </box>
+    """
+  end
 
   defp composer_input_class(nil, nil),
-    do: "w-full h-4 border focus:border-primary bg-surface"
+    do: "w-full h-3 border focus:border-primary bg-surface"
 
   defp composer_input_class(_notice, _budget_notice),
     do: "w-full h-2 border focus:border-primary bg-surface"
@@ -220,25 +268,26 @@ defmodule ReyCode.TUI.Components.MainScreen do
     end
   end
 
-  defp header_context(session, terminal_width, git_branch, token_label, status_text) do
+  defp header_context(session, terminal_width, git_branch, token_label) do
     runtime = primary_runtime(session)
-    branch = if is_binary(git_branch), do: "  ·  " <> git_branch, else: ""
+    branch = if is_binary(git_branch), do: " / " <> git_branch, else: ""
 
     # The header is one terminal line, and Breeze inline boxes abut without
     # gutters. Reserve every other segment's exact length plus a safety
-    # margin; the workspace absorbs the remainder and the floor only holds
-    # when every other segment is already bounded (branch ≤ 20 via State).
+    # margin; the workspace absorbs the remainder.
     reserved =
-      String.length("ReyCode") + String.length(runtime) + String.length(branch) +
-        String.length("  ·  ") + String.length(token_label) +
-        String.length(status_text) + 10
+      String.length("REYCODE") + String.length(runtime) + String.length(branch) +
+        String.length(" / ") + String.length(token_label) + 8
 
-    "  ·  " <>
+    " / " <>
       runtime <>
       branch <>
-      "  ·  " <>
+      " / " <>
       workspace_context(session.workspace, max(terminal_width - reserved, 12))
   end
+
+  defp header_token_class(class), do: "w-full text-right " <> class
+  defp event_activity_class(item), do: "w-full text-right text-#{Activity.color(item)}"
 
   defp workspace_context(path, max_length) do
     path

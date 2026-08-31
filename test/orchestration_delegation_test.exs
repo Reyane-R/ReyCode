@@ -18,6 +18,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
   alias ReyCode.Orchestration.{
     Delegation,
     Engine,
+    EventEntries,
     Invocation,
     Participant,
     Projection,
@@ -25,6 +26,8 @@ defmodule ReyCode.Orchestration.DelegationTest do
     ToolRun,
     Turn
   }
+
+  alias ReyCode.Orchestration.Engine.Lifecycle
 
   alias ReyCode.Provider.{Response, Runtime, ToolCall}
 
@@ -75,6 +78,9 @@ defmodule ReyCode.Orchestration.DelegationTest do
         {"delegated task", round} when round in [0, 1] ->
           child_round(test_pid, request, emit, round)
 
+        {"detached task", round} when round in [0, 1] ->
+          child_round(test_pid, request, emit, round)
+
         {_label, overrun} ->
           overrun(test_pid, overrun)
       end
@@ -92,6 +98,9 @@ defmodule ReyCode.Orchestration.DelegationTest do
         is_nil(directive) ->
           finish_parent(test_pid, request)
 
+        wave?(directive) and round == 0 ->
+          {:ok, Response.new(tool_calls: [wave_call(request.round_index, directive)])}
+
         round == 0 or (round == 1 and spawn_twice?(directive)) ->
           {:ok, Response.new(tool_calls: [spawn_call(request.round_index, directive)])}
 
@@ -103,12 +112,59 @@ defmodule ReyCode.Orchestration.DelegationTest do
     defp spawn_twice?({_agent, brief}),
       do: brief == "twice" or String.starts_with?(brief, "recovery twice")
 
+    # Brief markers freeze optional delegation arguments: "isolate" requests
+    # worktree isolation, "detach" a background turn, "schema" an output
+    # contract the scripted report deliberately honors or violates.
     defp spawn_call(call_index, {agent, brief}) do
-      ToolCall.new("call-spawn-#{call_index}", "spawn_task", %{
-        "agent" => agent,
-        "brief" => brief
+      args =
+        %{"agent" => agent, "brief" => brief}
+        |> put_flag(brief, "isolate")
+        |> put_flag(brief, "detach")
+        |> put_schema(brief)
+
+      ToolCall.new("call-spawn-#{call_index}", "spawn_task", args)
+    end
+
+    # Brief "wave ..." spawns a two-worker wave. The second worker fails
+    # outright unless the brief asks for a schema-violating worker instead.
+    defp wave_call(call_index, {agent, brief}) do
+      tasks =
+        if String.contains?(brief, "schema") do
+          [
+            %{"agent" => agent, "brief" => "wave plain"},
+            %{"agent" => "Nova", "brief" => "wave schema", "output_schema" => report_schema()}
+          ]
+        else
+          [
+            %{"agent" => agent, "brief" => "wave plain"},
+            %{"agent" => "Nova", "brief" => "fail child"}
+          ]
+        end
+
+      ToolCall.new("call-wave-#{call_index}", "spawn_tasks", %{
+        "shared_context" => "wave context",
+        "tasks" => tasks
       })
     end
+
+    defp put_flag(args, brief, flag),
+      do: if(String.contains?(brief, flag), do: Map.put(args, flag, true), else: args)
+
+    defp put_schema(args, brief) do
+      if String.contains?(brief, "schema"),
+        do: Map.put(args, "output_schema", report_schema()),
+        else: args
+    end
+
+    defp report_schema do
+      %{
+        "type" => "object",
+        "required" => ["summary"],
+        "properties" => %{"summary" => %{"type" => "string"}}
+      }
+    end
+
+    defp wave?({_agent, brief}), do: String.contains?(brief, "wave")
 
     defp finish_parent(test_pid, request) do
       send(test_pid, {:tool_result_in_conversation, latest_tool_content(request)})
@@ -242,15 +298,21 @@ defmodule ReyCode.Orchestration.DelegationTest do
     end
 
     defp finish_child(emit, request) do
+      body = child_report_body(request)
+
       # The report body reaches the projection through streamed text frames,
       # exactly as a real provider delivers assistant output.
-      :ok = emit.(Frame.text_delta(request.resume_from + 1, "child report"))
+      :ok = emit.(Frame.text_delta(request.resume_from + 1, body))
 
-      {:ok,
-       Response.new(
-         text: "child report",
-         usage: %{"prompt_tokens" => 3, "completion_tokens" => 5}
-       )}
+      {:ok, Response.new(text: body, usage: %{"prompt_tokens" => 3, "completion_tokens" => 5})}
+    end
+
+    # Briefs carrying "valid json" report schema-conforming output; every
+    # other scripted report is plain text and violates any frozen schema.
+    defp child_report_body(request) do
+      if String.contains?(child_brief(request) || "", "valid json"),
+        do: ~s({"summary":"done"}),
+        else: "child report"
     end
 
     defp latest_tool_content(request) do
@@ -742,6 +804,414 @@ defmodule ReyCode.Orchestration.DelegationTest do
     end
   end
 
+  describe "delegation merge review" do
+    @tag capture_log: true
+    test "applies the isolated patch and resumes the parent once the review is approved" do
+      stack = start_stack()
+      git_workspace(stack.workspace)
+      session_id = new_room(stack)
+      configure_room(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: isolate block merge",
+                 :direct,
+                 @engine
+               )
+
+      assert_receive {:child_waiting, child_inv, child_pid}, 5_000
+      child_workspace = isolated_child_workspace(child_inv)
+      refute child_workspace == stack.workspace
+      File.write!(Path.join(child_workspace, "delegated.txt"), "isolated work")
+
+      send(child_pid, :child_complete)
+
+      review = await_merge_review(child_inv)
+      assert review.arguments["child_invocation_id"] == child_inv
+      assert review.arguments["diff"] =~ "delegated.txt"
+
+      # Malformed decisions are rejected without disturbing the pending review.
+      assert {:error, :invalid_merge_decision} = Engine.resolve_merge(child_inv, "bogus", @engine)
+
+      assert {:error, :merge_review_not_found} =
+               Engine.resolve_merge("inv-never-spawned", :approve, @engine)
+
+      assert %{status: :waiting_tool_approval, pending_tool_review: %{tool: "merge"}} =
+               Engine.snapshot(@engine).invocations[child_inv]
+
+      assert :ok = Engine.resolve_merge(child_inv, :approve, @engine)
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      # The patch landed on the source workspace and the worktree is gone.
+      assert File.read!(Path.join(stack.workspace, "delegated.txt")) == "isolated work"
+      refute File.exists?(child_workspace)
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id, ^child_inv] = snapshot.turns[turn_id].invocation_order
+
+      child = snapshot.invocations[child_inv]
+      assert child.status == :completed
+      assert child.completion_metadata == %{"merge" => "apply"}
+      assert child.execution_context.merge_decision == :apply
+      assert child.pending_tool_review == nil
+
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      assert run.status == :completed
+      assert run.result["output"] == "child report"
+
+      events = EventStore.load(stack.store)
+
+      assert Enum.any?(
+               events,
+               &match?(
+                 %{type: :delegation_merge_resolved, data: %{"decision" => "apply"}},
+                 &1
+               )
+             )
+
+      assert Projector.replay(events) == snapshot
+    end
+
+    @tag capture_log: true
+    test "discards the isolated patch and never touches the source when the review is denied" do
+      stack = start_stack()
+      git_workspace(stack.workspace)
+      session_id = new_room(stack)
+      configure_room(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: isolate block merge",
+                 :direct,
+                 @engine
+               )
+
+      assert_receive {:child_waiting, child_inv, child_pid}, 5_000
+      child_workspace = isolated_child_workspace(child_inv)
+      File.write!(Path.join(child_workspace, "delegated.txt"), "isolated work")
+
+      send(child_pid, :child_complete)
+      await_merge_review(child_inv)
+
+      # The string decision form rides the same validation as the atoms.
+      assert :ok = Engine.resolve_merge(child_inv, "deny", @engine)
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      refute File.exists?(Path.join(stack.workspace, "delegated.txt"))
+      refute File.exists?(child_workspace)
+
+      snapshot = Engine.snapshot(@engine)
+      assert [_parent_id, ^child_inv] = snapshot.turns[turn_id].invocation_order
+
+      child = snapshot.invocations[child_inv]
+      assert child.status == :completed
+      assert child.completion_metadata == %{"merge" => "discard"}
+      assert child.execution_context.merge_decision == :discard
+
+      assert Enum.any?(
+               EventStore.load(stack.store),
+               &match?(
+                 %{type: :delegation_merge_resolved, data: %{"decision" => "discard"}},
+                 &1
+               )
+             )
+    end
+  end
+
+  describe "detached delegation contract" do
+    @tag capture_log: true
+    test "fails an isolated detached child whose report violates its output schema and cleans the worktree" do
+      stack = start_stack()
+      git_workspace(stack.workspace)
+      session_id = new_room(stack)
+      configure_room(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: isolate detach schema",
+                 :direct,
+                 @engine
+               )
+
+      # The parent finishes immediately with a detached receipt; the child owns
+      # its own background turn.
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id] = snapshot.turns[turn_id].invocation_order
+      parent = snapshot.invocations[parent_id]
+
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      assert run.status == :completed
+      assert run.result["output"] == "detached task started"
+
+      %{"turn_id" => detached_turn_id, "invocation_id" => child_inv} = run.result["metadata"]
+
+      assert Wait.terminal_turn(@engine, detached_turn_id).outcome == :failed
+
+      snapshot = Engine.snapshot(@engine)
+      assert snapshot.turns[detached_turn_id].invocation_order == [child_inv]
+
+      child = snapshot.invocations[child_inv]
+      assert child.status == :failed
+      assert child.error.category == :delegation_contract_failed
+      # An isolated child is intercepted by the merge-review gate first; the
+      # gate fails the contract, cleans the worktree, and fails the child.
+      assert child.error.message =~ "Merge review failed"
+      assert child.error.message =~ ":delegation_output_not_json"
+      refute File.exists?(child.execution_context.workspace)
+
+      events = EventStore.load(stack.store)
+
+      assert Enum.any?(
+               events,
+               &match?(%{type: :invocation_failed, data: %{"invocation_id" => ^child_inv}}, &1)
+             )
+
+      assert Projector.replay(events) == snapshot
+    end
+
+    test "fails a detached child without isolation when its report violates its output schema" do
+      stack = start_stack()
+      session_id = new_room(stack)
+      configure_room(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: detach schema",
+                 :direct,
+                 @engine
+               )
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id] = snapshot.turns[turn_id].invocation_order
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      %{"turn_id" => detached_turn_id, "invocation_id" => child_inv} = run.result["metadata"]
+
+      assert Wait.terminal_turn(@engine, detached_turn_id).outcome == :failed
+
+      snapshot = Engine.snapshot(@engine)
+      child = snapshot.invocations[child_inv]
+      assert child.status == :failed
+      assert child.error.category == :delegation_contract_failed
+      assert child.error.message =~ "Detached delegation contract failed"
+      assert child.execution_context.isolation == nil
+      assert Projector.replay(EventStore.load(stack.store)) == snapshot
+    end
+
+    test "completes an isolated detached child with a schema-conforming report and empty worktree" do
+      stack = start_stack()
+      git_workspace(stack.workspace)
+      session_id = new_room(stack)
+      configure_room(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: isolate detach valid json schema",
+                 :direct,
+                 @engine
+               )
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id] = snapshot.turns[turn_id].invocation_order
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      %{"turn_id" => detached_turn_id, "invocation_id" => child_inv} = run.result["metadata"]
+
+      assert Wait.terminal_turn(@engine, detached_turn_id).outcome == :completed
+
+      snapshot = Engine.snapshot(@engine)
+      child = snapshot.invocations[child_inv]
+      assert child.status == :completed
+
+      # The untouched worktree is applied away as an empty patch and removed.
+      refute File.exists?(child.execution_context.workspace)
+      assert Projector.replay(EventStore.load(stack.store)) == snapshot
+    end
+  end
+
+  describe "delegation wave resume" do
+    @tag capture_log: true
+    test "completes the parent's wave run with per-child reports when one worker fails" do
+      stack = start_stack()
+      session_id = new_room(stack)
+      configure_room(session_id)
+      add_wave_peer(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: wave one fails",
+                 :direct,
+                 @engine
+               )
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :partial
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id, first_id, second_id] = snapshot.turns[turn_id].invocation_order
+
+      assert Enum.map([first_id, second_id], &snapshot.invocations[&1].status) |> Enum.sort() == [
+               :completed,
+               :failed
+             ]
+
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      assert run.tool == "spawn_tasks"
+      assert run.status == :completed
+
+      %{"tasks" => reports} = Jason.decode!(run.result["output"])
+      assert length(reports) == 2
+
+      failed = Enum.find(reports, &(&1["ok"] == false))
+      succeeded = Enum.find(reports, &(&1["ok"] == true))
+
+      assert failed["error"] == %{
+               "category" => "internal",
+               "message" => "child exploded",
+               "retryable" => false
+             }
+
+      assert failed["agent"] == "Nova"
+      assert failed["role"] == "worker"
+      assert failed["invocation_id"] == second_id
+      assert succeeded["output"] == "child report"
+      assert succeeded["invocation_id"] == first_id
+      assert Projector.replay(EventStore.load(stack.store)) == snapshot
+    end
+
+    @tag capture_log: true
+    test "reports a schema-violating worker inside the wave without failing the run" do
+      stack = start_stack()
+      session_id = new_room(stack)
+      configure_room(session_id)
+      add_wave_peer(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: wave schema miss",
+                 :direct,
+                 @engine
+               )
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id, _first_id, _second_id] = snapshot.turns[turn_id].invocation_order
+
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      assert run.status == :completed
+
+      %{"tasks" => reports} = Jason.decode!(run.result["output"])
+      violated = Enum.find(reports, &(&1["ok"] == false))
+      assert violated["error"] == ":delegation_output_not_json"
+      assert Enum.count(reports, &(&1["ok"] == true)) == 1
+      assert Projector.replay(EventStore.load(stack.store)) == snapshot
+    end
+  end
+
+  describe "single-child output contract" do
+    @tag capture_log: true
+    test "fails the parent's tool run when a completed child violates its output schema" do
+      stack = start_stack()
+      session_id = new_room(stack)
+      configure_room(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: schema report",
+                 :direct,
+                 @engine
+               )
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      snapshot = Engine.snapshot(@engine)
+      assert [parent_id, child_id] = snapshot.turns[turn_id].invocation_order
+      assert snapshot.invocations[child_id].status == :completed
+
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      assert run.status == :failed
+      assert run.error["error"] == ":delegation_output_not_json"
+      assert Projector.replay(EventStore.load(stack.store)) == snapshot
+    end
+  end
+
+  describe "stale delegation sweep" do
+    @tag capture_log: true
+    test "restart resumes a single-child parent left awaiting with a terminal child" do
+      stack = start_stack()
+      session_id = new_room(stack)
+      configure_room(session_id)
+
+      assert {:ok, turn_id} =
+               Engine.post_message(
+                 session_id,
+                 "delegate: #{@task_agent} :: block on purpose",
+                 :direct,
+                 @engine
+               )
+
+      assert_receive {:child_waiting, child_inv, child_pid}, 5_000
+      parent_id = suspended_parent(turn_id)
+
+      # Crash between the child's terminal record and the parent's resume
+      # write: the engine dies first, then the child's completion is appended
+      # straight to the store as the only missing durable event.
+      child = Engine.snapshot(@engine).invocations[child_inv]
+      :ok = GenServer.stop(@engine)
+      send(child_pid, :child_complete)
+
+      completion =
+        EventEntries.invocation_terminal(child, {:completed, %{"merge" => "recovered"}})
+
+      assert {:ok, [_event]} = EventStore.append_many([completion], stack.store)
+
+      start_engine(stack.store, stack.config, stack.catalog)
+
+      assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+      snapshot = Engine.snapshot(@engine)
+      assert snapshot.invocations[parent_id].status == :completed
+      assert snapshot.invocations[child_inv].status == :completed
+      assert snapshot.invocations[child_inv].completion_metadata == %{"merge" => "recovered"}
+
+      parent = snapshot.invocations[parent_id]
+      assert [run] = Enum.map(parent.tool_run_order, &parent.tool_runs[&1])
+      assert run.status == :completed
+      assert run.result["output"] == ""
+
+      events = EventStore.load(stack.store)
+      assert Enum.count(events, &(&1.type == :invocation_completed)) == 2
+      assert Projector.replay(events) == snapshot
+    end
+  end
+
+  describe "replayable providers" do
+    test "accepts the simulator by atom and by string name" do
+      assert Lifecycle.replayable?(:simulator)
+      assert Lifecycle.replayable?("simulator")
+      refute Lifecycle.replayable?(:claude_code)
+      refute Lifecycle.replayable?("claude_code")
+    end
+  end
+
   defp policy_fixture(mode, opts \\ []) do
     task = %Participant{
       id: "luna",
@@ -822,6 +1292,44 @@ defmodule ReyCode.Orchestration.DelegationTest do
 
     assert :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
     assert :ok = Engine.configure_participants(session_id, [luna_id], :simulator, nil, @engine)
+  end
+
+  defp add_wave_peer(session_id) do
+    assert {:ok, nova_id} = Engine.add_task_participant(session_id, "Nova", "wave peer", @engine)
+    assert :ok = Engine.configure_participants(session_id, [nova_id], :simulator, nil, @engine)
+  end
+
+  # Isolation requires the session workspace to be a committed git root.
+  defp git_workspace(workspace) do
+    git!(workspace, ["init"])
+    git!(workspace, ["config", "user.email", "delegation-test@example.com"])
+    git!(workspace, ["config", "user.name", "Delegation Test"])
+    File.write!(Path.join(workspace, "README.md"), "seed\n")
+    git!(workspace, ["add", "."])
+    git!(workspace, ["commit", "--quiet", "-m", "seed"])
+  end
+
+  defp git!(cwd, args) do
+    {output, status} = System.cmd("git", args, cd: cwd, stderr_to_stdout: true)
+    assert status == 0, "git #{Enum.join(args, " ")} failed: #{output}"
+  end
+
+  defp isolated_child_workspace(child_id) do
+    Wait.projection(@engine, fn projection ->
+      case projection.invocations[child_id] do
+        %{execution_context: %{isolation: %{"workspace" => workspace}}} -> workspace
+        _other -> false
+      end
+    end)
+  end
+
+  defp await_merge_review(child_id) do
+    Wait.projection(@engine, fn projection ->
+      case projection.invocations[child_id] do
+        %{pending_tool_review: %{tool: "merge"} = review} -> review
+        _other -> false
+      end
+    end)
   end
 
   defp start_stack(overrides \\ []) do
