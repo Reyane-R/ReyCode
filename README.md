@@ -113,7 +113,7 @@ Linux x86_64/arm64), extracts it to `~/.reycode`, and puts a `reycode` launcher
 in `~/.local/bin`. Pin or relocate with environment variables:
 
 ```sh
-REYCODE_VERSION=v0.1.0 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
+REYCODE_VERSION=v0.1.3 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
   sh install.sh   # from a repository checkout
 ```
 
@@ -135,8 +135,7 @@ isolation by launching it under a different `$HOME`.
 Release builds check GitHub for a newer published release once at startup —
 one bounded request, never from source checkouts, disable with
 `REYCODE_TUI_UPDATE_CHECK=false`. When a newer release exists, the welcome
-screen and session header show "Update available: 0.1.0 → 0.2.0 — run
-reycode update".
+screen and session header show "Update available: 0.1.3 → 0.2.0 — run `reycode update`".
 
 `reycode update` re-runs the installer for the latest release and replaces
 `~/.reycode` in place; pin a version by exporting `REYCODE_VERSION` first.
@@ -206,12 +205,12 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/advise [brief]`: run an explicit review through the configured Advisor Participant
 - `/hub`: inspect and control delegated child Invocations; press `M` on an `awaits merge` child to Apply or Discard its isolated patch
 - `/runs` or `Ctrl+O`: inspect durable ToolRun ownership, arguments, authorization, output, and errors
-- `/home`: return to the session home
-- `/agent`: create a task agent
-- `/agents`: change an agent's provider/model
+- `/home`: return to the Session home
+- `/agent`: create a Task Participant
+- `/agents`: change a Participant's provider/model
 - `/connect`: open provider configuration without model completion
 - `/model`: switch the Assistant model in one step
-- `/task`: delegate one task to one task agent
+- `/task`: delegate one task to one Task Participant
 - `/answer`: answer the newest waiting OperatorQuestion
 - `/artifacts`: inspect and page retained large ToolRun outputs
 - `/context`: inspect the latest provider-facing ContextSummary
@@ -223,6 +222,11 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/steer <correction>`: queue a correction for the active Invocation's next provider-round boundary
 - `/retry`: create a new Turn linked to the newest failed terminal Turn
 - `/dequeue`: cancel the newest queued FollowUp and return its body to the composer
+- `/cancel`: cancel the current Turn
+- `/tools`: review a pending ToolRun approval
+- `/workspace`: show the current Workspace path
+- `/theme`: cycle the terminal theme
+- `/quit`: exit ReyCode
 
 │
 - `!cmd`: run a shell command in the workspace; output lands in the transcript

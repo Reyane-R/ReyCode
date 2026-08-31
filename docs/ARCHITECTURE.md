@@ -319,8 +319,10 @@ clauses, which delegate to focused modules:
 |---|---|
 | `Engine.Sessions` | Create sessions, configure participants |
 | `Engine.Turns` | Post messages, cancel turns, resolve gates |
-| `Engine.Lifecycle` | Queue messages, start turns, schedule invocations |
+| `Engine.Lifecycle` | Queue messages, start turns, schedule invocations, recover work |
 | `Engine.Loop` | Tool-loop state machine (rounds, tool runs, frame recording) |
+| `Engine.Execution` | Apply worker exits and release or requeue admission |
+| `Engine.DelegationFinalization` | Finish child Invocations, merge isolated worktrees, resume parents |
 | `Engine.Admission` | Concurrency limits (max 2 global, 1 per workspace) |
 | `Engine.Persistence` | Write events, apply to projection, broadcast |
 
@@ -353,7 +355,9 @@ never uses Room vocabulary.
 
 Events are appended in batches per SQLite transaction. The `EventStore` is a
 single-writer GenServer — one writer, one sequence — so there are no
-distributed consensus problems.
+distributed consensus problems. The schema migration also maintains an
+`events(transaction_id, sequence)` index because idempotent append checks look
+up an existing transaction before writing.
 
 **Projections** are derived read models. The `Projector` module
 (`lib/rey_code/orchestration/projector.ex`) is a pure function: given a
@@ -459,15 +463,13 @@ Let's trace what happens when a user types "Fix the login bug" and presses
 
 ### Step 2: TUI → Engine
 
-`Engine.post_message(session_id, "Fix the login bug", :compare)` sends a
-synchronous `GenServer.call` to the Engine process.
+`Engine.post_message(session_id, "Fix the login bug", :direct)` sends a
+synchronous `GenServer.call` to the Engine process. `Engine.Turns.post_message/4`
+validates that the message isn't empty, checks that the runtime addressed by the
+requested mode is configured, and verifies admission (concurrency limits aren't
+exceeded). Then it calls `Lifecycle.queue_message/6`.
 
 ### Step 3: Engine → Validation → Event Store
-
-`Engine.Turns.post_message/4` validates the message isn't empty, checks that
-all session participants have configured providers, and verifies admission
-(concurrency limits aren't exceeded). Then it calls
-`Lifecycle.queue_message/6`.
 
 This function constructs two event entries:
 1. `message_posted` — the user's message itself
@@ -568,16 +570,18 @@ the worktree.
 
 ### Step 11: Turn completion
 
-When the invocation completes, the Engine's `Loop.complete/3` writes an
-`invocation_completed` event. The workflow module's `advance/3` callback checks
-whether all invocations are done and, if so, writes a `turn_completed` event.
-The TUI re-renders, showing the completed response in the timeline.
+When the invocation completes, `Engine.Loop.complete/3` delegates terminal
+finalization to `Engine.DelegationFinalization`. That module writes the
+`invocation_completed` event, resolves any isolated-worktree review, resumes a
+suspended parent when appropriate, and lets the workflow module's `advance/3`
+callback check whether all invocations are done. If so, the workflow writes a
+`turn_completed` event. The TUI re-renders, showing the completed response in
+the timeline.
 
 ---
 
 ## 7. Where to find things
 
-```
 lib/rey_code/
 ├── application.ex              ← Boot sequence, supervision tree
 ├── runtime_config.ex           ← Configuration loading and policy structs
@@ -585,10 +589,11 @@ lib/rey_code/
 ├── logging.ex                  ← Logging setup
 ├── event.ex                    ← Event type definitions and validation
 ├── event_store.ex              ← Single-writer SQLite event store
-├── event_store/                ← SQLite adapter, NDJSON import, transactions
+├── event_store/                ← SQLite adapter, migrations, NDJSON import, transactions
 ├── orchestration/
 │   ├── engine.ex               ← Central GenServer, public API
-│   ├── engine/                 ← Lifecycle, admission, loops, sessions, turns
+│   ├── engine/                 ← Lifecycle, loop, execution, delegation finalization,
+│   │                              admission, sessions, turns
 │   ├── projector.ex            ← Pure event → projection transitions
 │   ├── projection.ex           ← Projection struct
 │   ├── event_entries.ex        ← Event data constructors
@@ -609,7 +614,8 @@ lib/rey_code/
 ├── tool/                       ← read, write, edit, bash, grep, glob, list
 ├── security/                   ← canonical_path, workspace, environment
 ├── tui.ex                      ← Terminal UI, named action handlers
-├── tui/                        ← State, keybindings, SessionTree, inspectors, modals
+├── tui/                        ← State, keybindings, event rail, SessionTree, inspectors, modals
+├── tui/components/             ← Main screen, timeline, and modal composition
 ├── diagnostics.ex              ← `mix rey_code.doctor` report
 ├── store_maintenance.ex        ← Database verify/checkpoint/backup/restore
 ├── retry.ex                    ← Retry policy
