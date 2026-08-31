@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.EngineTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.{Engine, Projector, Squad}
+  alias ReyCode.Orchestration.{Engine, EventEntries, Projector, Squad, Turn}
   alias ReyCode.Orchestration.Engine.Lifecycle
   alias ReyCode.Orchestration.Supervisor, as: OrchestrationSupervisor
   alias ReyCode.Provider.Frame
@@ -100,6 +100,191 @@ defmodule ReyCode.Orchestration.EngineTest do
     follow_up = Engine.snapshot(engine).turns[follow_up_id]
     assert follow_up.status == :terminal
     assert follow_up.outcome == :cancelled
+  end
+
+  test "cancelling an active turn with an invalid reason is rejected without cancelling" do
+    %{engine: engine, store: store} = start_isolated_engine(agent_delay_ms: 500)
+    session_id = default_room_id(engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Reject bad cancellation", :direct, engine)
+
+    assert Wait.projection(
+             engine,
+             fn projection -> projection.turns[turn_id].status == :running end,
+             1_000
+           )
+
+    too_long = String.duplicate("x", 1_001)
+
+    assert {:error, :invalid_cancellation_reason} = Engine.cancel_turn(turn_id, too_long, engine)
+
+    assert {:error, :invalid_cancellation_reason} =
+             Engine.cancel_turn(turn_id, "nul\0byte", engine)
+
+    assert {:error, :invalid_cancellation_reason} = Engine.cancel_turn(turn_id, "   ", engine)
+
+    # The rejected cancellation leaves the turn untouched: it still runs to
+    # its natural completion and no cancellation is ever recorded for it.
+    assert wait_until_terminal_on(engine, turn_id).outcome == :completed
+
+    refute Enum.any?(EventStore.load(store), fn event ->
+             event.type == :turn_completed and event.data["turn_id"] == turn_id and
+               event.data["outcome"] == "cancelled"
+           end)
+
+    # A terminal turn short-circuits before the reason check.
+    assert :ok = Engine.cancel_turn(turn_id, too_long, engine)
+  end
+
+  test "a follow-up turn queued behind an active turn starts when that turn completes" do
+    %{engine: engine, store: store} = start_isolated_engine(agent_delay_ms: 500)
+    session_id = default_room_id(engine)
+    assert {:ok, first_id} = Engine.post_message(session_id, "First task", :direct, engine)
+
+    assert Wait.projection(
+             engine,
+             fn projection -> projection.turns[first_id].status == :running end,
+             1_000
+           )
+
+    assert {:ok, second_id} = Engine.post_message(session_id, "Second task", :direct, engine)
+
+    queued = Engine.snapshot(engine).turns[second_id]
+    assert queued.status == :queued
+    assert queued.input_kind == :follow_up
+    assert Engine.snapshot(engine).sessions[session_id].queued_turn_ids == [second_id]
+
+    assert wait_until_terminal_on(engine, first_id).outcome == :completed
+    assert wait_until_terminal_on(engine, second_id).outcome == :completed
+
+    # The natural advancement, not the Operator dequeue path: the second turn
+    # only starts after the first one is durably terminal and completes with
+    # a real provider invocation of its own.
+    events = EventStore.load(store)
+
+    assert event_for_turn(events, :turn_completed, first_id).sequence <
+             event_for_turn(events, :turn_started, second_id).sequence
+
+    second = Engine.snapshot(engine).turns[second_id]
+    assert second.outcome == :completed
+    [second_invocation_id] = second.invocation_order
+    assert Engine.snapshot(engine).invocations[second_invocation_id].status == :completed
+
+    session = Engine.snapshot(engine).sessions[session_id]
+    assert session.active_turn_id == nil
+    assert session.queued_turn_ids == []
+  end
+
+  test "cancelling a turn mid tool run cancels durably and leaves the run indeterminate" do
+    workspace = bash_allowed_workspace()
+
+    %{engine: engine, store: store} =
+      start_isolated_engine(
+        simulator_opts: [tool_requests: [%{tool: "bash", arguments: %{"command" => "sleep 5"}}]]
+      )
+
+    assert {:ok, session_id} = Engine.create_blank_session("Tool Sandbox", workspace, engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Run the slow command", :direct, engine)
+
+    invocation =
+      Wait.projection(engine, &invocation_with_running_tool_run(&1, turn_id), 5_000)
+
+    {run_id, _run} = Enum.find(invocation.tool_runs, &match?({_id, %{status: :running}}, &1))
+
+    assert :ok = Engine.cancel_turn(turn_id, "owner stop", engine)
+    assert wait_until_terminal_on(engine, turn_id).outcome == :cancelled
+
+    snapshot = Engine.snapshot(engine)
+    invocation = snapshot.invocations[invocation.id]
+    assert invocation.status == :cancelled
+    # The started run is left indeterminate: it was neither completed nor
+    # interrupted by the cancellation, because the worker died mid tool.
+    assert invocation.tool_runs[run_id].status == :running
+
+    refute Enum.any?(EventStore.load(store), fn event ->
+             event.type in [:tool_run_completed, :tool_run_failed, :tool_run_interrupted] and
+               event.data["tool_run_id"] == run_id
+           end)
+  end
+
+  @tag capture_log: true
+  test "a worker crash during a started tool run records the run as interrupted" do
+    workspace = bash_allowed_workspace()
+
+    %{engine: engine, store: store, agent_registry: agent_registry} =
+      start_isolated_engine(
+        simulator_opts: [tool_requests: [%{tool: "bash", arguments: %{"command" => "sleep 5"}}]]
+      )
+
+    assert {:ok, session_id} = Engine.create_blank_session("Crash Sandbox", workspace, engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Crash during the tool run", :direct, engine)
+
+    invocation =
+      Wait.projection(engine, &invocation_with_running_tool_run(&1, turn_id), 5_000)
+
+    {run_id, _run} = Enum.find(invocation.tool_runs, &match?({_id, %{status: :running}}, &1))
+    {pid, _value} = Wait.registry_entry(agent_registry, invocation.id)
+    Process.exit(pid, :kill)
+
+    assert wait_until_terminal_on(engine, turn_id, 5_000).outcome == :failed
+
+    snapshot = Engine.snapshot(engine)
+    invocation = snapshot.invocations[invocation.id]
+    assert invocation.status == :failed
+    assert invocation.error.category == :worker_exit
+    assert invocation.tool_runs[run_id].status == :interrupted
+
+    interrupted =
+      Enum.find(EventStore.load(store), fn event ->
+        event.type == :tool_run_interrupted and event.data["tool_run_id"] == run_id
+      end)
+
+    assert interrupted.data["reason"] == "worker_exit"
+  end
+
+  @tag capture_log: true
+  test "a queued retired fan_out turn is retired with a durable reason on natural advancement" do
+    room_id = "room-retired-#{System.unique_integer([:positive])}"
+
+    %{engine: engine, store: store} =
+      start_seeded_engine(retired_room_entries(room_id, System.tmp_dir!()), [])
+
+    direct_turn_id = room_id <> "-turn-direct"
+    fan_out_turn_id = room_id <> "-turn-fanout"
+
+    assert Wait.terminal_turn(engine, direct_turn_id, 5_000).outcome == :completed
+
+    fan_out_turn = Wait.terminal_turn(engine, fan_out_turn_id, 5_000)
+    assert fan_out_turn.status == :terminal
+    assert fan_out_turn.outcome == :failed
+
+    snapshot = Engine.snapshot(engine)
+    assert snapshot.sessions[room_id].active_turn_id == nil
+    assert snapshot.sessions[room_id].queued_turn_ids == []
+
+    [fan_out_invocation_id] = fan_out_turn.invocation_order
+    assert snapshot.invocations[fan_out_invocation_id].status == :cancelled
+
+    events = EventStore.load(store)
+
+    cancelled =
+      Enum.find(events, fn event ->
+        event.type == :invocation_cancelled and
+          event.data["invocation_id"] == fan_out_invocation_id
+      end)
+
+    assert cancelled.data["reason"] == "Cancelled because the orchestration mode is retired"
+
+    # Retiring never dispatched the legacy turn: no worker, no provider round.
+    refute Enum.any?(events, fn event ->
+             event.type in [:invocation_started, :provider_round_recorded, :invocation_completed] and
+               event.data["invocation_id"] == fan_out_invocation_id
+           end)
   end
 
   test "adds and persists a primary assistant when restoring a legacy room" do
@@ -689,6 +874,131 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   defp wait_for_engine(old_engine), do: wait_for_engine(Engine, old_engine)
+
+  defp start_seeded_engine(entries, options) do
+    stack = stack_options(options)
+    stack = start_stack_dependencies(stack)
+    assert {:ok, _events} = EventStore.append_many(entries, stack.store)
+
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: stack.agent_supervisor})
+    start_supervised!({Task.Supervisor, name: stack.task_supervisor})
+    start_supervised!({Engine, engine_options(stack)})
+    Map.take(stack, [:engine, :store, :agent_registry])
+  end
+
+  # Seeds the exact shape an old database holds: a live direct turn that is
+  # queued and started, followed by a queued fan_out turn from the retired
+  # mode. Both carry historical invocations so the engine's recovery and the
+  # natural completion advancement have real durable state to work through.
+  defp retired_room_entries(room_id, workspace) do
+    primary = %{
+      "id" => "assistant",
+      "name" => "Assistant",
+      "perspective" => "general coding assistance",
+      "provider" => "simulator",
+      "model" => nil,
+      "model_tier" => "default",
+      "kind" => "primary"
+    }
+
+    legacy_participant = %{
+      id: "assistant",
+      name: "Assistant",
+      perspective: "general coding assistance",
+      provider: :simulator,
+      model: nil,
+      kind: :primary
+    }
+
+    direct = %Turn{
+      id: room_id <> "-turn-direct",
+      session_id: room_id,
+      mode: :direct,
+      participant_id: nil,
+      input_kind: :operator,
+      retry_of_turn_id: nil
+    }
+
+    fan_out = %Turn{
+      id: room_id <> "-turn-fanout",
+      session_id: room_id,
+      mode: :fan_out,
+      participant_id: nil,
+      input_kind: :operator,
+      retry_of_turn_id: nil
+    }
+
+    spec = fn label ->
+      %{
+        participant_id: "assistant",
+        participant: legacy_participant,
+        phase_index: 0,
+        label: label,
+        system_prompt: nil
+      }
+    end
+
+    session = %{id: room_id, workspace: workspace, participants: []}
+
+    [EventEntries.session_created(room_id, "retired", "Retired Modes", workspace, [primary])] ++
+      EventEntries.queue_turn(direct, "Run the direct task", room_id <> "-msg-user-direct", 1) ++
+      [EventEntries.turn_started(direct)] ++
+      EventEntries.open_invocations(session, direct, [spec.("direct response")], [
+        {room_id <> "-inv-direct", room_id <> "-msg-assist-direct"}
+      ]) ++
+      EventEntries.queue_turn(
+        fan_out,
+        "Fan out the legacy work",
+        room_id <> "-msg-user-fanout",
+        2
+      ) ++
+      EventEntries.open_invocations(session, fan_out, [spec.("parallel branch")], [
+        {room_id <> "-inv-fanout", room_id <> "-msg-assist-fanout"}
+      ])
+  end
+
+  # A disposable workspace whose approval rules pre-allow sleep commands, so
+  # the simulator's bash tool call executes without an owner prompt.
+  defp bash_allowed_workspace do
+    workspace =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_engine_ws_#{System.pid()}_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(Path.join(workspace, ".reycode"))
+
+    :ok =
+      File.write!(
+        Path.join(workspace, ".reycode/approval_rules.json"),
+        Jason.encode!(%{"version" => 1, "allow" => %{"bash" => ["sleep *"]}})
+      )
+
+    workspace
+  end
+
+  defp invocation_with_running_tool_run(projection, turn_id) do
+    case projection.turns[turn_id] do
+      nil -> nil
+      turn -> Enum.find_value(turn.invocation_order, &invocation_with_started_run(projection, &1))
+    end
+  end
+
+  defp invocation_with_started_run(projection, invocation_id) do
+    case projection.invocations[invocation_id] do
+      %{status: :running} = invocation ->
+        if Enum.any?(Map.values(invocation.tool_runs), &(&1.status == :running)),
+          do: invocation,
+          else: nil
+
+      _invocation ->
+        nil
+    end
+  end
+
+  defp event_for_turn(events, type, turn_id) do
+    Enum.find(events, fn event -> event.type == type and event.data["turn_id"] == turn_id end)
+  end
 
   defp start_isolated_engine(options) do
     stack = stack_options(options)

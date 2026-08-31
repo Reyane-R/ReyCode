@@ -252,26 +252,38 @@ alternates, and an empty array disables the action:
 }
 ```
 
-Each message shows the work it produced as compact one-line activity blocks.
-Executing work uses a shared animated signal and specific verb, for example
-`Tool · ⠹ · Reading · lib/foo.ex`, `Running · mix test`, or
-`Delegating · Luna`. The animation clock runs only while the selected Session
-has executing provider/tool/delegation work. Queued work and owner approval are
-truthfully static (`… · Queued`, `Ⅱ · Paused · bash approval required`);
-terminal completed/partial/reworked/failed/cancelled Outcomes use stable,
-distinct glyphs.
-Completed `edit` and `write` ToolRuns render bounded exact before/after fragments
-directly below their activity row. The full ToolRun remains available through
-`/runs`; presentation-only diff metadata is never sent back to the provider.
+The default theme presents the Session as a warm monochrome operator instrument.
+Color has state semantics: white is active, gray is dormant, amber is waiting
+or under review, and red requires attention. The header keeps model, branch,
+Workspace, and token context on its first line. Its live event rail exposes the
+durable sequence and current orchestration state:
 
-Native agents that surface intermediate reasoning render dimmed activity lines
-under the message (`· note`), collapsed behind `+k more activity` when the
+```text
+EVT 000142  │  TURN A91F2C RUNNING  │  INV 01/02  │  GATE CLEAR  │  OUT —
+```
+
+The rail derives every segment from the Projection: Turn status, terminal versus
+total Invocations, pending approval or OperatorQuestion gates, and terminal
+Outcome. It never invents decorative stages.
+
+Each Message forms a compact transcript rail labeled `OPERATOR` or `PARTICIPANT`.
+Executing work uses the shared animated signal and a specific verb, for example
+`├ TOOL / ⠹ · Reading · lib/foo.ex`, `Running · mix test`, or `Delegating ·
+Luna`. Queued work and owner approval remain truthfully static (`… · Queued`,
+`Ⅱ · Paused · bash approval required`); terminal
+completed/partial/reworked/failed/cancelled Outcomes use stable, distinct
+glyphs. Completed `edit` and `write` ToolRuns render bounded exact before/after
+fragments directly below their activity row. The full ToolRun remains available
+through `/runs`; presentation-only diff metadata is never sent back to the
+provider.
+
+Native agents that surface intermediate reasoning render dimmed
+`│ NOTE / ...` activity lines, collapsed behind `+k more activity` when the
 trail grows past three lines. Mermaid `flowchart` and `sequenceDiagram` fences
-render as bounded ASCII diagrams inside the timeline. The header is the ambient
-status line: `ReyCode · model · ⑂ branch · workspace · tok 12.4k/200k`,
-followed by the active Invocation tier meter and highest-priority activity in
-durable invocation order. A waiting-question badge opens with `Ctrl+A`; the
-budget meter and composer warn at 80 percent without stopping the Invocation.
+render as bounded ASCII diagrams inside the timeline. The active Invocation tier
+meter and highest-priority activity stay visible in durable Invocation order. A
+waiting-question indicator opens with `Ctrl+A`; the budget meter and composer
+warn at 80 percent without stopping the Invocation.
 
 Set `REYCODE_TUI_REDUCED_MOTION=true` in a release environment (or
 `tui_reduced_motion: true` in application configuration) to use a static active
@@ -872,7 +884,7 @@ violates project invariants, and security-boundary property tests
 hashing.
 
 `mix coverage` runs the suite once and writes `cover/lcov.info` via ExCoveralls,
-failing if total coverage drops below the 75% floor (`coveralls.json`). On pull
+failing if total coverage drops below the 85% floor (`coveralls.json`). On pull
 requests, CI additionally requires 90% coverage of executable lines changed from
 the base branch:
 

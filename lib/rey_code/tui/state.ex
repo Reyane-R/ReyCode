@@ -32,6 +32,9 @@ defmodule ReyCode.TUI.State do
     ToolReview
   }
 
+  @terminal_invocation_statuses [:completed, :failed, :cancelled]
+  @waiting_invocation_statuses [:waiting_tool_approval, :waiting_operator]
+
   @doc "Subscribes the root view and initializes its stable assign shapes."
   @spec mount(keyword(), map()) :: {:ok, map()}
   def mount(opts, term) do
@@ -161,7 +164,8 @@ defmodule ReyCode.TUI.State do
       slash_rows: slash_rows(assigns, height),
       slash_style: SlashPalette.style(width, height, assigns),
       slash_empty_label: SlashPalette.empty_label(assigns),
-      tool_review_options: ToolReview.options()
+      tool_review_options: ToolReview.options(),
+      event_rail: event_rail(session, assigns.projection)
     )
   end
 
@@ -178,6 +182,114 @@ defmodule ReyCode.TUI.State do
       }
     end)
   end
+
+  defp event_rail(nil, projection) do
+    %{
+      sequence: sequence_label(projection.sequence),
+      turn_id: "------",
+      turn: "STANDBY",
+      turn_class: "text-muted",
+      invocations: "00/00",
+      invocation_class: "text-muted",
+      gate: "CLEAR",
+      gate_class: "text-muted",
+      outcome: "—",
+      outcome_class: "text-muted"
+    }
+  end
+
+  defp event_rail(session, projection) do
+    turn_id = rail_turn_id(session, projection)
+    turn = Map.get(projection.turns, turn_id)
+    invocations = rail_invocations(turn, projection)
+    terminal_count = Enum.count(invocations, &(&1.status in @terminal_invocation_statuses))
+    waiting_count = Enum.count(invocations, &(&1.status in @waiting_invocation_statuses))
+
+    %{
+      sequence: sequence_label(projection.sequence),
+      turn_id: short_id(turn_id),
+      turn: turn_status_label(turn),
+      turn_class: turn_status_class(turn),
+      invocations: count_label(terminal_count, length(invocations)),
+      invocation_class: invocation_status_class(invocations),
+      gate: gate_label(waiting_count),
+      gate_class: if(waiting_count > 0, do: "text-warning", else: "text-muted"),
+      outcome: outcome_label(turn),
+      outcome_class: outcome_class(turn)
+    }
+  end
+
+  defp rail_turn_id(%{active_turn_id: turn_id}, _projection) when is_binary(turn_id), do: turn_id
+
+  defp rail_turn_id(session, projection) do
+    Enum.find_value(session.message_order, fn message_id ->
+      case Map.get(projection.messages, message_id) do
+        %{turn_id: turn_id} when is_binary(turn_id) -> turn_id
+        _message -> nil
+      end
+    end)
+  end
+
+  defp rail_invocations(nil, _projection), do: []
+
+  defp rail_invocations(turn, projection) do
+    turn.invocation_order
+    |> Enum.map(&Map.get(projection.invocations, &1))
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp sequence_label(sequence) when is_integer(sequence),
+    do: sequence |> Integer.to_string() |> String.pad_leading(6, "0")
+
+  defp sequence_label(_sequence), do: "------"
+  defp short_id(nil), do: "------"
+  defp short_id(turn_id), do: turn_id |> String.slice(-6, 6) |> String.upcase()
+
+  defp turn_status_label(%{status: :queued}), do: "QUEUED"
+  defp turn_status_label(%{status: :running}), do: "RUNNING"
+  defp turn_status_label(%{status: :terminal}), do: "TERMINAL"
+  defp turn_status_label(_turn), do: "STANDBY"
+
+  defp turn_status_class(%{status: :queued}), do: "text-warning"
+  defp turn_status_class(%{status: :running}), do: "text-primary"
+  defp turn_status_class(%{status: :terminal} = turn), do: outcome_class(turn)
+  defp turn_status_class(_turn), do: "text-muted"
+
+  defp count_label(completed_count, total_count) do
+    pad_count(completed_count) <> "/" <> pad_count(total_count)
+  end
+
+  defp pad_count(count), do: count |> Integer.to_string() |> String.pad_leading(2, "0")
+
+  defp invocation_status_class(invocations) do
+    statuses = Enum.map(invocations, & &1.status)
+
+    cond do
+      Enum.any?(statuses, &(&1 in @waiting_invocation_statuses)) -> "text-warning"
+      Enum.any?(statuses, &(&1 in [:failed, :cancelled])) -> "text-error"
+      Enum.any?(statuses, &(&1 == :queued)) -> "text-warning"
+      Enum.any?(statuses, &(&1 in [:running, :awaiting_delegation])) -> "text-primary"
+      statuses != [] -> "text-success"
+      true -> "text-muted"
+    end
+  end
+
+  defp gate_label(0), do: "CLEAR"
+  defp gate_label(waiting_count), do: pad_count(waiting_count) <> " WAIT"
+
+  defp outcome_label(%{status: :terminal, outcome: outcome}) when not is_nil(outcome),
+    do: outcome |> Atom.to_string() |> String.upcase()
+
+  defp outcome_label(_turn), do: "—"
+
+  defp outcome_class(%{outcome: outcome}) when outcome in [:failed, :cancelled],
+    do: "text-error"
+
+  defp outcome_class(%{outcome: outcome}) when outcome in [:partial, :reworked],
+    do: "text-warning"
+
+  defp outcome_class(%{outcome: :completed}), do: "text-success"
+  defp outcome_class(_turn), do: "text-muted"
 
   defp question_label(nil, _projection), do: ""
 

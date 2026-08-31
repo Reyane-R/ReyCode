@@ -10,7 +10,7 @@ defmodule ReyCode.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       # Coverage floor — ratchet upward as coverage improves, never down.
-      test_coverage: [tool: ExCoveralls, summary: [threshold: 75]],
+      test_coverage: [tool: ExCoveralls, summary: [threshold: 85]],
       deps: deps(),
       aliases: aliases(),
       releases: [rey_code: [include_executables_for: [:unix], steps: [:assemble, :tar]]],

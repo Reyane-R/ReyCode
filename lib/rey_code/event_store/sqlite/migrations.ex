@@ -8,7 +8,7 @@ defmodule ReyCode.EventStore.SQLite.Migrations do
 
   alias ReyCode.EventStore.SQLite.Sql
 
-  @migrations [{1, :create_initial_schema}]
+  @migrations [{1, :create_initial_schema}, {2, :index_event_transactions}]
   @schema_version @migrations |> List.last() |> elem(0)
 
   @doc "Returns the highest schema version this build understands."
@@ -117,5 +117,15 @@ defmodule ReyCode.EventStore.SQLite.Migrations do
       value TEXT NOT NULL
     )
     """)
+  end
+
+  defp apply_migration(connection, :index_event_transactions) do
+    Sql.execute!(
+      connection,
+      """
+      CREATE INDEX IF NOT EXISTS events_transaction_sequence
+      ON events(transaction_id, sequence)
+      """
+    )
   end
 end

@@ -9,22 +9,22 @@ defmodule ReyCode.Theme do
       name: "reycode",
       dark: true,
       defaults: %{
-        text: "#D7DCE2",
-        background: "#0B0E12",
-        border: "#303741"
+        text: "#E8E5DC",
+        background: "#090908",
+        border: "#3A3833"
       },
       palette: %{
-        muted: "#78838F",
-        primary: "#7DD3A7",
-        secondary: "#82AEEF",
-        warning: "#E5C07B",
-        error: "#E06C75",
-        success: "#7DD3A7",
-        accent: "#C792EA",
-        surface: "#12171D",
-        panel: "#181E26"
+        muted: "#79766F",
+        primary: "#F4F1E8",
+        secondary: "#C8C4B9",
+        warning: "#F2A93B",
+        error: "#FF3B30",
+        success: "#E8E5DC",
+        accent: "#FF3B30",
+        surface: "#11110F",
+        panel: "#1A1916"
       },
-      extras: %{cursor: "#F4F7FA"}
+      extras: %{cursor: "#FF3B30"}
     )
   end
 

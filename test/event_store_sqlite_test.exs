@@ -11,7 +11,11 @@ defmodule ReyCode.EventStoreSQLiteTest do
 
     assert {:ok, state} = SQLite.open(path)
 
-    assert [[1]] = sqlite_rows(state.connection, "SELECT version FROM schema_migrations")
+    assert [[1], [2]] =
+             sqlite_rows(
+               state.connection,
+               "SELECT version FROM schema_migrations ORDER BY version"
+             )
 
     assert Enum.sort(sqlite_table_names(state.connection)) ==
              ~w(checkpoints events schema_migrations store_metadata transactions)
@@ -19,7 +23,13 @@ defmodule ReyCode.EventStoreSQLiteTest do
     assert :ok = SQLite.close(state)
 
     assert {:ok, reopened} = SQLite.open(path)
-    assert [[1]] = sqlite_rows(reopened.connection, "SELECT version FROM schema_migrations")
+
+    assert [[1], [2]] =
+             sqlite_rows(
+               reopened.connection,
+               "SELECT version FROM schema_migrations ORDER BY version"
+             )
+
     assert :ok = SQLite.close(reopened)
   end
 
@@ -51,9 +61,49 @@ defmodule ReyCode.EventStoreSQLiteTest do
     assert :ok = Exqlite.Sqlite3.close(connection)
 
     assert {:ok, state} = SQLite.open(path)
-    assert [[1]] = sqlite_rows(state.connection, "SELECT version FROM schema_migrations")
+
+    assert [[1], [2]] =
+             sqlite_rows(
+               state.connection,
+               "SELECT version FROM schema_migrations ORDER BY version"
+             )
+
     assert "events" in sqlite_table_names(state.connection)
     assert :ok = SQLite.close(state)
+  end
+
+  test "migrates version one with an indexed transaction lookup" do
+    path = tmp_path("transaction-index-migration.sqlite3")
+
+    assert {:ok, state} = SQLite.open(path)
+
+    assert :ok =
+             Exqlite.Sqlite3.execute(state.connection, "DROP INDEX events_transaction_sequence")
+
+    assert :done =
+             sqlite_run(state.connection, "DELETE FROM schema_migrations WHERE version = ?", [2])
+
+    assert Enum.any?(
+             transaction_query_plan(state.connection),
+             &String.contains?(&1, "SCAN events")
+           )
+
+    assert :ok = SQLite.close(state)
+
+    assert {:ok, migrated} = SQLite.open(path)
+
+    assert [[1], [2]] =
+             sqlite_rows(
+               migrated.connection,
+               "SELECT version FROM schema_migrations ORDER BY version"
+             )
+
+    assert Enum.any?(
+             transaction_query_plan(migrated.connection),
+             &String.contains?(&1, "USING INDEX events_transaction_sequence")
+           )
+
+    assert :ok = SQLite.close(migrated)
   end
 
   test "rejects a database migrated beyond the supported schema version" do
@@ -65,12 +115,12 @@ defmodule ReyCode.EventStoreSQLiteTest do
              sqlite_run(
                connection,
                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-               [2, "2026-01-01T00:00:00Z"]
+               [3, "2026-01-01T00:00:00Z"]
              )
 
     assert :ok = Exqlite.Sqlite3.close(connection)
 
-    assert {:error, {:unsupported_schema_version, 2, 1}} = SQLite.open(path)
+    assert {:error, {:unsupported_schema_version, 3, 2}} = SQLite.open(path)
   end
 
   test "rolls back all changes when a migration step raises" do
@@ -453,6 +503,15 @@ defmodule ReyCode.EventStoreSQLiteTest do
     ORDER BY name
     """)
     |> Enum.map(fn [name] -> name end)
+  end
+
+  defp transaction_query_plan(connection) do
+    connection
+    |> sqlite_rows(
+      "EXPLAIN QUERY PLAN SELECT payload FROM events WHERE transaction_id = ? ORDER BY sequence",
+      ["transaction-id"]
+    )
+    |> Enum.map(fn [_id, _parent, _unused, detail] -> detail end)
   end
 
   defp sqlite_rows(connection, sql, params \\ []) do

@@ -30,6 +30,7 @@ defmodule ReyCode.TUI.Render do
       update_notice={@update_notice}
       token_label_class={@token_label_class}
       token_label={@token_label}
+      event_rail={@event_rail}
       terminal_width={@breeze.terminal.width}
       terminal_height={@breeze.terminal.height}
       draft={@draft}

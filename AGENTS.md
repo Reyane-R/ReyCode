@@ -27,7 +27,7 @@ errors, `credo --strict`, and the full test suite. Keep it green:
 
 ```sh
 mix check
-mix coverage                      # total coverage must stay above the 75% floor
+mix coverage                      # total coverage must stay above the 85% floor
 MIX_ENV=dev mix dialyzer
 mix test test/orchestration_engine_test.exs:120   # one test, fast feedback
 ```
