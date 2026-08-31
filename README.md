@@ -113,7 +113,7 @@ Linux x86_64/arm64), extracts it to `~/.reycode`, and puts a `reycode` launcher
 in `~/.local/bin`. Pin or relocate with environment variables:
 
 ```sh
-REYCODE_VERSION=v0.2.0 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
+REYCODE_VERSION=v0.2.1 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
   sh install.sh   # from a repository checkout
 ```
 
@@ -126,16 +126,16 @@ To build from source instead, run `MIX_ENV=prod mix release` in a checkout and
 point the launcher at `_build/prod/rel/rey_code/bin/rey_code`.
 
 The SQLite event store is single-writer: one live instance per data directory.
-A second instance against the same store fails closed with `database is
-locked`. Quit the first instance with `Ctrl+Q`, or run a throwaway instance in
-isolation by launching it under a different `$HOME`.
+A second instance fails closed and explains that another ReyCode instance is
+already running. Quit the first instance with `Ctrl+Q`, or run a throwaway
+instance in isolation by launching it under a different `$HOME`.
 
 ## Updates
 
 Release builds check GitHub for a newer published release once at startup —
 one bounded request, never from source checkouts, disable with
 `REYCODE_TUI_UPDATE_CHECK=false`. When a newer release exists, the welcome
-screen and session header show "Update available: 0.1.3 → 0.2.0 — run `reycode update`".
+screen and session header show "Update available: 0.2.0 → 0.2.1 — run `reycode update`".
 
 `reycode update` re-runs the installer for the latest release and replaces
 `~/.reycode` in place; pin a version by exporting `REYCODE_VERSION` first.
