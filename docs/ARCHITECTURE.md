@@ -41,11 +41,14 @@ When you run `mix run --no-halt`, ReyCode starts at a clean session home:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The first ordinary message creates a fresh durable Session and invokes only its
-Primary Participant. `/agent` creates a durable Task Participant with a
-standing responsibility and independently selected provider/model. `/task`
-creates a Delegation addressed to exactly one Task Participant. `/resume`
-explicitly opens the latest prior Session.
+Interactive startup canonicalizes the launch directory and selects the newest
+Session rooted at that exact Workspace, creating one blank source Session when
+none exists. It never automatically crosses Workspace boundaries. The first
+ordinary message creates a fresh durable Session and invokes only its Primary
+Participant. `/agent` creates a durable Task Participant with a standing
+responsibility and independently selected provider/model. `/task` creates a
+Delegation addressed to exactly one Task Participant. `/resume` explicitly
+opens a prior Session, including one rooted at another Workspace.
 
 
 The active transcript shows only useful execution context:

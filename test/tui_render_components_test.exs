@@ -104,8 +104,11 @@ defmodule ReyCode.TUI.RenderComponentsTest do
       created_at: DateTime.utc_now() |> DateTime.add(-5, :second) |> DateTime.to_iso8601()
     }
 
+    session_order =
+      Enum.reject(projection.session_order, &(&1 == session_id)) ++ [session_id]
+
     projection =
-      projection
+      %{projection | session_order: session_order}
       |> put_in([:sessions, session_id], %{
         session_record
         | active_turn_id: turn_id,

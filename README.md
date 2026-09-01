@@ -117,10 +117,11 @@ REYCODE_VERSION=v0.2.1 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/b
   sh install.sh   # from a repository checkout
 ```
 
-Typing `reycode` opens the terminal UI. A symlink is not enough here: the
-release boot script resolves its own directory, so the launcher must be a real
-script. `reycode version` prints the release identity; any other arguments pass
-through to the release script (`reycode daemon` runs it in the background).
+Typing `reycode` opens the terminal UI for the current directory. A symlink is
+not enough here: the release boot script resolves its own directory, so the
+launcher must be a real script. `reycode version` prints the release identity;
+any other arguments pass through to the release script (`reycode daemon` runs
+it in the background).
 
 To build from source instead, run `MIX_ENV=prod mix release` in a checkout and
 point the launcher at `_build/prod/rel/rey_code/bin/rey_code`.
@@ -129,6 +130,14 @@ The SQLite event store is single-writer: one live instance per data directory.
 A second instance fails closed and explains that another ReyCode instance is
 already running. Quit the first instance with `Ctrl+Q`, or run a throwaway
 instance in isolation by launching it under a different `$HOME`.
+
+### Herdr integration
+
+When `reycode` runs inside a Herdr pane, it reports `working`, `blocked`, and
+`idle` lifecycle state to Herdr's custom-agent API. Herdr must provide
+`HERDR_ENV=1` and `HERDR_PANE_ID`; `HERDR_BIN_PATH` is used when present, or
+the `herdr` executable is resolved from `PATH`. Reports are inert outside a
+Herdr pane and do not affect ReyCode execution.
 
 ## Updates
 
@@ -169,10 +178,14 @@ Assistant runtime assignment, and prints only the response (or a JSON report).
 It exits nonzero instead of waiting when a tool approval or OperatorQuestion
 needs an interactive owner. `--timeout-ms` defaults to 600000.
 
-Startup opens a clean session home. On the first pristine Session, ReyCode
-automatically opens guided Primary Assistant provider and model selection; `R`
-rechecks provider discovery. After setup, no prior transcript is shown. The
-first message creates a fresh durable Session with one Primary Assistant.
+Startup opens a clean session home scoped to the canonical current directory.
+ReyCode reuses the newest Session from that Workspace as the source profile; if
+the Workspace has no Session, it creates one blank source Session there. It
+never selects a Session from another Workspace during automatic startup.
+`/resume` remains the explicit path for opening prior Sessions. On a pristine
+unconfigured source Session, ReyCode opens guided Primary Assistant provider and
+model selection; `R` rechecks provider discovery. No prior transcript is shown,
+and the first message creates a fresh durable Session with one Primary Assistant.
 
 Task agents are opt-in durable profiles:
 
@@ -361,6 +374,10 @@ On macOS, event data is stored transactionally in
 `~/Library/Application Support/ReyCode/rey_code.sqlite3`. On first launch, a
 legacy `~/.local/share/rey_code/events-v2.ndjson` log is imported and retained
 with a `.pre-sqlite-backup` rollback copy.
+
+The database may contain Sessions from many Workspaces. Interactive startup
+matches Sessions by exact canonical Workspace path; trusted roots authorize
+filesystem access but never choose the active Workspace.
 
 ## Architecture
 

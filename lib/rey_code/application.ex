@@ -17,6 +17,7 @@ defmodule ReyCode.Application do
       {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
       {ReyCode.EventStore, [config: runtime_config.persistence] ++ event_store_options},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
+      {ReyCode.Herdr, task_supervisor: ReyCode.ProviderTaskSupervisor},
       {ReyCode.Provider.Catalog, [config: runtime_config]},
       ReyCode.ProcessHub,
       ReyCode.DebuggerHub,
@@ -38,7 +39,7 @@ defmodule ReyCode.Application do
           Supervisor.child_spec(
             {Breeze.Server,
              view: ReyCode.TUI,
-             start_opts: [config: runtime_config],
+             start_opts: [config: runtime_config, workspace: File.cwd!()],
              theme: ReyCode.Theme.default(),
              logger: :replace,
              global_keybindings: ReyCode.TUI.global_keybindings(runtime_config)},
