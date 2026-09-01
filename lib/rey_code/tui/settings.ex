@@ -27,7 +27,8 @@ defmodule ReyCode.TUI.Settings do
     {:noreply, refresh(term)}
   end
 
-  def handle_input("Backspace", %{assigns: %{settings: %{step: :models}}} = term) do
+  def handle_input(key, %{assigns: %{settings: %{step: :models}}} = term)
+      when key in ["Backspace", "\x7F"] do
     {:noreply, backspace_query(term)}
   end
 
