@@ -287,20 +287,21 @@ completed/partial/reworked/failed/cancelled Outcomes use stable, distinct
 glyphs.
 
 Each Message forms a compact transcript labeled `You` or by the Assistant or
-task participant's name. ToolRuns appear as recognizable action rows such as
-`⠹ · Reading · lib/foo.ex`, `Running · mix test`, or `Delegating · Luna`.
+task participant's name. An Assistant Message places its execution ledger
+before the final response: native reasoning and tool lifecycle events remain in
+provider frame order, while a tool's start/update/completion lifecycle collapses
+to one recognizable row such as `⠹ · Reading · lib/foo.ex`,
+`Running · mix test`, or `Delegating · Luna`. The ledger keeps the eight newest
+reasoning lines visible and reports older entries as `+k earlier thoughts`.
+
 Completed `edit` and `write` ToolRuns render bounded exact before/after
 fragments directly below their activity row. The full ToolRun remains available
 through `/runs`; presentation-only diff metadata is never sent back to the
-provider.
-
-Native agents that surface intermediate reasoning render dimmed `· ...`
-activity lines, collapsed behind `+k more activity` when the trail grows past
-three lines. Mermaid `flowchart` and `sequenceDiagram` fences render as bounded
-ASCII diagrams inside the timeline. The active Invocation tier meter and work
-pulse remain visible while the timeline preserves durable Invocation order. A
-waiting-question indicator opens with `Ctrl+A`; the budget meter and composer
-warn at 80 percent without stopping the Invocation.
+provider. Mermaid `flowchart` and `sequenceDiagram` fences render as bounded
+ASCII diagrams inside the final response. The active Invocation tier meter and
+work pulse remain visible while the timeline preserves durable Invocation
+order. A waiting-question indicator opens with `Ctrl+A`; the budget meter and
+composer warn at 80 percent without stopping the Invocation.
 
 Set `REYCODE_TUI_REDUCED_MOTION=true` in a release environment (or
 `tui_reduced_motion: true` in application configuration) to use a static active

@@ -4,6 +4,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
 
   @max_invocation_notes 100
   @max_replay_notes 110
+  @max_provider_activity_events_count 256
 
   alias ReyCode.Event
 
@@ -139,6 +140,98 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert invocation.notes == ["checking the workspace", "reading config"]
     assert invocation.last_frame_sequence == 3
     assert state.messages["msg-assistant"].body == "Answer"
+
+    assert Enum.map(invocation.provider_activity_events, & &1["note"]) == [
+             "reading config",
+             "checking the workspace"
+           ]
+  end
+
+  test "provider tool events retain frame chronology for the execution ledger" do
+    state =
+      Projector.replay(
+        opened_invocation_events() ++
+          [
+            event(5, :provider_frame_recorded, :invocation, "inv-1", %{
+              "invocation_id" => "inv-1",
+              "message_id" => "msg-assistant",
+              "frame_sequence" => 1,
+              "kind" => "tool_started",
+              "data" => %{
+                "tool" => "read",
+                "state" => %{"tool_call_id" => "call-1", "status" => "running"}
+              }
+            }),
+            event(6, :provider_frame_recorded, :invocation, "inv-1", %{
+              "invocation_id" => "inv-1",
+              "message_id" => "msg-assistant",
+              "frame_sequence" => 2,
+              "kind" => "tool_completed",
+              "data" => %{
+                "tool" => "read",
+                "state" => %{"tool_call_id" => "call-1", "status" => "completed"}
+              }
+            })
+          ]
+      )
+
+    assert [
+             %{"frame_sequence" => 2, "kind" => "tool_completed"},
+             %{"frame_sequence" => 1, "kind" => "tool_started"}
+           ] = state.invocations["inv-1"].provider_activity_events
+  end
+
+  test "provider activity stays bounded and keeps the newest frame chronology" do
+    frames =
+      Enum.map(1..(@max_provider_activity_events_count + 10), fn frame_sequence ->
+        event(frame_sequence + 4, :provider_frame_recorded, :invocation, "inv-1", %{
+          "invocation_id" => "inv-1",
+          "message_id" => "msg-assistant",
+          "frame_sequence" => frame_sequence,
+          "kind" => "tool_started",
+          "data" => %{
+            "tool" => "read",
+            "state" => %{"tool_call_id" => "call-#{frame_sequence}", "status" => "running"}
+          }
+        })
+      end)
+
+    invocation =
+      Projector.replay(opened_invocation_events() ++ frames).invocations["inv-1"]
+
+    assert length(invocation.provider_activity_events) ==
+             @max_provider_activity_events_count
+
+    assert hd(invocation.provider_activity_events)["frame_sequence"] ==
+             @max_provider_activity_events_count + 10
+
+    assert List.last(invocation.provider_activity_events)["frame_sequence"] == 11
+  end
+
+  test "provider activity overflow retains the exact hidden reasoning row count" do
+    note_count = 300
+
+    frames =
+      Enum.map(1..note_count, fn frame_sequence ->
+        event(frame_sequence + 4, :provider_frame_recorded, :invocation, "inv-1", %{
+          "invocation_id" => "inv-1",
+          "message_id" => "msg-assistant",
+          "frame_sequence" => frame_sequence,
+          "kind" => "agent_note",
+          "data" => %{"note" => "thought #{frame_sequence}\n   "}
+        })
+      end)
+
+    invocation =
+      Projector.replay(opened_invocation_events() ++ frames).invocations["inv-1"]
+
+    assert length(invocation.provider_activity_events) ==
+             @max_provider_activity_events_count
+
+    assert %{
+             "kind" => "activity_overflow",
+             "hidden_note_row_count" => 45
+           } = List.last(invocation.provider_activity_events)
   end
 
   test "the activity trail stays bounded and keeps the newest notes" do
@@ -537,11 +630,15 @@ defmodule ReyCode.Orchestration.ProjectorTest do
           arguments: %{},
           workspace: "/tmp",
           requested_at: "2026-08-03T00:00:00Z"
-        }
+        },
+        tool_events: [%{"kind" => "tool_started", "frame_sequence" => 1}]
       }
 
       assert %ToolAsk{request_id: "ask-legacy"} =
                Invocation.from_map(legacy_invocation).pending_tool_review
+
+      assert [%{"kind" => "tool_started"}] =
+               Invocation.from_map(legacy_invocation).provider_activity_events
 
       legacy_run = %{
         artifacts: [

@@ -48,6 +48,125 @@ defmodule ReyCode.Provider.OMPTest do
     assert {:ok, %{}} = Protocol.finish(state)
   end
 
+  test "maps OMP thinking and tool execution into ordered activity frames" do
+    emit = fn frame ->
+      send(self(), {:frame, frame})
+      :ok
+    end
+
+    records = [
+      %{
+        type: "message_update",
+        assistantMessageEvent: %{type: "thinking_start", contentIndex: 0}
+      },
+      %{
+        type: "message_update",
+        assistantMessageEvent: %{type: "thinking_delta", delta: "Planning "}
+      },
+      %{
+        type: "message_update",
+        assistantMessageEvent: %{type: "thinking_delta", delta: "work"}
+      },
+      %{
+        type: "message_update",
+        assistantMessageEvent: %{type: "thinking_end", content: "Planning work"}
+      },
+      %{
+        type: "tool_execution_start",
+        toolCallId: "call-1",
+        toolName: "read",
+        args: %{path: "mix.exs"},
+        intent: "Inspect project metadata"
+      },
+      %{
+        type: "tool_execution_update",
+        toolCallId: "call-1",
+        toolName: "read",
+        args: %{path: "mix.exs"},
+        partialResult: "loading"
+      },
+      %{
+        type: "tool_execution_end",
+        toolCallId: "call-1",
+        toolName: "read",
+        result: "done",
+        isError: false
+      }
+    ]
+
+    state =
+      Enum.reduce(records, Protocol.new(request(), RuntimeConfig.fresh().omp), fn record, state ->
+        {:cont, state} =
+          Protocol.fold({:stdout, Jason.encode!(record) <> "\n"}, state, emit)
+
+        state
+      end)
+
+    {:halt, state} = Protocol.fold({:exit, {:status, 0}}, state, emit)
+    assert {:ok, %{}} = Protocol.finish(state)
+
+    assert_receive {:frame, %{kind: :agent_note, sequence: 1, data: %{note: "Planning work"}}}
+
+    assert_receive {:frame,
+                    %{
+                      kind: :tool_started,
+                      sequence: 2,
+                      data: %{
+                        tool: "read",
+                        state: %{
+                          "tool_call_id" => "call-1",
+                          "arguments" => %{"path" => "mix.exs"},
+                          "intent" => "Inspect project metadata"
+                        }
+                      }
+                    }}
+
+    assert_receive {:frame, %{kind: :tool_started, sequence: 3}}
+
+    assert_receive {:frame,
+                    %{
+                      kind: :tool_completed,
+                      sequence: 4,
+                      data: %{
+                        tool: "read",
+                        state: %{"tool_call_id" => "call-1", "is_error" => false}
+                      }
+                    }}
+  end
+
+  test "ignores empty thinking fragments and flushes buffered fallback content" do
+    emit = fn frame ->
+      send(self(), {:frame, frame})
+      :ok
+    end
+
+    records = [
+      %{type: "message_update", assistantMessageEvent: %{type: "thinking_delta", delta: nil}},
+      %{type: "message_update", assistantMessageEvent: %{type: "thinking_delta", delta: ""}},
+      %{
+        type: "message_update",
+        assistantMessageEvent: %{type: "thinking_delta", delta: "Buffered thought"}
+      },
+      %{type: "message_update", assistantMessageEvent: %{type: "unknown"}},
+      %{type: "message_update", assistantMessageEvent: %{type: "thinking_end", content: nil}}
+    ]
+
+    state =
+      Enum.reduce(records, Protocol.new(request(), RuntimeConfig.fresh().omp), fn record, state ->
+        {:cont, state} =
+          Protocol.fold({:stdout, Jason.encode!(record) <> "\n"}, state, emit)
+
+        state
+      end)
+
+    assert_receive {:frame, %{kind: :agent_note, sequence: 1, data: %{note: "Buffered thought"}}}
+
+    state = %{state | note_fragments: [""]}
+    {:halt, state} = Protocol.fold({:exit, {:status, 0}}, state, emit)
+    assert {:ok, %{}} = Protocol.finish(state)
+    refute_receive {:frame, _frame}
+  end
+
   test "returns provider errors from failed RPC responses" do
     state = Protocol.new(request(), RuntimeConfig.fresh().omp)
     emit = fn _frame -> :ok end

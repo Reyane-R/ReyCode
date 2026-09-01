@@ -3,6 +3,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   # Activity-trail bound: newest agent notes win when the invocation exceeds it.
   @max_invocation_notes 100
+  @max_provider_activity_events_count 256
 
   import Kernel, except: [apply: 2]
 
@@ -831,8 +832,10 @@ defmodule ReyCode.Orchestration.Projector do
     state =
       if invocation do
         update_invocation(state, invocation_id, fn value ->
-          value = %{value | last_frame_sequence: frame_data["frame_sequence"]}
-          apply_invocation_frame(value, frame_data["kind"], frame_data["data"])
+          frame_sequence = frame_data["frame_sequence"]
+          value = %{value | last_frame_sequence: frame_sequence}
+          data = Map.put(frame_data["data"], "frame_sequence", frame_sequence)
+          apply_invocation_frame(value, frame_data["kind"], data)
         end)
       else
         state
@@ -898,7 +901,7 @@ defmodule ReyCode.Orchestration.Projector do
       status: :queued,
       attempt: value_or(data["attempt"], 1),
       usage: nil,
-      tool_events: [],
+      provider_activity_events: [],
       rounds: [],
       tool_runs: %{},
       tool_run_order: [],
@@ -1042,9 +1045,15 @@ defmodule ReyCode.Orchestration.Projector do
     note = data["note"]
 
     if is_binary(note) and note != "" do
-      # Bounded activity trail: a chatty reasoner must not grow the
-      # projection without limit; the oldest lines fall off first.
-      %{invocation | notes: Enum.take(invocation.notes ++ [note], -@max_invocation_notes)}
+      event = %{
+        "kind" => "agent_note",
+        "frame_sequence" => data["frame_sequence"],
+        "note" => note
+      }
+
+      invocation
+      |> Map.put(:notes, Enum.take(invocation.notes ++ [note], -@max_invocation_notes))
+      |> append_provider_activity(event)
     else
       invocation
     end
@@ -1052,12 +1061,66 @@ defmodule ReyCode.Orchestration.Projector do
 
   defp apply_invocation_frame(invocation, kind, data)
        when kind in ["tool_started", "tool_completed"] do
-    %{invocation | tool_events: [Map.put(data, "kind", kind) | invocation.tool_events]}
+    event = Map.put(data, "kind", kind)
+
+    append_provider_activity(invocation, event)
   end
 
   # Display frames never drive invocation lifecycle status: a waiting approval
   # stays waiting even while buffered frames are recorded.
   defp apply_invocation_frame(invocation, _kind, _data), do: invocation
+
+  defp append_provider_activity(invocation, event) do
+    {overflow_events, visible_events} =
+      invocation
+      |> Map.get(:provider_activity_events, [])
+      |> Enum.split_with(&(Map.get(&1, "kind") == "activity_overflow"))
+
+    hidden_note_count =
+      Enum.reduce(overflow_events, 0, fn overflow, total ->
+        total + Map.get(overflow, "hidden_note_row_count", 0)
+      end)
+
+    events = retain_provider_activity([event | visible_events], hidden_note_count)
+    Map.put(invocation, :provider_activity_events, events)
+  end
+
+  defp retain_provider_activity(events, hidden_note_row_count) do
+    dropped_at_full_capacity = Enum.drop(events, @max_provider_activity_events_count)
+    hidden_note_row_count = hidden_note_row_count + count_note_rows(dropped_at_full_capacity)
+
+    if hidden_note_row_count > 0 do
+      retained_count = @max_provider_activity_events_count - 1
+      dropped = Enum.drop(events, retained_count)
+
+      hidden_note_row_count =
+        hidden_note_row_count + count_new_note_rows(dropped_at_full_capacity, dropped)
+
+      Enum.take(events, retained_count) ++
+        [%{"kind" => "activity_overflow", "hidden_note_row_count" => hidden_note_row_count}]
+    else
+      Enum.take(events, @max_provider_activity_events_count)
+    end
+  end
+
+  defp count_note_rows(events) do
+    Enum.reduce(events, 0, fn
+      %{"kind" => "agent_note", "note" => note}, total when is_binary(note) ->
+        total + rendered_note_row_count(note)
+
+      _event, total ->
+        total
+    end)
+  end
+
+  defp rendered_note_row_count(note) do
+    note
+    |> String.split(~r/\R+/, trim: true)
+    |> Enum.count(&(String.trim(&1) != ""))
+  end
+
+  defp count_new_note_rows(already_counted, all_dropped),
+    do: count_note_rows(all_dropped) - count_note_rows(already_counted)
 
   defp participant(data) do
     %Participant{

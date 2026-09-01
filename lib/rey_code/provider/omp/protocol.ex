@@ -13,6 +13,7 @@ defmodule ReyCode.Provider.OMP.Protocol do
     defstruct buffer: "",
               stderr_buffer: "",
               text_buffer: nil,
+              note_fragments: [],
               sequence: 0,
               provider_errors: [],
               diagnostics: [],
@@ -28,6 +29,7 @@ defmodule ReyCode.Provider.OMP.Protocol do
     @type t :: %__MODULE__{
             buffer: binary(),
             stderr_buffer: binary(),
+            note_fragments: [binary()],
             text_buffer: TextBuffer.t(),
             sequence: non_neg_integer(),
             provider_errors: [binary()],
@@ -170,7 +172,7 @@ defmodule ReyCode.Provider.OMP.Protocol do
 
     state = %{state | stderr_buffer: ""}
     state = if stderr_buffer == "", do: state, else: append_diagnostic(state, stderr_buffer)
-    flush_pending_text(state, emit)
+    flush_content(state, emit)
   end
 
   defp handle_line(line, state, emit) do
@@ -183,13 +185,82 @@ defmodule ReyCode.Provider.OMP.Protocol do
   defp handle_record(%{"type" => "message_update", "assistantMessageEvent" => event}, state, emit)
        when is_map(event) do
     case Map.get(event, "type") do
-      "text_delta" -> buffer_text(state, Map.get(event, "delta"), emit)
-      _ -> %{state | protocol_activity?: true}
+      "text_delta" ->
+        state
+        |> flush_note(emit)
+        |> buffer_text(Map.get(event, "delta"), emit)
+
+      "thinking_start" ->
+        state
+        |> flush_content(emit)
+        |> Map.put(:note_fragments, [])
+        |> Map.put(:protocol_activity?, true)
+
+      "thinking_delta" ->
+        buffer_note(state, Map.get(event, "delta"))
+
+      "thinking_end" ->
+        finish_note(state, Map.get(event, "content"), emit)
+
+      _event_type ->
+        %{state | protocol_activity?: true}
     end
   end
 
+  defp handle_record(
+         %{"type" => "tool_execution_start", "toolName" => tool} = record,
+         state,
+         emit
+       )
+       when is_binary(tool) do
+    tool_state = %{
+      "status" => "running",
+      "tool_call_id" => record["toolCallId"],
+      "arguments" => record["args"] || %{},
+      "intent" => record["intent"]
+    }
+
+    state
+    |> flush_content(emit)
+    |> emit_tool_frame(:started, tool, tool_state, emit)
+  end
+
+  defp handle_record(
+         %{"type" => "tool_execution_update", "toolName" => tool} = record,
+         state,
+         emit
+       )
+       when is_binary(tool) do
+    tool_state = %{
+      "status" => "running",
+      "tool_call_id" => record["toolCallId"],
+      "arguments" => record["args"] || %{},
+      "partial_result" => record["partialResult"]
+    }
+
+    emit_tool_frame(state, :started, tool, tool_state, emit)
+  end
+
+  defp handle_record(
+         %{"type" => "tool_execution_end", "toolName" => tool} = record,
+         state,
+         emit
+       )
+       when is_binary(tool) do
+    failed? = record["isError"] == true
+
+    tool_state = %{
+      "status" => if(failed?, do: "failed", else: "completed"),
+      "tool_call_id" => record["toolCallId"],
+      "result" => record["result"],
+      "is_error" => failed?
+    }
+
+    emit_tool_frame(state, :completed, tool, tool_state, emit)
+  end
+
   defp handle_record(%{"type" => "response", "success" => false} = record, state, emit) do
-    state = flush_pending_text(state, emit)
+    state = flush_content(state, emit)
 
     %{
       state
@@ -199,7 +270,7 @@ defmodule ReyCode.Provider.OMP.Protocol do
   end
 
   defp handle_record(%{"type" => "error"} = record, state, emit) do
-    state = flush_pending_text(state, emit)
+    state = flush_content(state, emit)
 
     %{
       state
@@ -232,6 +303,64 @@ defmodule ReyCode.Provider.OMP.Protocol do
   defp error_text(value) when is_binary(value), do: value
   defp error_text(nil), do: "OMP returned an unspecified error"
   defp error_text(value), do: inspect(value)
+
+  defp buffer_note(state, note) when not is_binary(note),
+    do: %{state | protocol_activity?: true}
+
+  defp buffer_note(state, ""), do: %{state | protocol_activity?: true}
+
+  defp buffer_note(state, note) do
+    %{
+      state
+      | note_fragments: [note | state.note_fragments],
+        protocol_activity?: true
+    }
+  end
+
+  defp finish_note(state, content, emit) when is_binary(content) and content != "" do
+    state
+    |> Map.put(:note_fragments, [])
+    |> emit_note(content, emit)
+  end
+
+  defp finish_note(state, _content, emit), do: flush_note(state, emit)
+
+  defp flush_content(state, emit) do
+    state
+    |> flush_note(emit)
+    |> flush_pending_text(emit)
+  end
+
+  defp flush_note(%State{note_fragments: []} = state, _emit), do: state
+
+  defp flush_note(state, emit) do
+    note = state.note_fragments |> Enum.reverse() |> IO.iodata_to_binary()
+
+    state
+    |> Map.put(:note_fragments, [])
+    |> emit_note(note, emit)
+  end
+
+  defp emit_note(state, "", _emit), do: state
+
+  defp emit_note(state, note, emit) do
+    sequence = state.sequence + 1
+    :ok = emit.(Frame.agent_note(sequence, note))
+    %{state | sequence: sequence, protocol_activity?: true}
+  end
+
+  defp emit_tool_frame(state, kind, tool, tool_state, emit) do
+    sequence = state.sequence + 1
+
+    frame =
+      case kind do
+        :started -> Frame.tool_started(sequence, tool, tool_state)
+        :completed -> Frame.tool_completed(sequence, tool, tool_state)
+      end
+
+    :ok = emit.(frame)
+    %{state | sequence: sequence, protocol_activity?: true}
+  end
 
   defp buffer_text(state, text, _emit) when not is_binary(text),
     do: %{state | protocol_activity?: true}

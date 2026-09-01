@@ -61,6 +61,153 @@ defmodule ReyCode.TUI.ActivityTest do
     assert item.label == "Queued"
   end
 
+  test "native provider tool events collapse into ordered steps and drive the work pulse" do
+    started = %{
+      "kind" => "tool_started",
+      "tool" => "read",
+      "frame_sequence" => 1,
+      "state" => %{
+        "tool_call_id" => "call-1",
+        "status" => "running",
+        "arguments" => %{"path" => "/workspace/mix.exs"}
+      }
+    }
+
+    updated =
+      put_in(started, ["state", "status"], "running")
+      |> Map.put("frame_sequence", 2)
+
+    completed = %{
+      started
+      | "kind" => "tool_completed",
+        "frame_sequence" => 3,
+        "state" => %{
+          "tool_call_id" => "call-1",
+          "status" => "completed",
+          "result" => "done"
+        }
+    }
+
+    assert [row] =
+             Activity.provider_tools([completed, updated, started], @workspace, @now_ms)
+
+    assert row.state == :terminal
+    assert row.label == "Read"
+    assert row.target == "mix.exs"
+
+    {projection, session_id, invocation_id} =
+      fixture(invocation_status: :running, provider_activity_events: [started])
+
+    view = Activity.present(session_id, projection, %{}, @now_ms)
+    assert Activity.invocation(view, invocation_id).label == "Reading"
+    assert view.header.target == "mix.exs"
+  end
+
+  test "native provider trace preserves thought tool thought chronology" do
+    note_before = %{
+      "kind" => "agent_note",
+      "frame_sequence" => 1,
+      "note" => "Inspect the project"
+    }
+
+    started = %{
+      "kind" => "tool_started",
+      "tool" => "read",
+      "frame_sequence" => 2,
+      "state" => %{
+        "tool_call_id" => "call-1",
+        "status" => "running",
+        "arguments" => %{"path" => "/workspace/mix.exs"}
+      }
+    }
+
+    completed = %{
+      "kind" => "tool_completed",
+      "tool" => "read",
+      "frame_sequence" => 3,
+      "state" => %{"tool_call_id" => "call-1", "status" => "completed"}
+    }
+
+    note_after = %{
+      "kind" => "agent_note",
+      "frame_sequence" => 4,
+      "note" => "The project uses Mix"
+    }
+
+    assert [
+             %Activity.TraceNote{text: "Inspect the project"},
+             %Activity.TraceTool{item: tool},
+             %Activity.TraceNote{text: "The project uses Mix"}
+           ] =
+             Activity.provider_trace(
+               [note_after, completed, started, note_before],
+               @workspace,
+               @now_ms
+             )
+
+    assert tool.state == :terminal
+    assert tool.label == "Read"
+    assert tool.target == "mix.exs"
+  end
+
+  test "native provider presentation handles malformed input and failed fallback lifecycles" do
+    assert Activity.provider_tools(:invalid, @workspace, @now_ms) == []
+    assert Activity.provider_trace(nil, @workspace, @now_ms) == []
+
+    started = %{
+      "kind" => "tool_started",
+      "tool" => "bash",
+      "state" => %{"arguments" => "mix test"}
+    }
+
+    completed = %{
+      "kind" => "tool_completed",
+      "tool" => "bash",
+      "state" => %{"status" => "error", "is_error" => true}
+    }
+
+    assert [row] = Activity.provider_tools([completed, :malformed, started], @workspace, @now_ms)
+    assert row.state == :terminal
+    assert row.outcome == :failed
+    assert row.label == "Failed"
+    assert row.target =~ "mix test"
+
+    assert [%Activity.TraceTool{item: trace_row}] =
+             Activity.provider_trace([completed, :malformed, started], @workspace, @now_ms)
+
+    assert trace_row.id == row.id
+  end
+
+  test "native provider lifecycles without IDs pair concurrent same-tool calls FIFO" do
+    started_first = %{
+      "kind" => "tool_started",
+      "tool" => "bash",
+      "state" => %{"arguments" => "first"}
+    }
+
+    started_second = %{
+      "kind" => "tool_started",
+      "tool" => "bash",
+      "state" => %{"arguments" => "second"}
+    }
+
+    completed = %{
+      "kind" => "tool_completed",
+      "tool" => "bash",
+      "state" => %{"status" => "completed"}
+    }
+
+    assert [first, second] =
+             Activity.provider_tools(
+               [completed, completed, started_second, started_first],
+               @workspace,
+               @now_ms
+             )
+
+    assert first.target == "first"
+    assert second.target == "second"
+  end
+
   test "retry and active delegation use deterministic priority" do
     {projection, session_id, invocation_id} = fixture(invocation_status: :running, attempt: 2)
     view = Activity.present(session_id, projection, %{}, @now_ms)
@@ -544,7 +691,8 @@ defmodule ReyCode.TUI.ActivityTest do
       status: invocation_status,
       attempt: Keyword.get(opts, :attempt, 1),
       tool_runs: Map.new(runs, &{&1.id, &1}),
-      tool_run_order: Enum.map(runs, & &1.id)
+      tool_run_order: Enum.map(runs, & &1.id),
+      provider_activity_events: Keyword.get(opts, :provider_activity_events, [])
     }
 
     turn = %Turn{
