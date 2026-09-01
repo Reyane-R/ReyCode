@@ -113,7 +113,7 @@ Linux x86_64/arm64), extracts it to `~/.reycode`, and puts a `reycode` launcher
 in `~/.local/bin`. Pin or relocate with environment variables:
 
 ```sh
-REYCODE_VERSION=v0.2.3 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
+REYCODE_VERSION=v0.2.4 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
   sh install.sh   # from a repository checkout
 ```
 
@@ -144,7 +144,7 @@ Herdr pane and do not affect ReyCode execution.
 Release builds check GitHub for a newer published release once at startup —
 one bounded request, never from source checkouts, disable with
 `REYCODE_TUI_UPDATE_CHECK=false`. When a newer release exists, the welcome
-screen and session header show "Update available: 0.2.2 → 0.2.3 — run `reycode update`".
+screen and session header show "Update available: 0.2.3 → 0.2.4 — run `reycode update`".
 
 `reycode update` re-runs the installer for the latest release and replaces
 `~/.reycode` in place; pin a version by exporting `REYCODE_VERSION` first.
