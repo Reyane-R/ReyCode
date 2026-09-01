@@ -141,7 +141,7 @@ defmodule ReyCode.TUI.Activity do
   @spec header_text(Item.t() | nil, String.t()) :: String.t()
   def header_text(nil, _frame), do: ""
 
-  def header_text(%Item{kind: :invocation} = item, frame),
+  def header_text(%Item{kind: :invocation, label: "Thinking"} = item, frame),
     do: text(%{item | target: nil}, frame)
 
   def header_text(%Item{} = item, frame), do: text(item, frame)
