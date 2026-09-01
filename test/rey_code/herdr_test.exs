@@ -4,6 +4,18 @@ defmodule ReyCode.HerdrTest do
   alias ReyCode.Herdr
   alias ReyCode.Orchestration.Projection
 
+  defmodule SnapshotEngine do
+    use GenServer
+
+    def start_link(projection), do: GenServer.start_link(__MODULE__, projection)
+
+    @impl true
+    def init(projection), do: {:ok, projection}
+
+    @impl true
+    def handle_call(:snapshot, _from, projection), do: {:reply, projection, projection}
+  end
+
   test "maps durable invocation states to Herdr lifecycle states" do
     assert Herdr.lifecycle(%Projection{invocations: %{one: %{status: :running}}}) ==
              {:working, nil}
@@ -15,6 +27,34 @@ defmodule ReyCode.HerdrTest do
 
     assert Herdr.lifecycle(%Projection{invocations: %{one: %{status: :completed}}}) ==
              {:idle, nil}
+  end
+
+  test "reports the Engine snapshot when the isolated reporter starts after the TUI" do
+    test_pid = self()
+    projection = %Projection{invocations: %{one: %{status: :running}}}
+    {:ok, engine} = SnapshotEngine.start_link(projection)
+    {:ok, task_supervisor} = Task.Supervisor.start_link()
+
+    runner = fn bin_path, args ->
+      send(test_pid, {:herdr_command, bin_path, args})
+      :ok
+    end
+
+    {:ok, reporter} =
+      Herdr.start_link(
+        name: nil,
+        env: herdr_env(),
+        engine: engine,
+        runner: runner,
+        task_supervisor: task_supervisor,
+        sequence: 0
+      )
+
+    assert_receive {:herdr_command, "/opt/herdr", args}, 1_000
+    assert "working" in args
+
+    stop_reporter(reporter, task_supervisor)
+    GenServer.stop(engine)
   end
 
   test "reports ordered state and release commands inside Herdr" do
@@ -163,8 +203,11 @@ defmodule ReyCode.HerdrTest do
     assert "release-agent" in release_args
     assert Task.yield(release_task, 50) == nil
 
+    Herdr.report(:working, nil, reporter)
+
     send(runner_pid, :finish)
     assert Task.await(release_task, 1_000) == :ok
+    refute_receive {:herdr_command, _, _, _}, 100
     stop_reporter(reporter, task_supervisor)
   end
 

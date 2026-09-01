@@ -13,10 +13,12 @@ defmodule ReyCode.Herdr do
   require Logger
 
   alias ReyCode.Orchestration.{Engine, Projection}
+  alias ReyCode.Provider.Command
 
   @source "custom:reycode"
   @agent "reycode"
   @command_timeout_ms 1_000
+  @max_output_bytes 4_096
   @release_timeout_ms 2_500
   @type lifecycle_state :: :idle | :working | :blocked
   @type runner :: (String.t(), [String.t()] -> :ok | {:error, term()})
@@ -277,11 +279,12 @@ defmodule ReyCode.Herdr do
   defp valid_text?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp run_command(bin_path, args) do
-    case System.cmd(bin_path, args, stderr_to_stdout: true) do
-      {_output, 0} -> :ok
-      {_output, status} -> {:error, {:exit_status, status}}
+    case Command.run(bin_path, args,
+           timeout_ms: @command_timeout_ms,
+           max_output_bytes: @max_output_bytes
+         ) do
+      {:ok, _output} -> :ok
+      {:error, reason} -> {:error, reason}
     end
-  rescue
-    error -> {:error, {:launch_failed, Exception.message(error)}}
   end
 end
