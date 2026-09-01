@@ -3,6 +3,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   # Activity-trail bound: newest agent notes win when the invocation exceeds it.
   @max_invocation_notes 100
+  @max_invocation_tool_events 256
 
   import Kernel, except: [apply: 2]
 
@@ -831,8 +832,10 @@ defmodule ReyCode.Orchestration.Projector do
     state =
       if invocation do
         update_invocation(state, invocation_id, fn value ->
-          value = %{value | last_frame_sequence: frame_data["frame_sequence"]}
-          apply_invocation_frame(value, frame_data["kind"], frame_data["data"])
+          frame_sequence = frame_data["frame_sequence"]
+          value = %{value | last_frame_sequence: frame_sequence}
+          data = Map.put(frame_data["data"], "frame_sequence", frame_sequence)
+          apply_invocation_frame(value, frame_data["kind"], data)
         end)
       else
         state
@@ -1042,9 +1045,15 @@ defmodule ReyCode.Orchestration.Projector do
     note = data["note"]
 
     if is_binary(note) and note != "" do
-      # Bounded activity trail: a chatty reasoner must not grow the
-      # projection without limit; the oldest lines fall off first.
-      %{invocation | notes: Enum.take(invocation.notes ++ [note], -@max_invocation_notes)}
+      event = %{
+        "kind" => "agent_note",
+        "frame_sequence" => data["frame_sequence"],
+        "note" => note
+      }
+
+      invocation
+      |> Map.put(:notes, Enum.take(invocation.notes ++ [note], -@max_invocation_notes))
+      |> append_provider_activity(event)
     else
       invocation
     end
@@ -1052,12 +1061,19 @@ defmodule ReyCode.Orchestration.Projector do
 
   defp apply_invocation_frame(invocation, kind, data)
        when kind in ["tool_started", "tool_completed"] do
-    %{invocation | tool_events: [Map.put(data, "kind", kind) | invocation.tool_events]}
+    event = Map.put(data, "kind", kind)
+
+    append_provider_activity(invocation, event)
   end
 
   # Display frames never drive invocation lifecycle status: a waiting approval
   # stays waiting even while buffered frames are recorded.
   defp apply_invocation_frame(invocation, _kind, _data), do: invocation
+
+  defp append_provider_activity(invocation, event) do
+    events = Map.get(invocation, :tool_events, [])
+    Map.put(invocation, :tool_events, Enum.take([event | events], @max_invocation_tool_events))
+  end
 
   defp participant(data) do
     %Participant{

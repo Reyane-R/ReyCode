@@ -58,10 +58,11 @@ The active transcript shows only useful execution context:
   a persistent, Projection-derived work pulse such as
   `⠹ · Reading · lib/foo.ex · 5s`. Its bounded target identifies the file,
   command, approval, or delegated work without exposing event telemetry.
-- **Timeline:** Messages are labeled `You` or by participant name. Assistant
-  Messages list their ToolRuns as recognizable action rows
-  (`✓ · Read · lib/foo.ex`). Tool-run rows are precomputed in
-  `State.session_messages` from `invocation.tool_run_order`/`tool_runs`.
+- **Timeline:** Messages are labeled `You` or by participant name. An
+  Assistant Message renders an execution ledger before its final response.
+  `State.session_messages` combines frame-ordered native provider notes and
+  collapsed tool lifecycles from `invocation.tool_events` with ReyCode-run
+  tools from `invocation.tool_run_order`/`tool_runs`.
 - **Composer:** a compact `Message Assistant` control. Enter sends. Typing `/`
   opens the command palette. `@path` and `#path` tokens attach a Workspace
   file's content to the Message (expanded by `ReyCode.TUI.Mentions` before
@@ -427,7 +428,8 @@ implements it:
   output, and emits frames. This is the legacy `provider_managed_tools` mode
   — OpenCode executes tools itself.
 - **OMP** runs the `omp` CLI in RPC mode, parses JSONL assistant events, and
-  emits normalized text frames. OMP executes its own coding-agent tools.
+  emits normalized text, reasoning-note, and tool-lifecycle frames. OMP
+  executes its own coding-agent tools.
 - **OpenAI-compatible** makes HTTP streaming requests to chat completion APIs,
   assembles normalized tool calls from SSE chunks, and returns a `Response`.
 - **Simulator** returns deterministic responses for testing. It can inject

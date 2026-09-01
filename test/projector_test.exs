@@ -139,6 +139,45 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert invocation.notes == ["checking the workspace", "reading config"]
     assert invocation.last_frame_sequence == 3
     assert state.messages["msg-assistant"].body == "Answer"
+
+    assert Enum.map(invocation.tool_events, & &1["note"]) == [
+             "reading config",
+             "checking the workspace"
+           ]
+  end
+
+  test "provider tool events retain frame chronology for the execution ledger" do
+    state =
+      Projector.replay(
+        opened_invocation_events() ++
+          [
+            event(5, :provider_frame_recorded, :invocation, "inv-1", %{
+              "invocation_id" => "inv-1",
+              "message_id" => "msg-assistant",
+              "frame_sequence" => 1,
+              "kind" => "tool_started",
+              "data" => %{
+                "tool" => "read",
+                "state" => %{"tool_call_id" => "call-1", "status" => "running"}
+              }
+            }),
+            event(6, :provider_frame_recorded, :invocation, "inv-1", %{
+              "invocation_id" => "inv-1",
+              "message_id" => "msg-assistant",
+              "frame_sequence" => 2,
+              "kind" => "tool_completed",
+              "data" => %{
+                "tool" => "read",
+                "state" => %{"tool_call_id" => "call-1", "status" => "completed"}
+              }
+            })
+          ]
+      )
+
+    assert [
+             %{"frame_sequence" => 2, "kind" => "tool_completed"},
+             %{"frame_sequence" => 1, "kind" => "tool_started"}
+           ] = state.invocations["inv-1"].tool_events
   end
 
   test "the activity trail stays bounded and keeps the newest notes" do

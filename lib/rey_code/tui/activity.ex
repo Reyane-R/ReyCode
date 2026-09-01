@@ -115,6 +115,54 @@ defmodule ReyCode.TUI.Activity do
     tool_item(run, workspace, now_ms, target_graphemes)
   end
 
+  @doc "Presents bounded native-provider tool lifecycle events as ordered activity rows."
+  @spec provider_tools([map()], String.t(), integer(), keyword()) :: [Item.t()]
+  def provider_tools(events, workspace, now_ms, opts \\ [])
+
+  def provider_tools(events, workspace, now_ms, opts) when is_list(events) do
+    target_graphemes = Keyword.get(opts, :target_graphemes, @default_target_graphemes)
+
+    events
+    |> provider_tool_rows()
+    |> Enum.map(&provider_tool_item(&1, workspace, now_ms, target_graphemes))
+  end
+
+  def provider_tools(_events, _workspace, _now_ms, _opts), do: []
+
+  @doc "Presents native-provider notes and collapsed tool lifecycles in frame order."
+  @spec provider_trace([map()], String.t(), integer(), keyword()) :: [map()]
+  def provider_trace(events, workspace, now_ms, opts \\ [])
+
+  def provider_trace(events, workspace, now_ms, opts) when is_list(events) do
+    target_graphemes = Keyword.get(opts, :target_graphemes, @default_target_graphemes)
+
+    notes =
+      events
+      |> Enum.reverse()
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {event, index} ->
+        case provider_note_row(event, index) do
+          nil -> []
+          row -> [row]
+        end
+      end)
+
+    tools =
+      Enum.map(provider_tool_rows(events), fn row ->
+        %{
+          kind: :tool,
+          item: provider_tool_item(row, workspace, now_ms, target_graphemes),
+          sequence: row.first_sequence
+        }
+      end)
+
+    (notes ++ tools)
+    |> Enum.sort_by(& &1.sequence)
+    |> Enum.map(&Map.delete(&1, :sequence))
+  end
+
+  def provider_trace(_events, _workspace, _now_ms, _opts), do: []
+
   @doc "Whether any selected-session work is actively executing."
   @spec active?(View.t()) :: boolean()
   def active?(%View{active?: active?}), do: active?
@@ -245,8 +293,6 @@ defmodule ReyCode.TUI.Activity do
   end
 
   defp running_invocation_item(invocation, turn, workspace, now_ms, target_graphemes) do
-    attempt = Map.get(invocation, :attempt, 1)
-
     case current_tool(invocation) do
       %{} = run when run.status == :running ->
         run
@@ -262,19 +308,41 @@ defmodule ReyCode.TUI.Activity do
         |> tool_item(workspace, now_ms, target_graphemes)
         |> Map.put(:id, invocation.id)
 
-      _run when attempt > 1 ->
+      _run ->
+        provider_or_invocation_item(
+          invocation,
+          turn,
+          workspace,
+          now_ms,
+          target_graphemes
+        )
+    end
+  end
+
+  defp provider_or_invocation_item(invocation, turn, workspace, now_ms, target_graphemes) do
+    provider_tool =
+      Map.get(invocation, :tool_events, [])
+      |> provider_tools(workspace, now_ms, target_graphemes: target_graphemes)
+      |> Enum.reverse()
+      |> Enum.find(& &1.active?)
+
+    cond do
+      provider_tool ->
+        %{provider_tool | id: invocation.id}
+
+      Map.get(invocation, :attempt, 1) > 1 ->
         item(
           invocation.id,
           :invocation,
           :active,
           "Retrying",
-          "attempt #{attempt}",
+          "attempt #{invocation.attempt}",
           elapsed(turn, now_ms),
           nil,
           65
         )
 
-      _run ->
+      true ->
         item(
           invocation.id,
           :invocation,
@@ -380,6 +448,147 @@ defmodule ReyCode.TUI.Activity do
     target = truncate("#{tool} approval required · /tools", target_graphemes)
     item(run.id, :approval, :blocked, "Paused", target, nil, nil, 90)
   end
+
+  defp provider_tool_rows(events) do
+    events
+    |> Enum.reverse()
+    |> Enum.with_index()
+    |> Enum.reduce([], &fold_provider_tool_event/2)
+    |> Enum.reverse()
+  end
+
+  defp provider_note_row(event, index) when is_map(event) do
+    note = provider_value(event, "note")
+
+    if provider_value(event, "kind") == "agent_note" and is_binary(note) and note != "" do
+      %{kind: :note, text: note, sequence: provider_sequence(event, index)}
+    end
+  end
+
+  defp provider_note_row(_event, _index), do: nil
+
+  defp fold_provider_tool_event({event, index}, rows) do
+    case provider_tool_row(event, index) do
+      nil ->
+        rows
+
+      row ->
+        {rows, matched?} = replace_running_provider_tool(rows, row)
+        if matched?, do: rows, else: [row | rows]
+    end
+  end
+
+  defp provider_tool_row(event, index) when is_map(event) do
+    tool = provider_value(event, "tool")
+    kind = provider_value(event, "kind")
+
+    if is_binary(tool) and kind in ["tool_started", "tool_completed"] do
+      state = provider_value(event, "state")
+      call_id = provider_call_id(event, state)
+
+      sequence = provider_sequence(event, index)
+
+      %{
+        id: call_id || "provider-tool:#{sequence}:#{tool}",
+        call_id: call_id,
+        tool: String.downcase(tool),
+        status: provider_tool_status(kind, state),
+        state: state,
+        first_sequence: sequence
+      }
+    end
+  end
+
+  defp provider_tool_row(_event, _index), do: nil
+
+  defp replace_running_provider_tool([], _row), do: {[], false}
+
+  defp replace_running_provider_tool([current | rest], row) do
+    if current.status == :running and same_provider_tool?(current, row) do
+      merged = %{
+        row
+        | id: current.id,
+          state: merge_provider_state(current.state, row.state),
+          first_sequence: current.first_sequence
+      }
+
+      {[merged | rest], true}
+    else
+      {rest, matched?} = replace_running_provider_tool(rest, row)
+      {[current | rest], matched?}
+    end
+  end
+
+  defp same_provider_tool?(%{call_id: left}, %{call_id: right})
+       when is_binary(left) and is_binary(right),
+       do: left == right
+
+  defp same_provider_tool?(left, right), do: left.tool == right.tool
+
+  defp merge_provider_state(left, right) when is_map(left) and is_map(right),
+    do: Map.merge(left, right)
+
+  defp merge_provider_state(_left, right), do: right
+
+  defp provider_tool_status("tool_started", _state), do: :running
+
+  defp provider_tool_status("tool_completed", state) do
+    status = provider_value(state, "status")
+
+    if provider_value(state, "is_error") == true or status in ["failed", "error"],
+      do: :failed,
+      else: :completed
+  end
+
+  defp provider_call_id(event, state) do
+    provider_value(event, "tool_call_id") ||
+      provider_value(state, "tool_call_id") ||
+      provider_value(state, "toolCallId") ||
+      provider_value(state, "callID") ||
+      provider_value(state, "call_id") ||
+      provider_value(state, "id")
+  end
+
+  defp provider_sequence(event, fallback) do
+    case provider_value(event, "frame_sequence") do
+      sequence when is_integer(sequence) and sequence >= 0 -> sequence
+      _sequence -> fallback
+    end
+  end
+
+  defp provider_tool_item(row, workspace, now_ms, target_graphemes) do
+    state = if is_map(row.state), do: row.state, else: %{}
+
+    run = %{
+      id: row.id,
+      tool: row.tool,
+      arguments: provider_tool_arguments(row.tool, state),
+      status: row.status,
+      result: provider_value(state, "result"),
+      error: if(row.status == :failed, do: state, else: nil),
+      requested_at: nil,
+      started_at: nil,
+      completed_at: nil
+    }
+
+    tool_item(run, workspace, now_ms, target_graphemes)
+  end
+
+  defp provider_tool_arguments(tool, state) do
+    value =
+      provider_value(state, "arguments") ||
+        provider_value(state, "args") ||
+        provider_value(state, "input")
+
+    cond do
+      is_map(value) -> value
+      tool == "bash" and is_binary(value) -> %{"command" => value}
+      true -> %{}
+    end
+  end
+
+  defp provider_value(value, key) when is_map(value), do: Map.get(value, key)
+  defp provider_value(_value, _key), do: nil
 
   defp tool_item(run, workspace, now_ms, target_graphemes) do
     name = to_string(run.tool)

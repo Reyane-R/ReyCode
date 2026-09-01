@@ -32,6 +32,9 @@ defmodule ReyCode.TUI.State do
     ToolReview
   }
 
+  @max_trace_note_graphemes 240
+  @max_trace_note_rows_count 100
+
   @doc "Subscribes the root view and initializes its stable assign shapes."
   @spec mount(keyword(), map()) :: {:ok, map()}
   def mount(opts, term) do
@@ -558,10 +561,9 @@ defmodule ReyCode.TUI.State do
         |> Map.put(:invocation, invocation)
         |> Map.put(:activity, Activity.invocation(activity, message.invocation_id))
         |> Map.put(
-          :tool_run_rows,
-          tool_run_rows(invocation, session.workspace, now_ms, target_graphemes)
+          :execution_rows,
+          execution_rows(invocation, session.workspace, now_ms, target_graphemes)
         )
-        |> Map.put(:note_rows, note_rows(invocation))
         |> Map.put(:turn, projection.turns[message.turn_id])
       end)
 
@@ -583,7 +585,59 @@ defmodule ReyCode.TUI.State do
 
   defp append_context_boundary(messages, _session), do: messages
 
-  defp tool_run_rows(invocation, workspace, now_ms, target_graphemes)
+  defp execution_rows(invocation, workspace, now_ms, target_graphemes) do
+    (provider_trace_rows(invocation, workspace, now_ms, target_graphemes) ++
+       durable_tool_run_rows(invocation, workspace, now_ms, target_graphemes))
+    |> bound_trace_notes()
+  end
+
+  defp provider_trace_rows(
+         %{participant: %{provider: provider}} = invocation,
+         workspace,
+         now_ms,
+         target_graphemes
+       )
+       when provider in [:omp, :opencode, "omp", "opencode"] do
+    events = Map.get(invocation, :tool_events, [])
+
+    if is_list(events) and Enum.any?(events, &(Map.get(&1, "kind") == "agent_note")) do
+      events
+      |> Activity.provider_trace(workspace, now_ms, target_graphemes: target_graphemes)
+      |> Enum.flat_map(&normalize_provider_trace_row/1)
+    else
+      legacy_provider_trace_rows(invocation, workspace, now_ms, target_graphemes)
+    end
+  end
+
+  defp provider_trace_rows(_invocation, _workspace, _now_ms, _target_graphemes), do: []
+
+  defp legacy_provider_trace_rows(invocation, workspace, now_ms, target_graphemes) do
+    note_trace_rows(Map.get(invocation, :notes, [])) ++
+      (invocation
+       |> Map.get(:tool_events, [])
+       |> Activity.provider_tools(workspace, now_ms, target_graphemes: target_graphemes)
+       |> Enum.map(&with_empty_diff/1))
+  end
+
+  defp normalize_provider_trace_row(%{kind: :note, text: text}), do: note_trace_rows([text])
+  defp normalize_provider_trace_row(%{kind: :tool, item: item}), do: [with_empty_diff(item)]
+  defp normalize_provider_trace_row(_row), do: []
+
+  defp note_trace_rows(notes) when is_list(notes) do
+    notes
+    |> Enum.flat_map(&note_lines/1)
+    |> Enum.map(&%{kind: :note, text: &1})
+  end
+
+  defp note_trace_rows(_notes), do: []
+
+  defp with_empty_diff(item) do
+    item
+    |> Map.put(:diff_lines, [])
+    |> Map.put(:diff_truncated?, false)
+  end
+
+  defp durable_tool_run_rows(invocation, workspace, now_ms, target_graphemes)
        when is_map(invocation) do
     invocation.tool_run_order
     |> List.wrap()
@@ -606,7 +660,7 @@ defmodule ReyCode.TUI.State do
     end)
   end
 
-  defp tool_run_rows(_invocation, _workspace, _now_ms, _target_graphemes), do: []
+  defp durable_tool_run_rows(_invocation, _workspace, _now_ms, _target_graphemes), do: []
 
   defp tool_diff_preview(%{result: %{"metadata" => %{"_tui_diff" => preview}}})
        when is_map(preview) do
@@ -618,11 +672,38 @@ defmodule ReyCode.TUI.State do
 
   defp tool_diff_preview(_run), do: %{"lines" => [], "truncated" => false}
 
-  # Activity trail shown beside the reply: newest lines win, older ones
-  # collapse into a "+k more" marker rendered by the timeline.
-  defp note_rows(%{notes: notes}) when is_list(notes), do: notes
+  defp bound_trace_notes(rows) do
+    overflow =
+      max(Enum.count(rows, &match?(%{kind: :note}, &1)) - @max_trace_note_rows_count, 0)
 
-  defp note_rows(_invocation), do: []
+    {bounded, _remaining} =
+      Enum.map_reduce(rows, overflow, fn
+        %{kind: :note}, remaining when remaining > 0 -> {nil, remaining - 1}
+        row, remaining -> {row, remaining}
+      end)
+
+    Enum.reject(bounded, &is_nil/1)
+  end
+
+  defp note_lines(note) when is_binary(note) do
+    note
+    |> String.split(~r/\R+/, trim: true)
+    |> Enum.map(fn line ->
+      line
+      |> String.replace(~r/\s+/, " ")
+      |> String.trim()
+      |> truncate_note()
+    end)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp note_lines(_note), do: []
+
+  defp truncate_note(note) do
+    if String.length(note) <= @max_trace_note_graphemes,
+      do: note,
+      else: String.slice(note, 0, @max_trace_note_graphemes - 1) <> "…"
+  end
 
   defp current_activity(term, now_ms) do
     Activity.present(

@@ -8,7 +8,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Activity, MermaidASCII}
 
-  @max_visible_notes 3
+  @max_visible_notes 8
 
   attr :messages, :list, required: true
   attr :timeline_id, :string, required: true
@@ -37,37 +37,29 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
             <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
             <box class={message_status_class(item)}>{message_status_label(item)}</box>
           </box>
-          <box
-            :for={line <- if item.body != "" do
-      render_message(item, @message_width)
-    else
-      []
-    end}
-            class="pl-2 w-full overflow-hidden"
-          >
-            <box>{line}</box>
-          </box>
-          <box
-            :if={item.body == "" and item.status in [:queued, :streaming]}
-            class="pl-2 w-full text-muted"
-          >
-            {message_placeholder(item, @activity_frame)}
-          </box>
-          <box :if={item.error} class="pl-2 w-full overflow-hidden text-error">
-            Error · {error_summary(item.error, @message_width)}
-          </box>
           <box :if={note_overflow(item) > 0} class="pl-2 w-full text-muted">
-            +{note_overflow(item)} more activity
+            +{note_overflow(item)} earlier thoughts
           </box>
-          <box :for={row <- visible_notes(item)} class="pl-2 w-full overflow-hidden text-muted">
-            · {row}
-          </box>
-          <box :for={row <- item.tool_run_rows} class="w-full">
-            <box class={tool_row_class(row)}>{Activity.text(row, @activity_frame)}</box>
+          <box :for={row <- visible_execution_rows(item, @activity_frame)} class="w-full">
+            <box class={row.class}>{row.text}</box>
             <box :for={line <- row.diff_lines} class={diff_line_class(line)}>{line}</box>
             <box :if={row.diff_truncated?} class="pl-4 w-full text-muted">
               … Diff preview truncated · /runs to inspect
             </box>
+          </box>
+          <box :if={item.body != ""} class={body_section_class(item)}>
+            <box
+              :for={line <- render_message(item, @message_width)}
+              class="pl-2 w-full overflow-hidden"
+            >
+              <box>{line}</box>
+            </box>
+          </box>
+          <box :if={show_placeholder?(item)} class="pl-2 w-full text-muted">
+            {message_placeholder(item, @activity_frame)}
+          </box>
+          <box :if={item.error} class="pl-2 w-full overflow-hidden text-error">
+            Error · {error_summary(item.error, @message_width)}
           </box>
         </box>
       </box>
@@ -129,17 +121,81 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp message_status_class(%{activity: activity}),
     do: "text-#{Activity.color(activity)}"
 
-  defp tool_row_class(row), do: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}"
   defp diff_line_class("+" <> _line), do: "pl-4 w-full text-success"
   defp diff_line_class("-" <> _line), do: "pl-4 w-full text-error"
   defp diff_line_class("@@" <> _line), do: "pl-4 w-full text-secondary"
   defp diff_line_class(_line), do: "pl-4 w-full text-muted"
 
-  defp visible_notes(%{note_rows: notes}) when is_list(notes),
-    do: Enum.take(notes, -@max_visible_notes)
+  defp visible_execution_rows(item, frame) do
+    rows = drop_hidden_notes(item.execution_rows, note_overflow(item))
 
-  defp note_overflow(%{note_rows: notes}) when is_list(notes),
-    do: max(length(notes) - @max_visible_notes, 0)
+    {rows, _current?} =
+      rows
+      |> Enum.reverse()
+      |> Enum.map_reduce(active_message?(item), fn
+        %{kind: :note, text: text}, true ->
+          {
+            trace_note(frame, text, "text-primary"),
+            false
+          }
+
+        %{kind: :note, text: text}, false ->
+          {trace_note("·", text, "text-muted"), false}
+
+        row, _current? ->
+          {
+            %{
+              class: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}",
+              text: Activity.text(row, frame),
+              diff_lines: row.diff_lines,
+              diff_truncated?: row.diff_truncated?
+            },
+            false
+          }
+      end)
+
+    Enum.reverse(rows)
+  end
+
+  defp trace_note(marker, text, color) do
+    %{
+      class: "pl-2 w-full overflow-hidden #{color}",
+      text: "#{marker} #{text}",
+      diff_lines: [],
+      diff_truncated?: false
+    }
+  end
+
+  defp drop_hidden_notes(rows, 0), do: rows
+
+  defp drop_hidden_notes(rows, overflow) do
+    {rows, _remaining} =
+      Enum.map_reduce(rows, overflow, fn
+        %{kind: :note}, remaining when remaining > 0 -> {nil, remaining - 1}
+        row, remaining -> {row, remaining}
+      end)
+
+    Enum.reject(rows, &is_nil/1)
+  end
+
+  defp note_overflow(%{execution_rows: rows}) when is_list(rows),
+    do: max(Enum.count(rows, &match?(%{kind: :note}, &1)) - @max_visible_notes, 0)
+
+  defp body_section_class(item) do
+    if item.execution_rows != [], do: "pt-1", else: ""
+  end
+
+  defp show_placeholder?(item) do
+    item.body == "" and active_message?(item) and not active_trace?(item)
+  end
+
+  defp active_trace?(item) do
+    Enum.any?(item.execution_rows, &(Map.get(&1, :active?, false) == true)) or
+      (match?(%{kind: :note}, List.last(item.execution_rows)) and active_message?(item))
+  end
+
+  defp active_message?(%{activity: %Activity.Item{active?: true}}), do: true
+  defp active_message?(%{status: status}), do: status in [:queued, :streaming]
 
   defp split_lines(spans) do
     {lines, current} = Enum.reduce(spans, {[], []}, &split_span/2)

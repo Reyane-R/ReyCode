@@ -885,16 +885,16 @@ defmodule ReyCode.TUITest do
     refute memory.active
   end
 
-  test "renders agent activity notes dimmed under the message with collapse" do
+  test "renders a bounded thinking trace before the response" do
     %{engine: tui_engine_12} = start_isolated_stack([])
-    session = start_session({120, 32}, engine: tui_engine_12)
+    session = start_session({120, 80}, engine: tui_engine_12)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     projection =
       long_response_projection(session)
       |> put_in(
         [:invocations, "inv-layout", :notes],
-        Enum.map(1..5, &"reasoning step #{&1}")
+        Enum.map(1..10, &"reasoning step #{&1}")
       )
 
     assert %{sequence: _applied} = push_projection(session, projection)
@@ -904,10 +904,102 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
 
     screen = session |> Breeze.Test.render!() |> plain()
-    assert screen =~ "+2 more activity"
+    assert screen =~ "+2 earlier thoughts"
     assert screen =~ "· reasoning step 3"
-    assert screen =~ "· reasoning step 5"
-    refute screen =~ "reasoning step 1"
+    assert screen =~ "· reasoning step 10"
+    refute Regex.match?(~r/reasoning step 1\s/, screen)
+
+    assert :binary.match(screen, "reasoning step 10") < :binary.match(screen, "Long responses")
+  end
+
+  test "renders one native provider step alongside the persistent work pulse" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 80}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    started = %{
+      "kind" => "tool_started",
+      "tool" => "bash",
+      "frame_sequence" => 1,
+      "state" => %{
+        "tool_call_id" => "native-1",
+        "status" => "running",
+        "arguments" => %{"command" => "mix test"}
+      }
+    }
+
+    projection =
+      long_response_projection(session)
+      |> put_in([:invocations, "inv-layout", :tool_events], [started])
+      |> put_in([:invocations, "inv-layout", :tool_runs], %{})
+      |> put_in([:invocations, "inv-layout", :tool_run_order], [])
+
+    push_projection(session, projection)
+    open_first_session(session)
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Running · mix test"
+
+    assert Enum.count(String.split(screen, "\n"), &String.contains?(&1, "Running · mix test")) ==
+             2
+  end
+
+  test "renders native thoughts and tool steps in provider frame order" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 80}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    note_before = %{
+      "kind" => "agent_note",
+      "frame_sequence" => 1,
+      "note" => "Inspect the project"
+    }
+
+    started = %{
+      "kind" => "tool_started",
+      "tool" => "read",
+      "frame_sequence" => 2,
+      "state" => %{
+        "tool_call_id" => "native-1",
+        "status" => "running",
+        "arguments" => %{"path" => "mix.exs"}
+      }
+    }
+
+    completed = %{
+      "kind" => "tool_completed",
+      "tool" => "read",
+      "frame_sequence" => 3,
+      "state" => %{"tool_call_id" => "native-1", "status" => "completed"}
+    }
+
+    note_after = %{
+      "kind" => "agent_note",
+      "frame_sequence" => 4,
+      "note" => "The project uses Mix"
+    }
+
+    projection =
+      long_response_projection(session)
+      |> put_in(
+        [:invocations, "inv-layout", :tool_events],
+        [note_after, completed, started, note_before]
+      )
+      |> put_in([:invocations, "inv-layout", :tool_runs], %{})
+      |> put_in([:invocations, "inv-layout", :tool_run_order], [])
+
+    push_projection(session, projection)
+    open_first_session(session)
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    before_index = :binary.match(screen, "Inspect the project")
+    tool_index = :binary.match(screen, "Read · mix.exs")
+    after_index = :binary.match(screen, "The project uses Mix")
+    response_index = :binary.match(screen, "Long responses")
+
+    assert before_index < tool_index
+    assert tool_index < after_index
+    assert after_index < response_index
   end
 
   test "renders agent-initiated delegation as a delegate tool row" do
