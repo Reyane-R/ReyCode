@@ -156,6 +156,16 @@ defmodule ReyCode.TUI.SettingsTest do
     assert removed.assigns.settings.index == 0
   end
 
+  test "terminal DEL edits the model query as Backspace" do
+    key = Breeze.KeyDecoder.decode("\x7F")
+    settings = %{Settings.initial() | step: :models, query: "ghfa", index: 1}
+
+    assert key == "\x7F"
+    assert {:noreply, result} = Settings.handle_input(key, term(settings: settings))
+    assert result.assigns.settings.query == "ghf"
+    assert result.assigns.settings.index == 0
+  end
+
   defp term(overrides \\ []) do
     session = %{
       participants: [
