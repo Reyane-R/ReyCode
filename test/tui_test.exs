@@ -428,6 +428,39 @@ defmodule ReyCode.TUITest do
     assert screen =~ "omp/alpine"
   end
 
+  test "model selection failure stays visible in a short terminal" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({100, 20}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    models = Enum.map(1..12, &"omp/model-#{&1}")
+
+    providers = %{
+      omp: %{id: :omp, name: "OMP", status: :configured, models: models}
+    }
+
+    assert {:noreply, _focused} = push_providers(session, providers)
+
+    type(session, "/connect")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.settings.step == :participants
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.settings.step == :providers
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.settings.step == :models
+
+    # The pushed catalog exists only in the TUI assigns, so the Engine
+    # rejects the selection and the wizard must explain why on screen.
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.modal == :settings
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Could not configure agents"
+    assert screen =~ "Arrow keys or j/k move"
+  end
+
   test "opens guided Primary provider and model setup on first run" do
     %{engine: engine, config: config} =
       start_isolated_stack(default_provider: :unconfigured)
