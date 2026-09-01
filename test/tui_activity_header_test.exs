@@ -22,4 +22,19 @@ defmodule ReyCode.TUI.ActivityHeaderTest do
     assert Activity.header_text(item, "⠋") == "⠋ · Thinking · 5s"
     assert Activity.text(item, "⠋") == "⠋ · Thinking · Assistant · 5s"
   end
+
+  test "header text keeps a bounded work target for non-invocation activity" do
+    item = %Activity.Item{
+      id: "run-1",
+      kind: :tool,
+      state: :active,
+      label: "Reading",
+      target: "mix.exs",
+      elapsed_seconds: 2,
+      active?: true,
+      priority: 60
+    }
+
+    assert Activity.header_text(item, "⠋") == "⠋ · Reading · mix.exs · 2s"
+  end
 end

@@ -28,7 +28,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
       </box>
       <box :for={item <- @messages} class="w-full">
         <box :if={item.kind == :context_boundary} class="w-full py-1 text-warning">
-          Context compacted · seq {item.created_sequence} · /context to inspect
+          Context compacted · /context to inspect
           <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
         </box>
         <box :if={item.kind == :message} class={message_class(item)}>

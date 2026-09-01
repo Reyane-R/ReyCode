@@ -16,27 +16,27 @@ When you run `mix run --no-halt`, ReyCode starts at a clean session home:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  REYCODE  / OPERATOR INSTRUMENT                             │
+│  REYCODE  AI workbench                                     │
 │  ─────────────────────────────────────────────────────────  │
 │                                                             │
-│  SYSTEM / PRIMARY PARTICIPANT                               │
-│  Assistant  /  <model set via /model>                       │
+│  Assistant                                                  │
+│  Assistant · <model set through runtime setup>              │
 │                                                             │
-│  CONTROL INDEX                                              │
-│  CMD /      /  command palette                              │
-│  AGENT /    /agent  create a task Participant               │
-│  REVIEW /   /advise  request an Advisor review              │
-│  HUB /      /hub  inspect child Invocations                 │
-│  FILE /     @file  attach Workspace context                 │
+│  Quick start                                                │
+│  /          Browse commands                                 │
+│  /agent     Create a teammate                               │
+│  /advise    Request a second opinion                        │
+│  /hub       Inspect delegated work                          │
+│  @file      Attach workspace context                        │
 │                                                             │
-│  TASK PARTICIPANTS / 0                                      │
-│  STANDBY / Create one when responsibility is worth keeping. │
+│  Teammates · 0                                              │
+│  None yet. Create one when a responsibility repeats.        │
 │                                                             │
-│  RECENT SESSIONS / 0                                        │
-│  STANDBY / No prior activity                                │
+│  Recent sessions · 0                                        │
+│  No previous sessions.                                      │
 ├─────────────────────────────────────────────────────────────┤
-│  INPUT / OPERATOR                                     READY │
-│  ┌ Message the Assistant  /  commands  @  files           ┐ │
+│  Message Assistant                                    Ready │
+│  ┌ Ask anything…  / commands  @ files                      ┐ │
 │  └─────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -50,21 +50,19 @@ responsibility and independently selected provider/model. `/task` creates a
 Delegation addressed to exactly one Task Participant. `/resume` explicitly
 opens a prior Session, including one rooted at another Workspace.
 
-
 The active transcript shows only useful execution context:
 
 │
-- **Header:** a two-line operator instrument. The first line carries
-  `REYCODE / model / branch / Workspace / token budget`. The second is a live
-  event rail derived from the Projection:
-  `EVT sequence │ TURN id status │ INV terminal/total │ GATE state │ OUT outcome`.
-  Highest-priority activity occupies the remaining width when the terminal is
-  wide enough.
-- **Timeline:** `OPERATOR` and `PARTICIPANT` Message rails with addressed
-  responses; assistant Messages list their ToolRuns as compact instrument rows
-  (`├ TOOL / read · path · ok`). Tool-run rows are precomputed in
+- **Header:** a two-line workbench. The first line carries
+  `Assistant · runtime · Workspace · branch` and the token budget. The second is
+  a persistent, Projection-derived work pulse such as
+  `⠹ · Reading · lib/foo.ex · 5s`. Its bounded target identifies the file,
+  command, approval, or delegated work without exposing event telemetry.
+- **Timeline:** Messages are labeled `You` or by participant name. Assistant
+  Messages list their ToolRuns as recognizable action rows
+  (`✓ · Read · lib/foo.ex`). Tool-run rows are precomputed in
   `State.session_messages` from `invocation.tool_run_order`/`tool_runs`.
-- **Composer:** an `INPUT / OPERATOR` control strip. Enter sends. Typing `/`
+- **Composer:** a compact `Message Assistant` control. Enter sends. Typing `/`
   opens the command palette. `@path` and `#path` tokens attach a Workspace
   file's content to the Message (expanded by `ReyCode.TUI.Mentions` before
   posting — Workspace-contained paths only, 512 KB per file, 2 MB total;

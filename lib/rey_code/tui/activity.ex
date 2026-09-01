@@ -132,18 +132,19 @@ defmodule ReyCode.TUI.Activity do
   end
 
   @doc """
-  Renders the ambient header status without the participant target.
+  Renders the ambient header status.
 
-  The target names the owning Participant, which the invocation row already
-  shows directly below; dropping it keeps the one-row header budget bounded.
+  Invocation targets repeat the owning Participant already named in the
+  transcript. Other targets identify the file, command, or delegated work the
+  operator needs to see in the persistent pulse.
   """
   @spec header_text(Item.t() | nil, String.t()) :: String.t()
-  def header_text(item, frame) do
-    case item do
-      nil -> ""
-      %Item{} = item -> text(%{item | target: nil}, frame)
-    end
-  end
+  def header_text(nil, _frame), do: ""
+
+  def header_text(%Item{kind: :invocation} = item, frame),
+    do: text(%{item | target: nil}, frame)
+
+  def header_text(%Item{} = item, frame), do: text(item, frame)
 
   @doc "Returns a semantic color class suffix for an item."
   @spec color(Item.t() | nil) :: String.t()
