@@ -173,16 +173,13 @@ defmodule ReyCode.TUITest do
     assert screen =~ "transcript line 78"
     refute screen =~ "• transcript line 1 "
 
-    snapshot = Breeze.ChildServer.layout_snapshot(session.pid)
-    target = Map.fetch!(snapshot.mouse_targets, State.timeline_id(session_id))
-
     wheel_up = %{
       "mouse" => %{
         "button" => "wheel_up",
         "action" => "press",
         "repeat" => 10,
-        "x" => target.left + 1,
-        "y" => target.top + 1
+        "x" => 10,
+        "y" => 10
       }
     }
 
