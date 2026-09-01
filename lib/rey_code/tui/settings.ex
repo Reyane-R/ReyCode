@@ -287,7 +287,13 @@ defmodule ReyCode.TUI.Settings do
   @spec visible_models(map(), map(), pos_integer()) :: [{String.t(), non_neg_integer()}]
   def visible_models(providers, settings, height) do
     model_options = models(providers, settings)
-    count = max(height - 9, 3)
+
+    # Rows the wizard spends around the list: 2 outer padding, 3 header,
+    # 2 step label, 2 list padding, 2 list header, 3 notice, 3 footer.
+    # Reserving the notice row even when absent keeps a save failure and
+    # the footer on screen at every terminal height — guarded by the
+    # rendered fit test in ReyCode.TUITest.
+    count = max(height - 17, 3)
 
     start =
       settings.index
