@@ -68,6 +68,13 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:create_blank_session, title, workspace})
   end
 
+  @doc "Returns the newest Session rooted at a Workspace, creating a blank source Session when absent."
+  @spec ensure_workspace_session(term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, atom()}
+  def ensure_workspace_session(workspace, server \\ __MODULE__) do
+    GenServer.call(server, {:ensure_workspace_session, workspace})
+  end
+
   @doc "Creates a fresh durable session titled from its first input."
   @spec create_session(term(), term(), GenServer.server()) :: {:ok, String.t()} | {:error, atom()}
   def create_session(source_session_id, title, server \\ __MODULE__) do
@@ -261,6 +268,9 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:create_blank_session, raw_title, workspace}, _from, state),
     do: Sessions.create(state, raw_title, workspace)
+
+  def handle_call({:ensure_workspace_session, workspace}, _from, state),
+    do: Sessions.ensure_workspace(state, workspace)
 
   def handle_call({:create_session, source_session_id, title}, _from, state),
     do: Sessions.create_session(state, source_session_id, title)

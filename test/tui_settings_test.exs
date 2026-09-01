@@ -39,7 +39,7 @@ defmodule ReyCode.TUI.SettingsTest do
     assert closed.focused == "prompt"
   end
 
-  test "first-run setup does not interrupt configured, used, or multi-Session workspaces" do
+  test "first-run setup does not interrupt configured or used selected Sessions" do
     configured = %{
       participants: [
         %{id: "builder", kind: :primary, provider: :opencode, model: "openai/gpt"}
@@ -62,7 +62,7 @@ defmodule ReyCode.TUI.SettingsTest do
     refute Settings.first_run_required?(used, "room-1")
 
     multiple = %{unconfigured | session_order: ["room-1", "room-2"]}
-    refute Settings.first_run_required?(multiple, "room-1")
+    assert Settings.first_run_required?(multiple, "room-1")
   end
 
   test "move/2 wraps participant selection" do

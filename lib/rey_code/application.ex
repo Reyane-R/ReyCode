@@ -25,7 +25,13 @@ defmodule ReyCode.Application do
       {ReyCode.Orchestration.Supervisor, config: runtime_config}
     ]
 
-    children = children ++ tui_children(runtime_config)
+    children =
+      children ++
+        tui_children(runtime_config) ++
+        [
+          {ReyCode.Herdr,
+           task_supervisor: ReyCode.ProviderTaskSupervisor, engine: ReyCode.Orchestration.Engine}
+        ]
 
     opts = [strategy: :rest_for_one, name: ReyCode.Supervisor]
     Supervisor.start_link(children, opts)
@@ -38,7 +44,7 @@ defmodule ReyCode.Application do
           Supervisor.child_spec(
             {Breeze.Server,
              view: ReyCode.TUI,
-             start_opts: [config: runtime_config],
+             start_opts: [config: runtime_config, workspace: File.cwd!()],
              theme: ReyCode.Theme.default(),
              logger: :replace,
              global_keybindings: ReyCode.TUI.global_keybindings(runtime_config)},

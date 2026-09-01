@@ -43,6 +43,16 @@ defmodule ReyCode.Orchestration.Projection do
     }
   end
 
+  @doc "Returns the newest Session ID rooted at an exact canonical Workspace."
+  @spec newest_session_id_for_workspace(t(), String.t()) :: String.t() | nil
+  def newest_session_id_for_workspace(projection, workspace) do
+    projection.session_order
+    |> Enum.reverse()
+    |> Enum.find(fn session_id ->
+      projection.sessions[session_id].workspace == workspace
+    end)
+  end
+
   defp normalize_legacy_keys(projection) do
     {legacy_sessions, projection} = Map.pop(projection, :rooms)
     {legacy_order, projection} = Map.pop(projection, :room_order)

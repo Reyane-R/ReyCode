@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Engine.Sessions do
   @moduledoc "Handles session creation and runtime configuration commands for the Engine."
 
-  alias ReyCode.Orchestration.{EventEntries, ModelTier, Validation}
+  alias ReyCode.Orchestration.{EventEntries, ModelTier, Projection, Validation}
 
   alias ReyCode.Orchestration.Engine.{
     Configuration,
@@ -12,30 +12,47 @@ defmodule ReyCode.Orchestration.Engine.Sessions do
 
   @type response :: {:reply, term(), map()}
   @max_task_participants_per_session 32
+  @workspace_session_title "ReyCode"
+
+  @doc "Returns the newest Session for a canonical Workspace or creates its blank source Session."
+  @spec ensure_workspace(map(), term()) :: response()
+  def ensure_workspace(state, raw_workspace) do
+    case Validation.session(@workspace_session_title, raw_workspace, config: state.config) do
+      {:ok, title, workspace} ->
+        case Projection.newest_session_id_for_workspace(state.projection, workspace) do
+          nil -> create_valid(state, title, workspace)
+          session_id -> {:reply, {:ok, session_id}, state}
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
 
   @doc "Validates and creates one durable blank session."
   @spec create(map(), term(), term()) :: response()
   def create(state, raw_title, workspace) do
     case Validation.session(raw_title, workspace, config: state.config) do
-      {:ok, title, workspace} ->
-        session_id = Identity.new_id("session")
-        slug = Identity.unique_slug(Identity.slugify(title), state.projection)
-
-        {type, payload, metadata} =
-          EventEntries.session_created(
-            session_id,
-            slug,
-            title,
-            workspace,
-            Options.default_participants(state.config.providers)
-          )
-
-        next = Persistence.append_and_apply!(state, [{type, payload, metadata}])
-        {:reply, {:ok, session_id}, next}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+      {:ok, title, workspace} -> create_valid(state, title, workspace)
+      {:error, reason} -> {:reply, {:error, reason}, state}
     end
+  end
+
+  defp create_valid(state, title, workspace) do
+    session_id = Identity.new_id("session")
+    slug = Identity.unique_slug(Identity.slugify(title), state.projection)
+
+    {type, payload, metadata} =
+      EventEntries.session_created(
+        session_id,
+        slug,
+        title,
+        workspace,
+        Options.default_participants(state.config.providers)
+      )
+
+    next = Persistence.append_and_apply!(state, [{type, payload, metadata}])
+    {:reply, {:ok, session_id}, next}
   end
 
   @doc "Creates a fresh titled durable session by copying the source workspace and agent profiles."

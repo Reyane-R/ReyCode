@@ -97,15 +97,12 @@ defmodule ReyCode.TUI.Settings do
 
   @doc "Whether the durable projection is a pristine Session needing Primary runtime setup."
   @spec first_run_required?(map(), String.t() | nil) :: boolean()
-  def first_run_required?(%{session_order: [only_id], sessions: sessions}, selected_id)
-      when only_id == selected_id do
+  def first_run_required?(%{sessions: sessions}, selected_id) do
     session = Map.get(sessions, selected_id)
     primary = session && Enum.find(session.participants, &(&1.kind == :primary))
 
     not is_nil(primary) and session.message_order == [] and runtime_missing?(primary)
   end
-
-  def first_run_required?(_projection, _session_id), do: false
 
   @doc "Opens model confirmation for one revalidated provider/model."
   @spec open_at(map(), atom(), String.t()) :: map()

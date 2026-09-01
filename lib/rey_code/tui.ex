@@ -188,6 +188,7 @@ defmodule ReyCode.TUI do
   end
 
   def quit(_event, term) do
+    ReyCode.Herdr.release()
     server = self()
 
     Task.start(fn ->
@@ -367,6 +368,7 @@ defmodule ReyCode.TUI do
   end
 
   def handle_info({:projection_snapshot, projection}, term) do
+    ReyCode.Herdr.report_projection(projection)
     :ok = Attention.notify(term.assigns.projection, projection)
     {:noreply, State.projection_updated(term, projection)}
   end

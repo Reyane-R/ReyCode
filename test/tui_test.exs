@@ -19,6 +19,8 @@ defmodule ReyCode.TUITest do
     WorkPlan
   }
 
+  alias ReyCode.Security.CanonicalPath
+
   alias ReyCode.Test.Wait
   alias ReyCode.Tool.Result
   alias ReyCode.TUI.{AnimationClock, State}
@@ -55,6 +57,52 @@ defmodule ReyCode.TUITest do
     assert session_screen =~ "ReyCode"
     assert session_screen =~ "Handle this directly"
     refute session_screen =~ "#"
+  end
+
+  test "startup selects the newest Session rooted at the launch Workspace" do
+    workspace = temporary_workspace("launch")
+    foreign_workspace = temporary_workspace("foreign")
+
+    %{engine: engine} =
+      start_isolated_stack(workspace_roots: [workspace, foreign_workspace])
+
+    assert {:ok, _older_id} = Engine.create_blank_session("Older local", workspace, engine)
+    assert {:ok, local_id} = Engine.create_blank_session("Newest local", workspace, engine)
+
+    assert {:ok, foreign_id} =
+             Engine.create_blank_session("Global latest", foreign_workspace, engine)
+
+    assert List.last(Engine.snapshot(engine).session_order) == foreign_id
+
+    session = start_session({120, 32}, engine: engine, workspace: workspace)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    assert Breeze.Test.metadata(session).assigns.selected_session_id == local_id
+  end
+
+  test "startup creates one reusable blank source Session for a new launch Workspace" do
+    workspace = temporary_workspace("new")
+    %{engine: engine} = start_isolated_stack(workspace_roots: [workspace])
+
+    missing_workspace = Path.join(workspace, "missing")
+
+    assert Engine.ensure_workspace_session(missing_workspace, engine) ==
+             {:error, :invalid_workspace}
+
+    assert Engine.create_blank_session("Invalid", missing_workspace, engine) ==
+             {:error, :invalid_workspace}
+
+    first = start_session({120, 32}, engine: engine, workspace: workspace)
+    first_id = Breeze.Test.metadata(first).assigns.selected_session_id
+    assert Engine.snapshot(engine).sessions[first_id].workspace == workspace
+    assert workspace_session_ids(engine, workspace) == [first_id]
+    Breeze.Test.stop(first)
+
+    second = start_session({120, 32}, engine: engine, workspace: workspace)
+    on_exit(fn -> Breeze.Test.stop(second) end)
+
+    assert Breeze.Test.metadata(second).assigns.selected_session_id == first_id
+    assert workspace_session_ids(engine, workspace) == [first_id]
   end
 
   test "composer supports multiline drafts without submitting" do
@@ -129,7 +177,7 @@ defmodule ReyCode.TUITest do
     %{engine: engine} = start_isolated_stack(workspace_roots: [workspace])
     assert {:ok, session_id} = Engine.create_blank_session("File completion", workspace, engine)
 
-    session = start_session({120, 32}, engine: engine)
+    session = start_session({120, 32}, engine: engine, workspace: workspace)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     type(session, "Read @fzt")
@@ -1556,8 +1604,29 @@ defmodule ReyCode.TUITest do
       size: size,
       theme: ReyCode.Theme.default(),
       global_keybindings: ReyCode.TUI.global_keybindings(),
-      start_opts: Keyword.take(opts, [:engine, :config, :memory_store])
+      start_opts: Keyword.take(opts, [:engine, :config, :memory_store, :workspace])
     )
+  end
+
+  defp temporary_workspace(label) do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_tui_#{label}_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(path)
+    on_exit(fn -> File.rm_rf!(path) end)
+    {:ok, canonical} = CanonicalPath.resolve(path)
+    canonical
+  end
+
+  defp workspace_session_ids(engine, workspace) do
+    projection = Engine.snapshot(engine)
+
+    Enum.filter(projection.session_order, fn session_id ->
+      projection.sessions[session_id].workspace == workspace
+    end)
   end
 
   defp plain(screen), do: Regex.replace(~r/\e\[[0-9;]*m/, screen, "")

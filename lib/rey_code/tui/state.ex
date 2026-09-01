@@ -42,7 +42,11 @@ defmodule ReyCode.TUI.State do
     provider_catalog = Keyword.get(opts, :provider_catalog, Catalog)
     config = Keyword.get_lazy(opts, :config, &ReyCode.RuntimeConfig.fresh/0)
     memory_store = Keyword.get(opts, :memory_store, MemoryStore)
+    workspace = Keyword.get_lazy(opts, :workspace, &File.cwd!/0)
+    selected_session_id = ensure_workspace_session!(engine, workspace)
     projection = Engine.subscribe(engine)
+
+    ReyCode.Herdr.report_projection(projection)
     catalog_snapshot = Catalog.subscribe(provider_catalog)
     keybindings = ReyCode.TUI.resolved_keybindings(config)
 
@@ -68,7 +72,7 @@ defmodule ReyCode.TUI.State do
         providers_generation: catalog_snapshot.generation,
         memory_store: memory_store,
         projection: projection,
-        selected_session_id: List.last(projection.session_order),
+        selected_session_id: selected_session_id,
         drafts: %{},
         mode: :direct,
         home: true,
@@ -108,6 +112,16 @@ defmodule ReyCode.TUI.State do
       {:ok, Settings.open_first_run(term)}
     else
       {:ok, term}
+    end
+  end
+
+  defp ensure_workspace_session!(engine, workspace) do
+    case Engine.ensure_workspace_session(workspace, engine) do
+      {:ok, session_id} ->
+        session_id
+
+      {:error, reason} ->
+        raise ArgumentError, "cannot open Workspace #{inspect(workspace)}: #{reason}"
     end
   end
 
@@ -625,7 +639,7 @@ defmodule ReyCode.TUI.State do
   @doc "Returns to a clean session home without creating persistence yet."
   @spec start_session(map()) :: map()
   def start_session(term) do
-    source_session_id = List.last(term.assigns.projection.session_order)
+    source_session_id = term.assigns.selected_session_id
     drafts = Map.put(term.assigns.drafts, source_session_id, "")
 
     term
