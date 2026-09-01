@@ -35,7 +35,7 @@ defmodule ReyCode.Orchestration.ProjectorSnapshotTest do
       status: :running,
       attempt: 1,
       usage: nil,
-      tool_events: [],
+      provider_activity_events: [],
       pending_tool_review: nil,
       last_frame_sequence: 4,
       error: nil

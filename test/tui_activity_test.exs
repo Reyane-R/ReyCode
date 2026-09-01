@@ -96,7 +96,7 @@ defmodule ReyCode.TUI.ActivityTest do
     assert row.target == "mix.exs"
 
     {projection, session_id, invocation_id} =
-      fixture(invocation_status: :running, tool_events: [started])
+      fixture(invocation_status: :running, provider_activity_events: [started])
 
     view = Activity.present(session_id, projection, %{}, @now_ms)
     assert Activity.invocation(view, invocation_id).label == "Reading"
@@ -135,9 +135,9 @@ defmodule ReyCode.TUI.ActivityTest do
     }
 
     assert [
-             %{kind: :note, text: "Inspect the project"},
-             %{kind: :tool, item: tool},
-             %{kind: :note, text: "The project uses Mix"}
+             %Activity.TraceNote{text: "Inspect the project"},
+             %Activity.TraceTool{item: tool},
+             %Activity.TraceNote{text: "The project uses Mix"}
            ] =
              Activity.provider_trace(
                [note_after, completed, started, note_before],
@@ -172,10 +172,40 @@ defmodule ReyCode.TUI.ActivityTest do
     assert row.label == "Failed"
     assert row.target =~ "mix test"
 
-    assert [%{kind: :tool, item: trace_row}] =
+    assert [%Activity.TraceTool{item: trace_row}] =
              Activity.provider_trace([completed, :malformed, started], @workspace, @now_ms)
 
     assert trace_row.id == row.id
+  end
+
+  test "native provider lifecycles without IDs pair concurrent same-tool calls FIFO" do
+    started_first = %{
+      "kind" => "tool_started",
+      "tool" => "bash",
+      "state" => %{"arguments" => "first"}
+    }
+
+    started_second = %{
+      "kind" => "tool_started",
+      "tool" => "bash",
+      "state" => %{"arguments" => "second"}
+    }
+
+    completed = %{
+      "kind" => "tool_completed",
+      "tool" => "bash",
+      "state" => %{"status" => "completed"}
+    }
+
+    assert [first, second] =
+             Activity.provider_tools(
+               [completed, completed, started_second, started_first],
+               @workspace,
+               @now_ms
+             )
+
+    assert first.target == "first"
+    assert second.target == "second"
   end
 
   test "retry and active delegation use deterministic priority" do
@@ -662,7 +692,7 @@ defmodule ReyCode.TUI.ActivityTest do
       attempt: Keyword.get(opts, :attempt, 1),
       tool_runs: Map.new(runs, &{&1.id, &1}),
       tool_run_order: Enum.map(runs, & &1.id),
-      tool_events: Keyword.get(opts, :tool_events, [])
+      provider_activity_events: Keyword.get(opts, :provider_activity_events, [])
     }
 
     turn = %Turn{

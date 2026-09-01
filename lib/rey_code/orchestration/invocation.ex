@@ -35,7 +35,7 @@ defmodule ReyCode.Orchestration.Invocation do
     :status,
     :attempt,
     :usage,
-    :tool_events,
+    :provider_activity_events,
     :notes,
     :rounds,
     :pending_steering,
@@ -68,7 +68,7 @@ defmodule ReyCode.Orchestration.Invocation do
             status: nil,
             attempt: 1,
             usage: nil,
-            tool_events: [],
+            provider_activity_events: [],
             notes: [],
             rounds: [],
             pending_steering: [],
@@ -101,7 +101,7 @@ defmodule ReyCode.Orchestration.Invocation do
           status: atom() | nil,
           attempt: pos_integer(),
           usage: map() | nil,
-          tool_events: [map()],
+          provider_activity_events: [map()],
           notes: [String.t()],
           rounds: [ProviderRound.t()],
           tool_runs: %{optional(String.t()) => ToolRun.t()},
@@ -122,11 +122,15 @@ defmodule ReyCode.Orchestration.Invocation do
     execution_context = execution_context(invocation)
     coordination = coordination(invocation)
 
+    provider_activity_events =
+      fetch(invocation, :provider_activity_events, fetch(invocation, :tool_events, []))
+
     invocation =
       invocation
       |> Map.put(:project_instructions, capture)
       |> Map.put(:execution_context, execution_context)
       |> Map.put(:coordination, coordination)
+      |> Map.put(:provider_activity_events, provider_activity_events)
       |> Map.put_new(:phase_index, Map.get(invocation, :stage))
       |> then(&struct!(__MODULE__, Map.take(&1, @fields)))
 

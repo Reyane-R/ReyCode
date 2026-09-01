@@ -127,34 +127,20 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp diff_line_class(_line), do: "pl-4 w-full text-muted"
 
   defp visible_execution_rows(item, frame) do
-    rows = drop_hidden_notes(item.execution_rows, note_overflow(item))
+    item.execution_rows
+    |> drop_hidden_notes(visible_note_overflow(item.execution_rows))
+    |> Enum.map(fn
+      %{kind: :note, text: text} ->
+        trace_note("·", text, "text-muted")
 
-    {rows, _current?} =
-      rows
-      |> Enum.reverse()
-      |> Enum.map_reduce(active_message?(item), fn
-        %{kind: :note, text: text}, true ->
-          {
-            trace_note(frame, text, "text-primary"),
-            false
-          }
-
-        %{kind: :note, text: text}, false ->
-          {trace_note("·", text, "text-muted"), false}
-
-        row, _current? ->
-          {
-            %{
-              class: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}",
-              text: Activity.text(row, frame),
-              diff_lines: row.diff_lines,
-              diff_truncated?: row.diff_truncated?
-            },
-            false
-          }
-      end)
-
-    Enum.reverse(rows)
+      row ->
+        %{
+          class: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}",
+          text: Activity.text(row, frame),
+          diff_lines: row.diff_lines,
+          diff_truncated?: row.diff_truncated?
+        }
+    end)
   end
 
   defp trace_note(marker, text, color) do
@@ -178,7 +164,10 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     Enum.reject(rows, &is_nil/1)
   end
 
-  defp note_overflow(%{execution_rows: rows}) when is_list(rows),
+  defp note_overflow(%{execution_rows: rows, hidden_trace_note_count: hidden_count}),
+    do: hidden_count + visible_note_overflow(rows)
+
+  defp visible_note_overflow(rows),
     do: max(Enum.count(rows, &match?(%{kind: :note}, &1)) - @max_visible_notes, 0)
 
   defp body_section_class(item) do
@@ -190,8 +179,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   end
 
   defp active_trace?(item) do
-    Enum.any?(item.execution_rows, &(Map.get(&1, :active?, false) == true)) or
-      (match?(%{kind: :note}, List.last(item.execution_rows)) and active_message?(item))
+    Enum.any?(item.execution_rows, &(Map.get(&1, :active?, false) == true))
   end
 
   defp active_message?(%{activity: %Activity.Item{active?: true}}), do: true

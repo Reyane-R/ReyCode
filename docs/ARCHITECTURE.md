@@ -61,7 +61,7 @@ The active transcript shows only useful execution context:
 - **Timeline:** Messages are labeled `You` or by participant name. An
   Assistant Message renders an execution ledger before its final response.
   `State.session_messages` combines frame-ordered native provider notes and
-  collapsed tool lifecycles from `invocation.tool_events` with ReyCode-run
+  collapsed tool lifecycles from `invocation.provider_activity_events` with
   tools from `invocation.tool_run_order`/`tool_runs`.
 - **Composer:** a compact `Message Assistant` control. Enter sends. Typing `/`
   opens the command palette. `@path` and `#path` tokens attach a Workspace

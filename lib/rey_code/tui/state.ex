@@ -556,14 +556,15 @@ defmodule ReyCode.TUI.State do
         message = projection.messages[message_id]
         invocation = projection.invocations[message.invocation_id]
 
+        {execution_rows, hidden_trace_note_count} =
+          execution_rows(invocation, session.workspace, now_ms, target_graphemes)
+
         message
         |> Map.put(:kind, :message)
         |> Map.put(:invocation, invocation)
         |> Map.put(:activity, Activity.invocation(activity, message.invocation_id))
-        |> Map.put(
-          :execution_rows,
-          execution_rows(invocation, session.workspace, now_ms, target_graphemes)
-        )
+        |> Map.put(:execution_rows, execution_rows)
+        |> Map.put(:hidden_trace_note_count, hidden_trace_note_count)
         |> Map.put(:turn, projection.turns[message.turn_id])
       end)
 
@@ -586,9 +587,12 @@ defmodule ReyCode.TUI.State do
   defp append_context_boundary(messages, _session), do: messages
 
   defp execution_rows(invocation, workspace, now_ms, target_graphemes) do
-    (provider_trace_rows(invocation, workspace, now_ms, target_graphemes) ++
-       durable_tool_run_rows(invocation, workspace, now_ms, target_graphemes))
-    |> bound_trace_notes()
+    {rows, hidden_note_row_count} =
+      (provider_trace_rows(invocation, workspace, now_ms, target_graphemes) ++
+         durable_tool_run_rows(invocation, workspace, now_ms, target_graphemes))
+      |> bound_trace_notes()
+
+    {rows, hidden_note_row_count + provider_activity_hidden_note_rows(invocation)}
   end
 
   defp provider_trace_rows(
@@ -598,9 +602,10 @@ defmodule ReyCode.TUI.State do
          target_graphemes
        )
        when provider in [:omp, :opencode, "omp", "opencode"] do
-    events = Map.get(invocation, :tool_events, [])
+    events = Map.get(invocation, :provider_activity_events, [])
 
-    if is_list(events) and Enum.any?(events, &(Map.get(&1, "kind") == "agent_note")) do
+    if is_list(events) and
+         Enum.any?(events, &(Map.get(&1, "kind") in ["agent_note", "activity_overflow"])) do
       events
       |> Activity.provider_trace(workspace, now_ms, target_graphemes: target_graphemes)
       |> Enum.flat_map(&normalize_provider_trace_row/1)
@@ -611,17 +616,31 @@ defmodule ReyCode.TUI.State do
 
   defp provider_trace_rows(_invocation, _workspace, _now_ms, _target_graphemes), do: []
 
+  defp provider_activity_hidden_note_rows(invocation) when is_map(invocation) do
+    invocation
+    |> Map.get(:provider_activity_events, [])
+    |> Enum.find_value(0, fn
+      %{"kind" => "activity_overflow", "hidden_note_row_count" => count}
+      when is_integer(count) and count >= 0 ->
+        count
+
+      _event ->
+        nil
+    end)
+  end
+
+  defp provider_activity_hidden_note_rows(_invocation), do: 0
+
   defp legacy_provider_trace_rows(invocation, workspace, now_ms, target_graphemes) do
     note_trace_rows(Map.get(invocation, :notes, [])) ++
       (invocation
-       |> Map.get(:tool_events, [])
+       |> Map.get(:provider_activity_events, [])
        |> Activity.provider_tools(workspace, now_ms, target_graphemes: target_graphemes)
        |> Enum.map(&with_empty_diff/1))
   end
 
-  defp normalize_provider_trace_row(%{kind: :note, text: text}), do: note_trace_rows([text])
-  defp normalize_provider_trace_row(%{kind: :tool, item: item}), do: [with_empty_diff(item)]
-  defp normalize_provider_trace_row(_row), do: []
+  defp normalize_provider_trace_row(%Activity.TraceNote{text: text}), do: note_trace_rows([text])
+  defp normalize_provider_trace_row(%Activity.TraceTool{item: item}), do: [with_empty_diff(item)]
 
   defp note_trace_rows(notes) when is_list(notes) do
     notes
@@ -682,7 +701,7 @@ defmodule ReyCode.TUI.State do
         row, remaining -> {row, remaining}
       end)
 
-    Enum.reject(bounded, &is_nil/1)
+    {Enum.reject(bounded, &is_nil/1), overflow}
   end
 
   defp note_lines(note) when is_binary(note) do

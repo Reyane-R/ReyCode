@@ -43,6 +43,22 @@ defmodule ReyCode.TUI.Activity do
           }
   end
 
+  defmodule TraceNote do
+    @moduledoc false
+    @enforce_keys [:text]
+    defstruct [:text]
+
+    @type t :: %__MODULE__{text: String.t()}
+  end
+
+  defmodule TraceTool do
+    @moduledoc false
+    @enforce_keys [:item]
+    defstruct [:item]
+
+    @type t :: %__MODULE__{item: Item.t()}
+  end
+
   defmodule View do
     @moduledoc false
 
@@ -130,7 +146,8 @@ defmodule ReyCode.TUI.Activity do
   def provider_tools(_events, _workspace, _now_ms, _opts), do: []
 
   @doc "Presents native-provider notes and collapsed tool lifecycles in frame order."
-  @spec provider_trace([map()], String.t(), integer(), keyword()) :: [map()]
+  @spec provider_trace([map()], String.t(), integer(), keyword()) ::
+          [TraceNote.t() | TraceTool.t()]
   def provider_trace(events, workspace, now_ms, opts \\ [])
 
   def provider_trace(events, workspace, now_ms, opts) when is_list(events) do
@@ -158,7 +175,10 @@ defmodule ReyCode.TUI.Activity do
 
     (notes ++ tools)
     |> Enum.sort_by(& &1.sequence)
-    |> Enum.map(&Map.delete(&1, :sequence))
+    |> Enum.map(fn
+      %{kind: :note, text: text} -> %TraceNote{text: text}
+      %{kind: :tool, item: item} -> %TraceTool{item: item}
+    end)
   end
 
   def provider_trace(_events, _workspace, _now_ms, _opts), do: []
@@ -321,7 +341,7 @@ defmodule ReyCode.TUI.Activity do
 
   defp provider_or_invocation_item(invocation, turn, workspace, now_ms, target_graphemes) do
     provider_tool =
-      Map.get(invocation, :tool_events, [])
+      Map.get(invocation, :provider_activity_events, [])
       |> provider_tools(workspace, now_ms, target_graphemes: target_graphemes)
       |> Enum.reverse()
       |> Enum.find(& &1.active?)
@@ -503,27 +523,50 @@ defmodule ReyCode.TUI.Activity do
 
   defp replace_running_provider_tool([], _row), do: {[], false}
 
-  defp replace_running_provider_tool([current | rest], row) do
-    if current.status == :running and same_provider_tool?(current, row) do
-      merged = %{
-        row
-        | id: current.id,
-          state: merge_provider_state(current.state, row.state),
-          first_sequence: current.first_sequence
-      }
+  defp replace_running_provider_tool(rows, %{call_id: nil, status: :running}),
+    do: {rows, false}
 
-      {[merged | rest], true}
+  defp replace_running_provider_tool(rows, %{call_id: nil} = row) do
+    {rows, matched?} =
+      rows
+      |> Enum.reverse()
+      |> replace_legacy_provider_tool(row)
+
+    {Enum.reverse(rows), matched?}
+  end
+
+  defp replace_running_provider_tool(rows, row), do: replace_provider_tool_by_id(rows, row)
+
+  defp replace_provider_tool_by_id([], _row), do: {[], false}
+
+  defp replace_provider_tool_by_id([current | rest], row) do
+    if current.status == :running and current.call_id == row.call_id do
+      {[merge_provider_tool_row(current, row) | rest], true}
     else
-      {rest, matched?} = replace_running_provider_tool(rest, row)
+      {rest, matched?} = replace_provider_tool_by_id(rest, row)
       {[current | rest], matched?}
     end
   end
 
-  defp same_provider_tool?(%{call_id: left}, %{call_id: right})
-       when is_binary(left) and is_binary(right),
-       do: left == right
+  defp replace_legacy_provider_tool([], _row), do: {[], false}
 
-  defp same_provider_tool?(left, right), do: left.tool == right.tool
+  defp replace_legacy_provider_tool([current | rest], row) do
+    if current.status == :running and current.tool == row.tool do
+      {[merge_provider_tool_row(current, row) | rest], true}
+    else
+      {rest, matched?} = replace_legacy_provider_tool(rest, row)
+      {[current | rest], matched?}
+    end
+  end
+
+  defp merge_provider_tool_row(current, row) do
+    %{
+      row
+      | id: current.id,
+        state: merge_provider_state(current.state, row.state),
+        first_sequence: current.first_sequence
+    }
+  end
 
   defp merge_provider_state(left, right) when is_map(left) and is_map(right),
     do: Map.merge(left, right)
@@ -541,12 +584,7 @@ defmodule ReyCode.TUI.Activity do
   end
 
   defp provider_call_id(event, state) do
-    provider_value(event, "tool_call_id") ||
-      provider_value(state, "tool_call_id") ||
-      provider_value(state, "toolCallId") ||
-      provider_value(state, "callID") ||
-      provider_value(state, "call_id") ||
-      provider_value(state, "id")
+    provider_value(event, "tool_call_id") || provider_value(state, "tool_call_id")
   end
 
   defp provider_sequence(event, fallback) do

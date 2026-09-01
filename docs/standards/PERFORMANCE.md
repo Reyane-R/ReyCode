@@ -16,6 +16,22 @@ These are design envelopes, not benchmarks. Changes to a data-plane path update 
 
 Design intent: network latency dominates. Buffer short text to reduce event transactions while flushing within interactive latency. Output caps bound binary retention and parsing.
 
+### OMP native activity sketch
+
+```text
+Path: OMP JSONL thinking/tool events → normalized Provider frames → EventStore → Projection → TUI
+Expected operations/second: 1–10 activity frames during an interactive Invocation
+Peak operations/second: Producer-driven, within the 10,000,000-byte OMP output cap
+Network bytes and latency: No additional requests; existing subprocess JSONL bytes are normalized inline
+Storage bytes and latency: One provider_frame_recorded event per note or tool start/update/end; batched up to 16 frames
+Retained memory: Newest 256 provider activity events plus newest 100 note strings per Invocation
+CPU work per item: One map normalization; timeline lifecycle folding/sort is bounded to 256 events
+Batch size: 16 normalized frames per persistence batch
+Maximum duration: Existing 600,000 ms provider deadline
+Failure at each bound: OMP output truncation fails closed; Projection drops oldest activity after 256 events
+Measurement plan: Track frame-batch count and render latency in provider/TUI profiling
+```
+
 ## Event storage and replay
 
 | Dimension | Envelope |
@@ -80,7 +96,8 @@ Design intent: every cycle either advances, consumes rework budget, or terminate
 | Session/Message/Turn retention | Entire durable history retained in Projection |
 | TUI render input | Current full Projection, presentation windows selected during rendering |
 | Agent-note trail | Newest 100 notes per Invocation (`@max_invocation_notes` in Projector) |
-| TUI activity lines visible | 3 per message behind a `+k more activity` collapse |
+| Provider activity trail | Newest 256 native note/tool events per Invocation (`@max_provider_activity_events_count` in Projector) |
+| TUI reasoning lines visible | 8 per message behind a `+k earlier thoughts` collapse |
 | Terminal dimensions | Runtime terminal size; tests include 50x20 through 160x32 |
 
 The total Projection has no retention bound. Before long-lived multi-user operation, choose one of archival, pagination/windowed projection, or explicit memory/database capacity limits.

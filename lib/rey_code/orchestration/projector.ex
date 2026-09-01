@@ -3,7 +3,7 @@ defmodule ReyCode.Orchestration.Projector do
 
   # Activity-trail bound: newest agent notes win when the invocation exceeds it.
   @max_invocation_notes 100
-  @max_invocation_tool_events 256
+  @max_provider_activity_events_count 256
 
   import Kernel, except: [apply: 2]
 
@@ -901,7 +901,7 @@ defmodule ReyCode.Orchestration.Projector do
       status: :queued,
       attempt: value_or(data["attempt"], 1),
       usage: nil,
-      tool_events: [],
+      provider_activity_events: [],
       rounds: [],
       tool_runs: %{},
       tool_run_order: [],
@@ -1071,9 +1071,56 @@ defmodule ReyCode.Orchestration.Projector do
   defp apply_invocation_frame(invocation, _kind, _data), do: invocation
 
   defp append_provider_activity(invocation, event) do
-    events = Map.get(invocation, :tool_events, [])
-    Map.put(invocation, :tool_events, Enum.take([event | events], @max_invocation_tool_events))
+    {overflow_events, visible_events} =
+      invocation
+      |> Map.get(:provider_activity_events, [])
+      |> Enum.split_with(&(Map.get(&1, "kind") == "activity_overflow"))
+
+    hidden_note_count =
+      Enum.reduce(overflow_events, 0, fn overflow, total ->
+        total + Map.get(overflow, "hidden_note_row_count", 0)
+      end)
+
+    events = retain_provider_activity([event | visible_events], hidden_note_count)
+    Map.put(invocation, :provider_activity_events, events)
   end
+
+  defp retain_provider_activity(events, hidden_note_row_count) do
+    dropped_at_full_capacity = Enum.drop(events, @max_provider_activity_events_count)
+    hidden_note_row_count = hidden_note_row_count + count_note_rows(dropped_at_full_capacity)
+
+    if hidden_note_row_count > 0 do
+      retained_count = @max_provider_activity_events_count - 1
+      dropped = Enum.drop(events, retained_count)
+
+      hidden_note_row_count =
+        hidden_note_row_count + count_new_note_rows(dropped_at_full_capacity, dropped)
+
+      Enum.take(events, retained_count) ++
+        [%{"kind" => "activity_overflow", "hidden_note_row_count" => hidden_note_row_count}]
+    else
+      Enum.take(events, @max_provider_activity_events_count)
+    end
+  end
+
+  defp count_note_rows(events) do
+    Enum.reduce(events, 0, fn
+      %{"kind" => "agent_note", "note" => note}, total when is_binary(note) ->
+        total + rendered_note_row_count(note)
+
+      _event, total ->
+        total
+    end)
+  end
+
+  defp rendered_note_row_count(note) do
+    note
+    |> String.split(~r/\R+/, trim: true)
+    |> Enum.count(&(String.trim(&1) != ""))
+  end
+
+  defp count_new_note_rows(already_counted, all_dropped),
+    do: count_note_rows(all_dropped) - count_note_rows(already_counted)
 
   defp participant(data) do
     %Participant{

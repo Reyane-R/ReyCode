@@ -910,6 +910,37 @@ defmodule ReyCode.TUITest do
     refute Regex.match?(~r/reasoning step 1\s/, screen)
 
     assert :binary.match(screen, "reasoning step 10") < :binary.match(screen, "Long responses")
+
+    projection =
+      put_in(
+        projection,
+        [:invocations, "inv-layout", :notes],
+        [Enum.map_join(1..101, "\n", &"thought line #{&1}")]
+      )
+
+    push_projection(session, projection)
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "+93 earlier thoughts"
+
+    activity_events =
+      Enum.map(10..1//-1, fn sequence ->
+        %{
+          "kind" => "agent_note",
+          "frame_sequence" => sequence,
+          "note" => "native thought #{sequence}"
+        }
+      end) ++ [%{"kind" => "activity_overflow", "hidden_note_row_count" => 283}]
+
+    projection =
+      put_in(
+        projection,
+        [:invocations, "inv-layout", :provider_activity_events],
+        activity_events
+      )
+
+    push_projection(session, projection)
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "+285 earlier thoughts"
   end
 
   test "renders one native provider step alongside the persistent work pulse" do
@@ -930,7 +961,7 @@ defmodule ReyCode.TUITest do
 
     projection =
       long_response_projection(session)
-      |> put_in([:invocations, "inv-layout", :tool_events], [started])
+      |> put_in([:invocations, "inv-layout", :provider_activity_events], [started])
       |> put_in([:invocations, "inv-layout", :tool_runs], %{})
       |> put_in([:invocations, "inv-layout", :tool_run_order], [])
 
@@ -982,7 +1013,7 @@ defmodule ReyCode.TUITest do
     projection =
       long_response_projection(session)
       |> put_in(
-        [:invocations, "inv-layout", :tool_events],
+        [:invocations, "inv-layout", :provider_activity_events],
         [note_after, completed, started, note_before]
       )
       |> put_in([:invocations, "inv-layout", :tool_runs], %{})
