@@ -12,12 +12,14 @@ defmodule ReyCode.Herdr do
 
   require Logger
 
+  alias ReyCode.Orchestration.{Engine, Projection}
+
   @source "custom:reycode"
   @agent "reycode"
   @command_timeout_ms 1_000
-
+  @release_timeout_ms 2_500
   @type lifecycle_state :: :idle | :working | :blocked
-  @type runner :: (String.t(), [String.t()] -> {binary(), non_neg_integer()})
+  @type runner :: (String.t(), [String.t()] -> :ok | {:error, term()})
 
   def start_link(opts \\ []) do
     case Keyword.get(opts, :name, __MODULE__) do
@@ -27,7 +29,7 @@ defmodule ReyCode.Herdr do
   end
 
   @doc "Reports the current durable Projection state to the Herdr pane."
-  @spec report_projection(map(), GenServer.server()) :: :ok
+  @spec report_projection(Projection.t(), GenServer.server()) :: :ok
   def report_projection(projection, server \\ __MODULE__) do
     case lifecycle(projection) do
       {:blocked, message} -> report(:blocked, message, server)
@@ -43,16 +45,19 @@ defmodule ReyCode.Herdr do
     :ok
   end
 
-  @doc "Releases ReyCode's Herdr lifecycle authority before TUI shutdown."
+  @doc "Makes one bounded best-effort release attempt before TUI shutdown."
   @spec release(GenServer.server()) :: :ok
   def release(server \\ __MODULE__) do
-    GenServer.cast(server, :release)
-    :ok
+    GenServer.call(server, :release, @release_timeout_ms)
+  catch
+    :exit, reason ->
+      Logger.debug("Herdr lifecycle release failed: #{inspect(reason)}")
+      :ok
   end
 
   @doc "Returns the Herdr lifecycle state represented by a Projection."
-  @spec lifecycle(map()) :: {lifecycle_state(), String.t() | nil}
-  def lifecycle(%{invocations: invocations}) when is_map(invocations) do
+  @spec lifecycle(Projection.t()) :: {lifecycle_state(), String.t() | nil}
+  def lifecycle(%Projection{invocations: invocations}) do
     invocations = Map.values(invocations)
 
     cond do
@@ -67,21 +72,54 @@ defmodule ReyCode.Herdr do
     end
   end
 
-  def lifecycle(_projection), do: {:idle, nil}
-
   @impl true
   def init(opts) do
-    {:ok,
-     %{
-       integration: integration_config(opts),
-       runner: Keyword.get(opts, :runner, &run_command/2),
-       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
-       sequence: Keyword.get(opts, :sequence, System.system_time(:microsecond)),
-       task: nil,
-       timer: nil,
-       pending: nil,
-       last_action: nil
-     }}
+    server_state = %{
+      integration: integration_config(opts),
+      engine: Keyword.get(opts, :engine),
+      runner: Keyword.get(opts, :runner, &run_command/2),
+      task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
+      sequence: Keyword.get(opts, :sequence, System.system_time(:microsecond)),
+      task: nil,
+      timer: nil,
+      pending: nil,
+      last_action: nil,
+      release_waiters: []
+    }
+
+    {:ok, server_state, {:continue, :report_initial}}
+  end
+
+  @impl true
+  def handle_continue(:report_initial, %{integration: nil} = server_state),
+    do: {:noreply, server_state}
+
+  def handle_continue(:report_initial, %{engine: nil} = server_state),
+    do: {:noreply, server_state}
+
+  def handle_continue(:report_initial, server_state) do
+    {state, message} = server_state.engine |> Engine.snapshot() |> lifecycle()
+    {:noreply, enqueue(server_state, {:report, state, message})}
+  catch
+    :exit, reason ->
+      Logger.debug("Initial Herdr lifecycle report failed: #{inspect(reason)}")
+      {:noreply, server_state}
+  end
+
+  @impl true
+  def handle_call(:release, _from, %{integration: nil} = server_state),
+    do: {:reply, :ok, server_state}
+
+  def handle_call(:release, _from, %{last_action: :release, task: nil} = server_state),
+    do: {:reply, :ok, server_state}
+
+  def handle_call(:release, from, server_state) do
+    server_state =
+      server_state
+      |> Map.update!(:release_waiters, &[from | &1])
+      |> enqueue(:release)
+
+    {:noreply, server_state}
   end
 
   @impl true
@@ -89,33 +127,43 @@ defmodule ReyCode.Herdr do
     {:noreply, server_state}
   end
 
+  def handle_cast(
+        {:report, _state, _message},
+        %{release_waiters: [_waiter | _rest]} = server_state
+      ) do
+    {:noreply, server_state}
+  end
+
   def handle_cast({:report, state, message}, server_state) do
     {:noreply, enqueue(server_state, {:report, state, message})}
   end
 
-  def handle_cast(:release, %{integration: nil} = server_state), do: {:noreply, server_state}
-  def handle_cast(:release, server_state), do: {:noreply, enqueue(server_state, :release)}
-
   @impl true
-  def handle_info({ref, _result}, %{task: %{ref: ref}} = server_state) do
-    {:noreply, finish_task(server_state)}
+  def handle_info({ref, result}, %{task: %{ref: ref}} = server_state) do
+    {:noreply, finish_task(server_state, result)}
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{task: %{ref: ref}} = server_state) do
-    {:noreply, finish_task(server_state)}
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{task: %{ref: ref}} = server_state) do
+    {:noreply, finish_task(server_state, {:error, {:task_exit, reason}})}
   end
 
   def handle_info({:herdr_timeout, ref}, %{task: %{ref: ref} = task} = server_state) do
     _ = Task.shutdown(task, :brutal_kill)
-    {:noreply, finish_task(server_state)}
+    {:noreply, finish_task(server_state, {:error, :timeout})}
   end
 
   def handle_info(_message, server_state), do: {:noreply, server_state}
 
   defp enqueue(server_state, action) do
     cond do
-      action == server_state.last_action or action == server_state.pending ->
+      action == server_state.pending ->
         server_state
+
+      action == server_state.last_action and is_nil(server_state.task) ->
+        server_state
+
+      action == server_state.last_action ->
+        %{server_state | pending: nil}
 
       is_nil(server_state.task) ->
         dispatch(server_state, action)
@@ -146,15 +194,39 @@ defmodule ReyCode.Herdr do
     }
   end
 
-  defp finish_task(%{timer: timer, pending: nil} = server_state) do
-    if timer, do: Process.cancel_timer(timer)
-    %{server_state | task: nil, timer: nil}
+  defp finish_task(server_state, result) do
+    if server_state.timer, do: Process.cancel_timer(server_state.timer)
+
+    server_state =
+      server_state
+      |> log_command_result(result)
+      |> Map.merge(%{task: nil, timer: nil})
+      |> complete_release()
+
+    case server_state.pending do
+      nil -> server_state
+      action -> dispatch(%{server_state | pending: nil}, action)
+    end
   end
 
-  defp finish_task(%{timer: timer, pending: action} = server_state) do
-    if timer, do: Process.cancel_timer(timer)
-    dispatch(%{server_state | task: nil, timer: nil, pending: nil}, action)
+  defp log_command_result(server_state, :ok), do: server_state
+
+  defp log_command_result(server_state, {:error, reason}) do
+    Logger.debug("Herdr lifecycle command failed: #{inspect(reason)}")
+    server_state
   end
+
+  defp log_command_result(server_state, result) do
+    Logger.debug("Herdr lifecycle runner returned an invalid result: #{inspect(result)}")
+    server_state
+  end
+
+  defp complete_release(%{last_action: :release} = server_state) do
+    Enum.each(server_state.release_waiters, &GenServer.reply(&1, :ok))
+    %{server_state | release_waiters: []}
+  end
+
+  defp complete_release(server_state), do: server_state
 
   defp command(integration, {:report, state, message}, sequence) do
     args = [
@@ -205,10 +277,11 @@ defmodule ReyCode.Herdr do
   defp valid_text?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp run_command(bin_path, args) do
-    System.cmd(bin_path, args, stderr_to_stdout: true)
+    case System.cmd(bin_path, args, stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {_output, status} -> {:error, {:exit_status, status}}
+    end
   rescue
-    error ->
-      Logger.debug("Herdr lifecycle report failed: #{Exception.message(error)}")
-      {"", 1}
+    error -> {:error, {:launch_failed, Exception.message(error)}}
   end
 end

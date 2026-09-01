@@ -245,7 +245,10 @@ what happens, in order:
 3. **Create the data directory.** The SQLite database directory is created if
    it doesn't exist.
 
-4. **Start the supervision tree.** Up to eleven processes start in order (ten headless without `Breeze.Server`; eleven when a TTY is attached). If an earlier one fails, all later ones are stopped (`rest_for_one` strategy):
+4. **Start the supervision tree.** Up to twelve processes start in order
+   (eleven headless without `Breeze.Server`; twelve when a TTY is attached).
+   If an earlier dependency fails, later dependents are stopped
+   (`rest_for_one` strategy):
 
    ```
    AgentRegistry         A phonebook for Agent processes (unique keys)
@@ -261,9 +264,18 @@ what happens, in order:
      ├── DynamicSupervisor  Spawns temporary Agent worker processes
      └── Engine            The brain: sessions, turns, scheduling
    Breeze.Server         Renders the terminal UI (only if a TTY is attached)
+   Herdr                 Best-effort pane lifecycle reporter; starts last for isolation
    ```
 
-5. **Engine recovery.** The Engine replays any unfinished work from the
+5. **Start Herdr reporting.** `ReyCode.Herdr` is inert unless
+   `HERDR_ENV=1`, `HERDR_PANE_ID` identifies the pane, and a Herdr executable
+   comes from `HERDR_BIN_PATH` or `PATH`. It derives `working`, `blocked`, or
+   `idle` from the durable Projection and serializes bounded CLI reports.
+   Because it is the final `rest_for_one` child, a reporter crash restarts no
+   core service. Normal TUI shutdown waits for one bounded `release-agent`
+   attempt; command failures are logged and never alter orchestration.
+
+6. **Engine recovery.** The Engine replays any unfinished work from the
    database — turns that were running when the program last stopped get
    their invocations re-queued.
 

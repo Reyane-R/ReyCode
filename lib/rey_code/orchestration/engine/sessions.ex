@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Engine.Sessions do
   @moduledoc "Handles session creation and runtime configuration commands for the Engine."
 
-  alias ReyCode.Orchestration.{EventEntries, ModelTier, Validation}
+  alias ReyCode.Orchestration.{EventEntries, ModelTier, Projection, Validation}
 
   alias ReyCode.Orchestration.Engine.{
     Configuration,
@@ -19,7 +19,7 @@ defmodule ReyCode.Orchestration.Engine.Sessions do
   def ensure_workspace(state, raw_workspace) do
     case Validation.session(@workspace_session_title, raw_workspace, config: state.config) do
       {:ok, title, workspace} ->
-        case newest_workspace_session(state, workspace) do
+        case Projection.newest_session_id_for_workspace(state.projection, workspace) do
           nil -> create_valid(state, title, workspace)
           session_id -> {:reply, {:ok, session_id}, state}
         end
@@ -36,14 +36,6 @@ defmodule ReyCode.Orchestration.Engine.Sessions do
       {:ok, title, workspace} -> create_valid(state, title, workspace)
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
-  end
-
-  defp newest_workspace_session(state, workspace) do
-    state.projection.session_order
-    |> Enum.reverse()
-    |> Enum.find(fn session_id ->
-      state.projection.sessions[session_id].workspace == workspace
-    end)
   end
 
   defp create_valid(state, title, workspace) do

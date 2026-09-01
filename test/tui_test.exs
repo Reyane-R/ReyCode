@@ -84,6 +84,14 @@ defmodule ReyCode.TUITest do
     workspace = temporary_workspace("new")
     %{engine: engine} = start_isolated_stack(workspace_roots: [workspace])
 
+    missing_workspace = Path.join(workspace, "missing")
+
+    assert Engine.ensure_workspace_session(missing_workspace, engine) ==
+             {:error, :invalid_workspace}
+
+    assert Engine.create_blank_session("Invalid", missing_workspace, engine) ==
+             {:error, :invalid_workspace}
+
     first = start_session({120, 32}, engine: engine, workspace: workspace)
     first_id = Breeze.Test.metadata(first).assigns.selected_session_id
     assert Engine.snapshot(engine).sessions[first_id].workspace == workspace

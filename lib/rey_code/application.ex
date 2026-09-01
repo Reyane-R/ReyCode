@@ -17,7 +17,6 @@ defmodule ReyCode.Application do
       {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
       {ReyCode.EventStore, [config: runtime_config.persistence] ++ event_store_options},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
-      {ReyCode.Herdr, task_supervisor: ReyCode.ProviderTaskSupervisor},
       {ReyCode.Provider.Catalog, [config: runtime_config]},
       ReyCode.ProcessHub,
       ReyCode.DebuggerHub,
@@ -26,7 +25,13 @@ defmodule ReyCode.Application do
       {ReyCode.Orchestration.Supervisor, config: runtime_config}
     ]
 
-    children = children ++ tui_children(runtime_config)
+    children =
+      children ++
+        tui_children(runtime_config) ++
+        [
+          {ReyCode.Herdr,
+           task_supervisor: ReyCode.ProviderTaskSupervisor, engine: ReyCode.Orchestration.Engine}
+        ]
 
     opts = [strategy: :rest_for_one, name: ReyCode.Supervisor]
     Supervisor.start_link(children, opts)
