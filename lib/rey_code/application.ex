@@ -37,20 +37,25 @@ defmodule ReyCode.Application do
     Supervisor.start_link(children, opts)
   end
 
+  @doc false
+  @spec tui_server_child_spec(ReyCode.RuntimeConfig.t()) :: Supervisor.child_spec()
+  def tui_server_child_spec(runtime_config) do
+    Supervisor.child_spec(
+      {Breeze.Server,
+       view: ReyCode.TUI,
+       start_opts: [config: runtime_config, workspace: File.cwd!()],
+       theme: ReyCode.Theme.default(),
+       logger: :replace,
+       mouse: true,
+       global_keybindings: ReyCode.TUI.global_keybindings(runtime_config)},
+      restart: :transient
+    )
+  end
+
   defp tui_children(runtime_config) do
     if Application.get_env(:rey_code, :start_tui, true) do
       if terminal_attached?() do
-        [
-          Supervisor.child_spec(
-            {Breeze.Server,
-             view: ReyCode.TUI,
-             start_opts: [config: runtime_config, workspace: File.cwd!()],
-             theme: ReyCode.Theme.default(),
-             logger: :replace,
-             global_keybindings: ReyCode.TUI.global_keybindings(runtime_config)},
-            restart: :transient
-          )
-        ]
+        [tui_server_child_spec(runtime_config)]
       else
         announce_headless()
         []
