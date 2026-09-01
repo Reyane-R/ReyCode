@@ -150,6 +150,34 @@ defmodule ReyCode.TUI.ActivityTest do
     assert tool.target == "mix.exs"
   end
 
+  test "native provider presentation handles malformed input and failed fallback lifecycles" do
+    assert Activity.provider_tools(:invalid, @workspace, @now_ms) == []
+    assert Activity.provider_trace(nil, @workspace, @now_ms) == []
+
+    started = %{
+      "kind" => "tool_started",
+      "tool" => "bash",
+      "state" => %{"arguments" => "mix test"}
+    }
+
+    completed = %{
+      "kind" => "tool_completed",
+      "tool" => "bash",
+      "state" => %{"status" => "error", "is_error" => true}
+    }
+
+    assert [row] = Activity.provider_tools([completed, :malformed, started], @workspace, @now_ms)
+    assert row.state == :terminal
+    assert row.outcome == :failed
+    assert row.label == "Failed"
+    assert row.target =~ "mix test"
+
+    assert [%{kind: :tool, item: trace_row}] =
+             Activity.provider_trace([completed, :malformed, started], @workspace, @now_ms)
+
+    assert trace_row.id == row.id
+  end
+
   test "retry and active delegation use deterministic priority" do
     {projection, session_id, invocation_id} = fixture(invocation_status: :running, attempt: 2)
     view = Activity.present(session_id, projection, %{}, @now_ms)

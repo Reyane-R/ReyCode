@@ -134,6 +134,39 @@ defmodule ReyCode.Provider.OMPTest do
                     }}
   end
 
+  test "ignores empty thinking fragments and flushes buffered fallback content" do
+    emit = fn frame ->
+      send(self(), {:frame, frame})
+      :ok
+    end
+
+    records = [
+      %{type: "message_update", assistantMessageEvent: %{type: "thinking_delta", delta: nil}},
+      %{type: "message_update", assistantMessageEvent: %{type: "thinking_delta", delta: ""}},
+      %{
+        type: "message_update",
+        assistantMessageEvent: %{type: "thinking_delta", delta: "Buffered thought"}
+      },
+      %{type: "message_update", assistantMessageEvent: %{type: "unknown"}},
+      %{type: "message_update", assistantMessageEvent: %{type: "thinking_end", content: nil}}
+    ]
+
+    state =
+      Enum.reduce(records, Protocol.new(request(), RuntimeConfig.fresh().omp), fn record, state ->
+        {:cont, state} =
+          Protocol.fold({:stdout, Jason.encode!(record) <> "\n"}, state, emit)
+
+        state
+      end)
+
+    assert_receive {:frame, %{kind: :agent_note, sequence: 1, data: %{note: "Buffered thought"}}}
+
+    state = %{state | note_fragments: [""]}
+    {:halt, state} = Protocol.fold({:exit, {:status, 0}}, state, emit)
+    assert {:ok, %{}} = Protocol.finish(state)
+    refute_receive {:frame, _frame}
+  end
+
   test "returns provider errors from failed RPC responses" do
     state = Protocol.new(request(), RuntimeConfig.fresh().omp)
     emit = fn _frame -> :ok end
