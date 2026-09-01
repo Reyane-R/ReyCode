@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the latest (or a pinned) ReyCode release for the current platform.
 #
-#   REYCODE_VERSION=v0.2.1 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
+#   REYCODE_VERSION=v0.2.2 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
 #     curl -fsSL https://raw.githubusercontent.com/Reyane-R/ReyCode/main/install.sh | sh
 set -eu
 
