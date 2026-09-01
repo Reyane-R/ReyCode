@@ -269,36 +269,36 @@ alternates, and an empty array disables the action:
 }
 ```
 
-The default theme presents the Session as a warm monochrome operator instrument.
-Color has state semantics: white is active, gray is dormant, amber is waiting
-or under review, and red requires attention. The header keeps model, branch,
-Workspace, and token context on its first line. Its live event rail exposes the
-durable sequence and current orchestration state:
+The default theme presents the Session as a quiet terminal workbench. Color has
+state semantics: white is active, gray is dormant, amber is waiting or under
+review, and red requires attention. The header keeps the Assistant runtime,
+Workspace, branch, and token context on its first line. Its second line is a
+persistent work pulse derived from the Projection:
 
 ```text
-EVT 000142  │  TURN A91F2C RUNNING  │  INV 01/02  │  GATE CLEAR  │  OUT —
+⠹ · Reading · lib/foo.ex · 5s
 ```
 
-The rail derives every segment from the Projection: Turn status, terminal versus
-total Invocations, pending approval or OperatorQuestion gates, and terminal
-Outcome. It never invents decorative stages.
-
-Each Message forms a compact transcript rail labeled `OPERATOR` or `PARTICIPANT`.
-Executing work uses the shared animated signal and a specific verb, for example
-`├ TOOL / ⠹ · Reading · lib/foo.ex`, `Running · mix test`, or `Delegating ·
-Luna`. Queued work and owner approval remain truthfully static (`… · Queued`,
-`Ⅱ · Paused · bash approval required`); terminal
+The pulse shows the highest-priority truthful activity, including its bounded
+file, command, approval, or delegated-work target when one exists. Thinking
+omits the redundant Assistant name. Queued and waiting work remain truthfully
+static (`… · Queued`, `Ⅱ · Paused · bash approval required`); terminal
 completed/partial/reworked/failed/cancelled Outcomes use stable, distinct
-glyphs. Completed `edit` and `write` ToolRuns render bounded exact before/after
+glyphs.
+
+Each Message forms a compact transcript labeled `You` or by the Assistant or
+task participant's name. ToolRuns appear as recognizable action rows such as
+`⠹ · Reading · lib/foo.ex`, `Running · mix test`, or `Delegating · Luna`.
+Completed `edit` and `write` ToolRuns render bounded exact before/after
 fragments directly below their activity row. The full ToolRun remains available
 through `/runs`; presentation-only diff metadata is never sent back to the
 provider.
 
-Native agents that surface intermediate reasoning render dimmed
-`│ NOTE / ...` activity lines, collapsed behind `+k more activity` when the
-trail grows past three lines. Mermaid `flowchart` and `sequenceDiagram` fences
-render as bounded ASCII diagrams inside the timeline. The active Invocation tier
-meter and highest-priority activity stay visible in durable Invocation order. A
+Native agents that surface intermediate reasoning render dimmed `· ...`
+activity lines, collapsed behind `+k more activity` when the trail grows past
+three lines. Mermaid `flowchart` and `sequenceDiagram` fences render as bounded
+ASCII diagrams inside the timeline. The active Invocation tier meter and work
+pulse remain visible while the timeline preserves durable Invocation order. A
 waiting-question indicator opens with `Ctrl+A`; the budget meter and composer
 warn at 80 percent without stopping the Invocation.
 
