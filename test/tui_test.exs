@@ -154,6 +154,46 @@ defmodule ReyCode.TUITest do
     assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "scratch"
   end
 
+  test "mouse wheel scrolls the transcript without recalling prompt history" do
+    %{engine: engine, session_id: session_id} = start_isolated_stack([])
+
+    session = start_session({120, 24}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    body = Enum.map_join(1..80, "\n", &"- transcript line #{&1}")
+
+    projection =
+      long_response_projection(session)
+      |> put_in([:messages, "msg-layout-assistant", :body], body)
+
+    push_projection(session, projection)
+    open_first_session(session)
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "transcript line 78"
+    refute screen =~ "• transcript line 1 "
+
+    snapshot = Breeze.ChildServer.layout_snapshot(session.pid)
+    target = Map.fetch!(snapshot.mouse_targets, State.timeline_id(session_id))
+
+    wheel_up = %{
+      "mouse" => %{
+        "button" => "wheel_up",
+        "action" => "press",
+        "repeat" => 10,
+        "x" => target.left + 1,
+        "y" => target.top + 1
+      }
+    }
+
+    draft_before = Breeze.Test.metadata(session).assigns.drafts[session_id]
+    assert {:noreply, _focused, true} = Breeze.Test.input(session, wheel_up)
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "transcript line 1"
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == draft_before
+  end
+
   test "fuzzy file mention completion inserts the selected workspace path" do
     workspace =
       Path.join(System.tmp_dir!(), "rey-code-tui-files-#{System.unique_integer([:positive])}")

@@ -11,4 +11,11 @@ defmodule ReyCode.ApplicationTest do
       value -> assert Application.get_env(:rey_code, :start_tui) == value
     end
   end
+
+  test "interactive server enables mouse routing for transcript wheel scrolling" do
+    spec = ReyCode.Application.tui_server_child_spec(ReyCode.RuntimeConfig.fresh())
+
+    assert %{start: {Breeze.Server, :start_link, [options]}} = spec
+    assert options[:mouse] == true
+  end
 end

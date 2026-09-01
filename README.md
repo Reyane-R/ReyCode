@@ -254,6 +254,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `Ctrl+G`: configure agent runtimes and models
 - `Ctrl+T`: cycle the theme
 - `j` / `k`: scroll the focused transcript
+- Mouse wheel: scroll the transcript under the pointer without changing the draft
 - `Ctrl+Q`: exit
 
 Keybindings are named actions resolved at startup from the bounded JSON file
