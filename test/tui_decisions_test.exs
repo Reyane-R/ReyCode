@@ -3,7 +3,7 @@ defmodule ReyCode.TUI.DecisionsTest do
 
   alias ReyCode.Memory.Store
   alias ReyCode.Orchestration.{Projection, Session}
-  alias ReyCode.TUI.Decisions
+  alias ReyCode.TUI.{Decisions, Notice}
 
   test "browses structured rationale and invalidates without deleting history" do
     workspace = "decisions-#{System.unique_integer([:positive])}"
@@ -29,7 +29,7 @@ defmodule ReyCode.TUI.DecisionsTest do
     assert {:noreply, detail} = Decisions.submit(opened)
     assert detail.assigns.decisions.step == :detail
     assert {:noreply, invalidated} = Decisions.handle_input("Y", detail)
-    assert invalidated.assigns.notice == "Invalidated database"
+    assert %Notice{severity: :success} = invalidated.assigns.notice
     assert {:ok, [entry]} = Store.list(workspace, ["decision"], 10, store)
     refute entry.active
     assert entry.value == value

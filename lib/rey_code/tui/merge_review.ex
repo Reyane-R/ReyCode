@@ -5,6 +5,7 @@ defmodule ReyCode.TUI.MergeReview do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
+  alias ReyCode.TUI.Notice
 
   @visible_line_count 24
 
@@ -71,7 +72,9 @@ defmodule ReyCode.TUI.MergeReview do
         <box class="pl-3 text-warning">D Discard patch</box>
         <box class="w-full text-right text-muted">j/k scroll · Esc back</box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-1 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-1 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
     </box>
     """
   end
@@ -81,10 +84,11 @@ defmodule ReyCode.TUI.MergeReview do
 
     case Engine.resolve_merge(child.id, decision, term.assigns.engine) do
       :ok ->
-        {:noreply, close(term, "Patch #{past_tense(decision)}")}
+        {:noreply, close(term, Notice.new(:success, "Patch #{past_tense(decision)}"))}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not #{decision}: #{reason}")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:error, "Could not #{decision}: #{reason}"))}
     end
   end
 

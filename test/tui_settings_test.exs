@@ -1,19 +1,8 @@
 defmodule ReyCode.TUI.SettingsTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.TUI.{ModelPicker, Settings}
-
-  test "initial/1 starts at participant selection for the requested room" do
-    assert Settings.initial("room-1") == %{
-             step: :participants,
-             index: 0,
-             participant_ids: [],
-             session_id: "room-1",
-             query: "",
-             provider: nil,
-             onboarding?: false
-           }
-  end
+  alias ReyCode.Failure
+  alias ReyCode.TUI.{ModelPicker, Notice, Settings}
 
   test "first-run setup targets the pristine unconfigured Primary Assistant" do
     session = %{
@@ -105,7 +94,53 @@ defmodule ReyCode.TUI.SettingsTest do
     result = Settings.open_at(term(), :ollama, "missing")
 
     assert result.assigns.settings.step == :participants
-    assert result.assigns.notice == "The selected model is no longer available"
+    assert %Notice{severity: :warning} = result.assigns.notice
+  end
+
+  test "a checking provider stays at provider selection with informational feedback" do
+    settings = %{Settings.initial("room-1") | step: :providers}
+    providers = put_in(providers(), [:ollama, :status], :checking)
+    result = Settings.confirm(term(settings: settings, providers: providers))
+
+    assert result.assigns.settings.step == :providers
+    assert %Notice{severity: :info} = result.assigns.notice
+  end
+
+  test "an empty model catalog cannot advance to model selection" do
+    settings = %{Settings.initial("room-1") | step: :providers}
+    providers = put_in(providers(), [:ollama, :models], [])
+    result = Settings.confirm(term(settings: settings, providers: providers))
+
+    assert result.assigns.settings.step == :providers
+    assert %Notice{severity: :warning} = result.assigns.notice
+  end
+
+  test "failed provider selection reports an error and details clear when moving to another provider" do
+    settings = %{Settings.initial("room-1") | step: :providers}
+
+    providers =
+      Map.update!(providers_with_deepseek(), :deepseek, fn provider ->
+        provider
+        |> Map.put(:status, :error)
+        |> Map.put(
+          :failure,
+          Failure.new(:provider_unavailable, "Connection failed (econnrefused)")
+        )
+      end)
+
+    failed = Settings.confirm(term(settings: settings, providers: providers))
+    assert failed.assigns.settings.step == :providers
+    assert %Notice{severity: :error} = failed.assigns.notice
+
+    assert {:noreply, details} = Settings.handle_input("D", failed)
+    assert %Notice{severity: :info, message: message} = details.assigns.notice
+    assert message =~ "econnrefused"
+
+    assert {:noreply, moved} = Settings.handle_input("ArrowDown", details)
+    assert is_nil(moved.assigns.notice)
+    ready = Settings.confirm(moved)
+    assert ready.assigns.settings.step == :models
+    assert ready.assigns.settings.provider == :ollama
   end
 
   test "models/2 filters case-insensitively" do

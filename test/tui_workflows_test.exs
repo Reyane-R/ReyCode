@@ -1,7 +1,7 @@
 defmodule ReyCode.TUI.WorkflowsTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.TUI.{Cancellation, Workspace}
+  alias ReyCode.TUI.{Cancellation, Notice, Workspace}
 
   defmodule EngineStub do
     use GenServer
@@ -29,7 +29,7 @@ defmodule ReyCode.TUI.WorkflowsTest do
     assert {:noreply, submitted} = Cancellation.submit(opened)
     assert_receive {:engine_call, {:cancel_turn, "turn-1", "Cancelled by user"}}
     assert submitted.assigns.cancel_turn_id == nil
-    assert submitted.assigns.notice == "Task cancelled"
+    assert %Notice{severity: :success} = submitted.assigns.notice
     assert submitted.focused == "prompt"
   end
 

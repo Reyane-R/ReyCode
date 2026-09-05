@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.OperatorQuestion do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, Projection}
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @preview_line_count 8
 
@@ -45,7 +45,7 @@ defmodule ReyCode.TUI.OperatorQuestion do
         notice: nil
       )
     else
-      SlashPalette.close(term, "No Operator question is waiting")
+      SlashPalette.close(term, Notice.new(:info, "No Operator question is waiting"))
     end
   end
 
@@ -143,7 +143,9 @@ defmodule ReyCode.TUI.OperatorQuestion do
           class="w-full h-5 border focus:border-primary bg-surface"
         />
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">{controls(@question, @term.operator_question.step)}</box>
     </box>
     """
@@ -194,7 +196,8 @@ defmodule ReyCode.TUI.OperatorQuestion do
         {:noreply, close(term, answer_notice(question, option_ids, other))}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not answer: #{reason}")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:error, "Could not answer: #{reason}"))}
     end
   end
 
@@ -211,8 +214,15 @@ defmodule ReyCode.TUI.OperatorQuestion do
   defp option_count(term),
     do: length(question(term).options) + if(question(term).allow_other?, do: 1, else: 0)
 
-  defp put_step(term, step),
-    do: Component.assign(term, operator_question: %{term.assigns.operator_question | step: step})
+  # Free text only reaches the question's own textarea when it owns focus; a
+  # still-focused composer would route typed answers into the session draft.
+  defp put_step(term, step) do
+    focus = if step == :other, do: "question-other", else: "prompt"
+
+    term
+    |> Component.assign(operator_question: %{term.assigns.operator_question | step: step})
+    |> View.focus(focus)
+  end
 
   defp put_other(term, value),
     do:
@@ -276,6 +286,6 @@ defmodule ReyCode.TUI.OperatorQuestion do
   defp answer_notice(question, option_ids, other) do
     labels = question.options |> Enum.filter(&(&1.id in option_ids)) |> Enum.map(& &1.label)
     labels = labels ++ if(other, do: ["Other"], else: [])
-    "Answered: #{Enum.join(labels, ", ")}"
+    Notice.new(:success, "Answered: #{Enum.join(labels, ", ")}")
   end
 end

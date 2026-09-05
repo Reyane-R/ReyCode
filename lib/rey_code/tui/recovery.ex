@@ -2,21 +2,26 @@ defmodule ReyCode.TUI.Recovery do
   @moduledoc "Operator recovery actions for failed Turns and queued FollowUps."
 
   alias ReyCode.Orchestration.Engine
-  alias ReyCode.TUI.{SlashPalette, State}
+  alias ReyCode.TUI.{Notice, SlashPalette, State}
 
   @spec retry_latest(map()) :: {:noreply, map()}
   def retry_latest(term) do
     case latest_failed_turn(term.assigns) do
       nil ->
-        {:noreply, SlashPalette.close(term, "No failed Turn to retry")}
+        {:noreply, SlashPalette.close(term, Notice.new(:info, "No failed Turn to retry"))}
 
       turn ->
         case Engine.retry_turn(turn.id, term.assigns.engine) do
           {:ok, _turn_id} ->
-            {:noreply, SlashPalette.close(term, "Failed Turn retried as a new linked Turn")}
+            {:noreply,
+             SlashPalette.close(
+               term,
+               Notice.new(:success, "Failed Turn retried as a new linked Turn")
+             )}
 
           {:error, reason} ->
-            {:noreply, SlashPalette.close(term, "Could not retry Turn: #{reason}")}
+            {:noreply,
+             SlashPalette.close(term, Notice.new(:error, "Could not retry Turn: #{reason}"))}
         end
     end
   end
@@ -27,13 +32,14 @@ defmodule ReyCode.TUI.Recovery do
       {:ok, body} ->
         next =
           term
-          |> SlashPalette.close("FollowUp returned to the composer")
+          |> SlashPalette.close(Notice.new(:success, "FollowUp returned to the composer"))
           |> State.assign_draft(body)
 
         {:noreply, next}
 
       {:error, reason} ->
-        {:noreply, SlashPalette.close(term, "Could not dequeue FollowUp: #{reason}")}
+        {:noreply,
+         SlashPalette.close(term, Notice.new(:error, "Could not dequeue FollowUp: #{reason}"))}
     end
   end
 

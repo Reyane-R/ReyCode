@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.PromptHistory do
   use Breeze.Component
 
   alias Breeze.{Component, View}
-  alias ReyCode.TUI.{SlashPalette, State}
+  alias ReyCode.TUI.{Notice, SlashPalette, State}
 
   @max_prompt_count 256
   @max_query_bytes 256
@@ -30,7 +30,7 @@ defmodule ReyCode.TUI.PromptHistory do
   @spec open(map()) :: map()
   def open(term) do
     if prompts(term.assigns) == [] do
-      SlashPalette.close(term, "No prompt history in this Session")
+      SlashPalette.close(term, Notice.new(:info, "No prompt history in this Session"))
     else
       term
       |> SlashPalette.clear()

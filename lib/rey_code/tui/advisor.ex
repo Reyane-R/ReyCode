@@ -1,9 +1,8 @@
 defmodule ReyCode.TUI.Advisor do
   @moduledoc "Explicit opt-in advisory review through a configured Advisor task Participant."
 
-  alias Breeze.Component
   alias ReyCode.Orchestration.Engine
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @default_brief "Review the current Session's latest work. Identify risks, missing tests, and concrete corrections. Return recommendations only; do not change files."
 
@@ -15,10 +14,17 @@ defmodule ReyCode.TUI.Advisor do
     cond do
       is_nil(advisor) ->
         {:noreply,
-         SlashPalette.close(term, "Create a task Participant named Advisor with /agent first")}
+         SlashPalette.close(
+           term,
+           Notice.new(:warning, "Create a task Participant named Advisor with /agent first")
+         )}
 
       advisor.provider == :unconfigured or is_nil(advisor.model) ->
-        {:noreply, SlashPalette.close(term, "Configure the Advisor model with /agents")}
+        {:noreply,
+         SlashPalette.close(
+           term,
+           Notice.new(:warning, "Configure the Advisor model with /agents")
+         )}
 
       true ->
         delegate(term, advisor, brief || @default_brief, Map.get(term.assigns, :advisor_delegate))
@@ -47,10 +53,11 @@ defmodule ReyCode.TUI.Advisor do
            term.assigns.engine
          ) do
       {:ok, _turn_id} ->
-        {:noreply, Component.assign(SlashPalette.close(term), notice: "Advisor review queued")}
+        {:noreply, SlashPalette.close(term, Notice.new(:success, "Advisor review queued"))}
 
       {:error, reason} ->
-        {:noreply, SlashPalette.close(term, "Could not queue Advisor review: #{reason}")}
+        {:noreply,
+         SlashPalette.close(term, Notice.new(:error, "Could not queue Advisor review: #{reason}"))}
     end
   end
 end

@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.Cancellation do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @doc "Opens cancellation confirmation for the active turn, if one exists."
   @spec open(map()) :: map()
@@ -14,7 +14,7 @@ defmodule ReyCode.TUI.Cancellation do
 
     case session.active_turn_id do
       nil ->
-        SlashPalette.close(term, "No running turn to cancel")
+        SlashPalette.close(term, Notice.new(:info, "No running turn to cancel"))
 
       turn_id ->
         Component.assign(term, modal: :cancel, slash: nil, cancel_turn_id: turn_id, notice: nil)
@@ -28,11 +28,16 @@ defmodule ReyCode.TUI.Cancellation do
       :ok ->
         {:noreply,
          term
-         |> Component.assign(modal: nil, cancel_turn_id: nil, notice: "Task cancelled")
+         |> Component.assign(
+           modal: nil,
+           cancel_turn_id: nil,
+           notice: Notice.new(:success, "Task cancelled")
+         )
          |> View.focus("prompt")}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not cancel task: #{reason}")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:error, "Could not cancel task: #{reason}"))}
     end
   end
 
@@ -70,7 +75,9 @@ defmodule ReyCode.TUI.Cancellation do
       </box>
       <box class="pt-3 text-muted">TASK ID</box>
       <box class="pt-1 w-full">{@term.cancel_turn_id}</box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-3 text-muted">Enter cancel   Esc keep running</box>
     </box>
     """

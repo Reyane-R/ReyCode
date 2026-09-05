@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.Artifacts do
 
   alias Breeze.{Component, View}
   alias ReyCode.ArtifactStore
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @visible_line_count 24
 
@@ -17,7 +17,7 @@ defmodule ReyCode.TUI.Artifacts do
     artifacts = ArtifactStore.list(term.assigns.config.artifacts)
 
     if artifacts == [] do
-      SlashPalette.close(term, "No spooled artifacts")
+      SlashPalette.close(term, Notice.new(:info, "No spooled artifacts"))
     else
       term
       |> SlashPalette.clear()
@@ -94,7 +94,9 @@ defmodule ReyCode.TUI.Artifacts do
           <box :for={line <- artifact_lines(@term.artifacts.bytes)}>{line}</box>
         </box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">{controls(@term.artifacts.step)}</box>
     </box>
     """
@@ -124,7 +126,7 @@ defmodule ReyCode.TUI.Artifacts do
         )
 
       {:error, reason} ->
-        Component.assign(term, notice: "Could not read artifact: #{reason}")
+        Component.assign(term, notice: Notice.new(:error, "Could not read artifact: #{reason}"))
     end
   end
 

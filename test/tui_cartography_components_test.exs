@@ -6,6 +6,7 @@ defmodule ReyCode.TUI.CartographyComponentsTest do
   alias ReyCode.TUI.{
     ContextBoundary,
     Hotkeys,
+    Notice,
     PromptHistory,
     SessionTree,
     ToolInspector
@@ -49,7 +50,7 @@ defmodule ReyCode.TUI.CartographyComponentsTest do
     assert closed.assigns.modal == nil
 
     empty = put_in(term.assigns.projection.sessions[session.id].context_boundary_sequence, 0)
-    assert ContextBoundary.open(empty).assigns.notice == "This Session has no ContextBoundary"
+    assert %Notice{severity: :info} = ContextBoundary.open(empty).assigns.notice
   end
 
   test "Hotkeys pages effective actions and closes from both controls" do
@@ -110,7 +111,7 @@ defmodule ReyCode.TUI.CartographyComponentsTest do
 
     empty_session = %{session | message_order: []}
     empty = put_in(term.assigns.projection.sessions[session.id], empty_session)
-    assert PromptHistory.open(empty).assigns.notice == "No prompt history in this Session"
+    assert %Notice{severity: :info} = PromptHistory.open(empty).assigns.notice
   end
 
   test "ToolInspector navigates run list, pages detail, and handles empty state" do
@@ -159,7 +160,7 @@ defmodule ReyCode.TUI.CartographyComponentsTest do
     assert ToolInspector.handle_event("unknown", %{}, closed) == :unhandled
 
     empty = put_in(term.assigns.projection.invocations, %{})
-    assert ToolInspector.open(empty).assigns.notice == "No ToolRuns in this Session"
+    assert %Notice{severity: :info} = ToolInspector.open(empty).assigns.notice
   end
 
   test "SessionTree navigates, opens, forks, and handles an empty projection" do
@@ -185,14 +186,14 @@ defmodule ReyCode.TUI.CartographyComponentsTest do
     assert {:noreply, moved} = SessionTree.handle_input("j", opened)
     assert moved.assigns.session_tree.index == 1
     assert {:noreply, forked} = SessionTree.handle_input("F", moved)
-    assert forked.assigns.notice == "Session forked"
+    assert %Notice{severity: :success} = forked.assigns.notice
     assert_receive {:forked, "child", 12}
     assert SessionTree.handle_event("unknown", %{}, moved) == :unhandled
     assert {:noreply, closed} = SessionTree.handle_input("Escape", moved)
     assert closed.assigns.modal == nil
 
     empty = put_in(term.assigns.projection, %Projection{})
-    assert SessionTree.open(empty).assigns.notice == "No Sessions yet"
+    assert %Notice{severity: :info} = SessionTree.open(empty).assigns.notice
   end
 
   defp base_term(session) do

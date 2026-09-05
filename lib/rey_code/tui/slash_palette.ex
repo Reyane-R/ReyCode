@@ -23,6 +23,7 @@ defmodule ReyCode.TUI.SlashPalette do
     Hotkeys,
     ModelPicker,
     ModelTiers,
+    Notice,
     OperatorQuestion,
     PromptHistory,
     Recovery,
@@ -277,8 +278,8 @@ defmodule ReyCode.TUI.SlashPalette do
   end
 
   @doc "Closes the palette and focuses the prompt."
-  @spec close(map(), String.t() | nil) :: map()
-  def close(term, notice \\ nil) do
+  @spec close(map(), Notice.t() | nil) :: map()
+  def close(term, notice \\ nil) when is_nil(notice) or is_struct(notice, Notice) do
     term
     |> Component.assign(modal: nil, slash: nil, notice: notice)
     |> View.focus("prompt")
@@ -331,7 +332,8 @@ defmodule ReyCode.TUI.SlashPalette do
         {:noreply, accept_file_candidate(term, context, candidate)}
 
       nil ->
-        {:noreply, term |> clear_draft() |> close("Unknown command: #{slash.query}")}
+        {:noreply,
+         term |> clear_draft() |> close(Notice.new(:warning, "Unknown command: #{slash.query}"))}
 
       %{kind: :command, suffix: suffix} = candidate when suffix != "" ->
         if slash.query == candidate.insertion,
@@ -536,12 +538,20 @@ defmodule ReyCode.TUI.SlashPalette do
     |> Enum.map(&projection.sessions[&1])
   end
 
-  defp command_notice(:unknown_command), do: "Unknown command. Type / to see available commands."
-  defp command_notice(:missing_argument), do: "This command requires an argument"
-  defp command_notice(:unexpected_argument), do: "This command accepts one argument"
-  defp command_notice(:stale_argument), do: "The selected argument is no longer available"
-  defp command_notice(:malformed_command), do: "Malformed command"
-  defp command_notice(_reason), do: "Could not run command"
+  defp command_notice(:unknown_command),
+    do: Notice.new(:warning, "Unknown command. Type / to see available commands.")
+
+  defp command_notice(:missing_argument),
+    do: Notice.new(:warning, "This command requires an argument")
+
+  defp command_notice(:unexpected_argument),
+    do: Notice.new(:warning, "This command accepts one argument")
+
+  defp command_notice(:stale_argument),
+    do: Notice.new(:warning, "The selected argument is no longer available")
+
+  defp command_notice(:malformed_command), do: Notice.new(:warning, "Malformed command")
+  defp command_notice(_reason), do: Notice.new(:error, "Could not run command")
 
   defp height(nil, _terminal_height), do: 1
   defp height(%{slash: nil}, _terminal_height), do: 1

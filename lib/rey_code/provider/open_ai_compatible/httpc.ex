@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
   @moduledoc false
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.OpenAICompatible.HTTP
 
   @behaviour HTTP
@@ -103,7 +104,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
       await_response(request_id, request)
     else
       {:error, %{} = error} -> {:error, error}
-      {:error, reason} -> {:error, HTTP.error(:request_failed, inspect(reason), false)}
+      {:error, reason} -> {:error, request_error(reason)}
     end
   end
 
@@ -340,6 +341,23 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
     do: HTTP.error(:timeout, "HTTP request exceeded its deadline", true)
 
   defp request_error(:timeout), do: timeout_error()
+
+  defp request_error({:failed_connect, details}) when is_list(details) do
+    reason =
+      details
+      |> Enum.take(8)
+      |> Enum.find_value(:failed_connect, fn
+        {_family, _options, reason}
+        when reason in [:econnrefused, :nxdomain, :enetunreach, :ehostunreach, :timeout] ->
+          reason
+
+        _detail ->
+          nil
+      end)
+
+    Failure.new(:request_failed, "HTTP connection failed: #{reason}", false, reason)
+  end
+
   defp request_error(reason), do: HTTP.error(:request_failed, inspect(reason), false)
 
   defp cancel_and_error(request_id, error) do

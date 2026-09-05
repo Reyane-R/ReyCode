@@ -11,6 +11,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     OpenAICompatible,
     OpenAICompatible.Profile,
     OpenAICompatible.RequestShape,
+    Presentation,
     Request,
     Response,
     Runtime,
@@ -40,8 +41,16 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       System.delete_env(@key_env)
       {:ok, profile} = Profile.fetch(:deepseek)
 
-      assert {:ok, %{status: :available, models: [], credential_count: 0}} =
+      assert {:ok,
+              %{
+                status: :available,
+                models: [],
+                credential_count: 0,
+                failure: %Failure{category: :missing_credentials}
+              }} =
                OpenAICompatible.discover(profile, transport: FakeTransport)
+
+      assert FakeTransport.requests() == []
     end
 
     test "parses the model list from /models when the key is present" do
@@ -86,10 +95,13 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       for body <- malformed do
         FakeTransport.set_models(body)
 
-        assert {:ok, %{status: :error, models: [], credential_count: 1, error: error}} =
-                 OpenAICompatible.discover(profile, transport: FakeTransport)
-
-        assert is_binary(error)
+        assert {:ok,
+                %{
+                  status: :error,
+                  models: [],
+                  credential_count: 1,
+                  failure: %Failure{category: :protocol_error}
+                }} = OpenAICompatible.discover(profile, transport: FakeTransport)
       end
     end
 
@@ -97,19 +109,36 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       FakeTransport.set_models(~s({"data":[{"id":"too-large"}]}))
       {:ok, profile} = Profile.fetch(:deepseek)
 
-      assert {:ok, %{status: :error, error: "Model response exceeded 8 bytes"}} =
+      assert {:ok, %{status: :error, failure: %Failure{category: :response_too_large}}} =
                OpenAICompatible.discover(profile,
                  transport: FakeTransport,
                  max_response_bytes: 8
                )
     end
 
-    test "folds a discovery failure into an error status" do
-      FakeTransport.set_models_status(429, ~s({"error":{"message":"slow down"}}))
+    test "classifies HTTP failures without retaining response secrets or control sequences" do
       {:ok, profile} = Profile.fetch(:deepseek)
+      secret = "test-key"
+      message = String.duplicate(secret <> "\e[31m", 1_000)
 
-      assert {:ok, %{status: :error, models: [], error: "slow down"}} =
-               OpenAICompatible.discover(profile, transport: FakeTransport)
+      for {status, category} <- [
+            {401, :authentication_failed},
+            {403, :authentication_failed},
+            {429, :rate_limited},
+            {503, :server_error},
+            {404, :request_failed}
+          ] do
+        FakeTransport.set_models_status(status, Jason.encode!(%{error: %{message: message}}))
+
+        assert {:ok, %{status: :error, models: [], failure: failure} = discovery} =
+                 OpenAICompatible.discover(profile, transport: FakeTransport)
+
+        assert %Failure{category: ^category, cause: ^status} = failure
+        diagnostic = Presentation.details(discovery)
+        refute diagnostic =~ secret
+        refute diagnostic =~ "\e"
+        assert byte_size(diagnostic) <= 128
+      end
     end
   end
 
@@ -592,14 +621,12 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
         FakeTransport.set_models(~s({"data":[{"id":42}]}))
 
-        assert {:ok, %{status: :error, models: [], error: error}} =
+        assert {:ok, %{status: :error, models: [], failure: %Failure{category: :protocol_error}}} =
                  OpenAICompatible.discover(profile, transport: FakeTransport)
-
-        assert is_binary(error)
 
         FakeTransport.set_models_status(503, ~s({"error":{"message":"warming up"}}))
 
-        assert {:ok, %{status: :error, error: "warming up"}} =
+        assert {:ok, %{status: :error, failure: %Failure{category: :server_error, cause: 503}}} =
                  OpenAICompatible.discover(profile, transport: FakeTransport)
 
         # The non-2xx stub must not leak into the next profile's iteration.

@@ -2,7 +2,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.Failure
-  alias ReyCode.Provider.{Frame, OpenAICompatible, Request, Response, Runtime}
+  alias ReyCode.Provider.{Frame, OpenAICompatible, Presentation, Request, Response, Runtime}
   alias ReyCode.Provider.OpenAICompatible.HTTP
   alias ReyCode.Provider.OpenAICompatible.HTTPC
   alias ReyCode.Provider.OpenAICompatible.Profile
@@ -534,6 +534,28 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
       assert {:ok, actual} = result
       assert Map.take(actual, [:status, :models]) == expected
     end
+  end
+
+  test "unavailable local discovery preserves connection evidence without exposing transport tuples" do
+    {:ok, socket} = :gen_tcp.listen(0, [])
+    {:ok, {_address, port}} = :inet.sockname(socket)
+    :ok = :gen_tcp.close(socket)
+
+    {:ok, profile} = Profile.fetch(:ollama)
+    profile = %{profile | base_url: "http://#{@loopback}:#{port}", request_timeout_ms: 1_000}
+
+    assert {:ok, %{status: :error, models: [], failure: failure} = discovery} =
+             OpenAICompatible.discover(profile)
+
+    assert failure.category == :provider_unavailable
+    assert failure.cause == :econnrefused
+    entry = Map.put(discovery, :id, :ollama)
+    help = Presentation.selection_help(entry)
+    assert help =~ "server"
+    assert help =~ "recheck"
+    refute help =~ "API key"
+    refute help =~ "{:"
+    assert Presentation.details(entry) =~ "econnrefused"
   end
 
   test "real model discovery uses GET with no body" do

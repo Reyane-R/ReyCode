@@ -2,7 +2,7 @@ defmodule ReyCode.TUI.AdvisorHubTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Orchestration.{Invocation, Message, Participant, Projection, Session}
-  alias ReyCode.TUI.{Advisor, AgentHub}
+  alias ReyCode.TUI.{Advisor, AgentHub, Notice}
 
   test "finds only the configured Advisor task Participant" do
     advisor = %Participant{id: "advisor", name: "Advisor", kind: :task}
@@ -39,7 +39,7 @@ defmodule ReyCode.TUI.AdvisorHubTest do
     }
 
     assert {:noreply, result} = Advisor.run(term, "Review the diff")
-    assert result.assigns.notice == "Advisor review queued"
+    assert %Notice{severity: :success} = result.assigns.notice
     assert_receive {:advisor_brief, "Review the diff"}
   end
 
@@ -57,7 +57,7 @@ defmodule ReyCode.TUI.AdvisorHubTest do
     }
 
     assert {:noreply, result} = Advisor.run(term)
-    assert result.assigns.notice =~ "Create a task Participant named Advisor"
+    assert %Notice{severity: :warning} = result.assigns.notice
   end
 
   test "Agent Hub scopes rows to delegated child Invocations" do
@@ -144,7 +144,7 @@ defmodule ReyCode.TUI.AdvisorHubTest do
     assert {:noreply, entered} = AgentHub.handle_input("Enter", term)
     assert entered.assigns.agent_hub.panel == :inspector
     assert {:noreply, cancelled} = AgentHub.handle_input("c", term)
-    assert cancelled.assigns.notice == "Child Invocation cancelled"
+    assert %Notice{severity: :success} = cancelled.assigns.notice
     assert_receive :cancelled
   end
 end

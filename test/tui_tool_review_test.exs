@@ -1,116 +1,191 @@
 defmodule ReyCode.TUI.ToolReviewTest do
   @moduledoc """
-  Feature-owned coverage for the tool-approval modal exercised through the
-  public TUI flow: open via `/tools`, render exact request details, cancel,
-  and deny without side effects.
+  Exercises owner approval through the public TUI against durable ToolRuns,
+  including unselected Enter, explicit decisions, and cancellation.
   """
 
   use ExUnit.Case, async: false
 
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.Engine
+  alias ReyCode.Test.Wait
+  alias ReyCode.TUI.Notice
 
   setup do
+    fixture_root =
+      Path.join([File.cwd!(), ".reycode", "tool-review-#{System.unique_integer([:positive])}"])
+
+    File.mkdir_p!(fixture_root)
+    on_exit(fn -> File.rm_rf!(fixture_root) end)
+    out_path = Path.join(fixture_root, "out.txt")
+    relative_path = Path.relative_to_cwd(out_path)
+
     %{engine: engine, config: config, store: store} =
       start_isolated_stack(
         seed: 0,
         delay_ms: 0,
         tool_requests: [
-          %{tool: "write", arguments: %{"path" => "out.txt", "content" => "approved-content"}}
+          %{tool: "write", arguments: %{"path" => relative_path, "content" => "approved-content"}}
         ]
       )
 
     snapshot = Engine.snapshot(engine)
-
     session_id = Enum.find(snapshot.session_order, &(snapshot.sessions[&1].slug == "reycode"))
     assert {:ok, turn_id} = Engine.post_message(session_id, "Review this write", :compare, engine)
-    wait_until_waiting(engine, turn_id)
-    out_path = Path.join(File.cwd!(), "out.txt")
-    # The engine's default room roots the workspace at the repository, so the
-    # approval flow really does target ./out.txt. Never delete a file the
-    # repository already owned before this test ran.
-    preexisting_out_file? = File.exists?(out_path)
+    Wait.invocation_status(engine, turn_id, :waiting_tool_approval)
 
     on_exit(fn ->
       if GenServer.whereis(engine), do: Engine.cancel_turn(turn_id, "test cleanup", engine)
-
-      if not preexisting_out_file?, do: File.rm(out_path)
     end)
 
     %{
       engine: engine,
       config: config,
       store: store,
-      session_id: session_id,
       turn_id: turn_id,
       out_path: out_path
     }
   end
 
-  test "opens from the palette and renders the exact persisted request", %{
+  test "opens the persisted request and explicit D denies that exact run atomically", %{
     engine: engine,
     config: config,
     store: store,
     turn_id: turn_id,
     out_path: out_path
   } do
-    {session, _} = start_session(turn_id, engine, config)
-
-    type(session, "/tools")
-    assert Breeze.Test.render!(session) =~ "Review a pending tool request"
-
-    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    session = start_session(engine, config)
+    review = open_review(session)
     screen = plain(Breeze.Test.render!(session))
 
-    assert Breeze.Test.metadata(session).assigns.modal == :tool_review
-    assert screen =~ "Tool approval"
-    assert screen =~ "This request is waiting for owner approval."
     assert screen =~ "write"
-    assert screen =~ "WRITE PATH"
     assert screen =~ "out.txt"
-    assert screen =~ "CONTENT SIZE"
     assert screen =~ "16 bytes"
-    assert screen =~ "CONTENT PREVIEW"
     assert screen =~ "approved-content"
-    deny_selected(session)
+    assert is_nil(review.index)
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "d")
+    denial = assert_resolution(session, store, review, "deny")
     assert denied_invocation?(engine, turn_id)
     refute File.exists?(out_path)
 
-    # The denial and its terminal failure left the engine in one durable
-    # append: their sequences are adjacent with nothing in between.
-    events = EventStore.load(store)
-    denial = Enum.find(events, &(&1.type == :tool_run_approval_resolved))
-    failure = Enum.at(events, Enum.find_index(events, &(&1.sequence == denial.sequence)) + 1)
+    # Denial and terminal failure are one durable append, with adjacent sequences.
+    failure = Enum.find(EventStore.load(store), &(&1.sequence == denial.sequence + 1))
     assert failure.type == :invocation_failed
-    assert failure.data["invocation_id"] == denial.data["invocation_id"]
+    assert failure.data["invocation_id"] == review.invocation_id
   end
 
-  test "escape closes the review while the request stays pending", %{
+  test "Enter without a choice leaves the same request pending and performs no write", %{
     engine: engine,
     config: config,
+    store: store,
     turn_id: turn_id,
     out_path: out_path
   } do
-    {session, _} = start_session(turn_id, engine, config)
+    session = start_session(engine, config)
+    review = open_review(session)
+    events = EventStore.load(store)
 
-    type(session, "/tools")
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
-    assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Escape")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assigns = Breeze.Test.metadata(session).assigns
+    assert assigns.modal == :tool_review
+    assert is_nil(assigns.tool_review.index)
+    assert %Notice{severity: :info} = assigns.notice
+    refute plain(Breeze.Test.render!(session)) =~ "Error ·"
+    assert waiting?(engine, turn_id)
 
-    refute Breeze.Test.render!(session) =~ "Tool approval"
+    assert Engine.snapshot(engine).invocations[review.invocation_id].pending_tool_review ==
+             review.review
+
+    assert EventStore.load(store) == events
     refute File.exists?(out_path)
 
-    # The approval is still durable: reopening resumes the same review.
-    type(session, "/tools")
-    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
-    assert Breeze.Test.metadata(session).assigns.modal == :tool_review
-    assert waiting?(engine, turn_id)
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert Breeze.Test.metadata(session).assigns.tool_review.index == 1
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert_resolution(session, store, review, "deny")
+    refute File.exists?(out_path)
   end
 
-  defp deny_selected(session) do
-    {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "d")
-    wait_until_notice(session, "Tool request denied")
-    refute Breeze.Test.render!(session) =~ "Tool approval"
+  test "ArrowDown selects approval and Enter executes only the displayed run", %{
+    engine: engine,
+    config: config,
+    store: store,
+    turn_id: turn_id,
+    out_path: out_path
+  } do
+    session = start_session(engine, config)
+    review = open_review(session)
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
+    assert Breeze.Test.metadata(session).assigns.tool_review.index == 0
+    assert waiting?(engine, turn_id)
+    refute File.exists?(out_path)
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
+    assert_resolution(session, store, review, "approve")
+    Wait.terminal_turn(engine, turn_id)
+    assert File.read!(out_path) == "approved-content"
+  end
+
+  test "explicit A overrides the highlighted denial without a second confirmation", %{
+    engine: engine,
+    config: config,
+    store: store,
+    turn_id: turn_id,
+    out_path: out_path
+  } do
+    session = start_session(engine, config)
+    review = open_review(session)
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert Breeze.Test.metadata(session).assigns.tool_review.index == 1
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "A")
+    assert_resolution(session, store, review, "approve")
+    Wait.terminal_turn(engine, turn_id)
+    assert File.read!(out_path) == "approved-content"
+  end
+
+  test "Escape preserves pending approval and reopening discards any old selection", %{
+    engine: engine,
+    config: config,
+    store: store,
+    turn_id: turn_id,
+    out_path: out_path
+  } do
+    session = start_session(engine, config)
+    review = open_review(session)
+    events = EventStore.load(store)
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
+    assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Escape")
+    assert is_nil(Breeze.Test.metadata(session).assigns.modal)
+    refute File.exists?(out_path)
+
+    reopened = open_review(session)
+    assert reopened.review.request_id == review.review.request_id
+    assert is_nil(reopened.index)
+    assert waiting?(engine, turn_id)
+    assert EventStore.load(store) == events
+  end
+
+  defp open_review(session) do
+    type(session, "/tools")
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assigns = Breeze.Test.metadata(session).assigns
+    assert assigns.modal == :tool_review
+    assigns.tool_review
+  end
+
+  defp assert_resolution(session, store, review, decision) do
+    assigns = Breeze.Test.metadata(session).assigns
+    assert is_nil(assigns.modal)
+    assert %Notice{severity: :success} = assigns.notice
+
+    [event] = Enum.filter(EventStore.load(store), &(&1.type == :tool_run_approval_resolved))
+    assert event.data["invocation_id"] == review.invocation_id
+    assert event.data["tool_run_id"] == review.review.request_id
+    assert event.data["decision"] == decision
+    event
   end
 
   defp denied_invocation?(engine, turn_id) do
@@ -122,22 +197,7 @@ defmodule ReyCode.TUI.ToolReviewTest do
     end)
   end
 
-  defp wait_until_notice(session, text, attempts \\ 100)
-
-  defp wait_until_notice(session, _text, 0) do
-    flunk("notice never appeared; screen:\n#{plain(Breeze.Test.render!(session))}")
-  end
-
-  defp wait_until_notice(session, text, attempts) do
-    if Breeze.Test.render!(session) =~ text do
-      :ok
-    else
-      Process.sleep(25)
-      wait_until_notice(session, text, attempts - 1)
-    end
-  end
-
-  defp start_session(turn_id, engine, config) do
+  defp start_session(engine, config) do
     session =
       Breeze.Test.start!(ReyCode.TUI,
         size: {120, 44},
@@ -147,7 +207,7 @@ defmodule ReyCode.TUI.ToolReviewTest do
       )
 
     on_exit(fn -> Breeze.Test.stop(session) end)
-    {session, turn_id}
+    session
   end
 
   defp type(session, text) do
@@ -165,23 +225,8 @@ defmodule ReyCode.TUI.ToolReviewTest do
     snapshot = Engine.snapshot(engine)
 
     Enum.any?(snapshot.turns[turn_id].invocation_order, fn id ->
-      invocation = snapshot.invocations[id]
-      invocation.status == :waiting_tool_approval or invocation.pending_tool_review != nil
+      snapshot.invocations[id].status == :waiting_tool_approval
     end)
-  end
-
-  defp wait_until_waiting(engine, turn_id, attempts \\ 200)
-
-  defp wait_until_waiting(_engine, _turn_id, 0),
-    do: flunk("no invocation reached waiting_tool_approval")
-
-  defp wait_until_waiting(engine, turn_id, attempts) do
-    if waiting?(engine, turn_id) do
-      :ok
-    else
-      Process.sleep(25)
-      wait_until_waiting(engine, turn_id, attempts - 1)
-    end
   end
 
   defp start_isolated_stack(simulator_opts) do

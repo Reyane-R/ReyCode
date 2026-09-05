@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.ContextBoundary do
 
   alias Breeze.{Component, View}
   alias ReyCode.Provider.TextBuffer
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @max_summary_bytes 65_536
   @visible_line_count 24
@@ -22,7 +22,7 @@ defmodule ReyCode.TUI.ContextBoundary do
         |> Component.assign(modal: :context_boundary, context_boundary: initial(), notice: nil)
 
       _session ->
-        SlashPalette.close(term, "This Session has no ContextBoundary")
+        SlashPalette.close(term, Notice.new(:info, "This Session has no ContextBoundary"))
     end
   end
 

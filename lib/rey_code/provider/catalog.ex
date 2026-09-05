@@ -170,14 +170,14 @@ defmodule ReyCode.Provider.Catalog do
     end
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case take_probe(state, ref) do
       {probe, state} ->
-        message = "provider discovery failed: #{inspect(reason)}"
+        failure = ReyCode.Failure.new(:request_failed, "Provider discovery process exited")
 
         {:noreply,
          settle_probe(state, probe, fn providers ->
-           fail_providers(providers, probe.key, state, message)
+           fail_providers(providers, probe.key, state, failure)
          end)}
 
       nil ->
@@ -189,11 +189,11 @@ defmodule ReyCode.Provider.Catalog do
     case take_probe(state, ref) do
       {probe, state} ->
         Task.shutdown(probe.task, :brutal_kill)
-        message = "provider discovery timed out"
+        failure = ReyCode.Failure.new(:timeout, "Provider discovery exceeded its deadline", true)
 
         {:noreply,
          settle_probe(state, probe, fn providers ->
-           fail_providers(providers, probe.key, state, message)
+           fail_providers(providers, probe.key, state, failure)
          end)}
 
       nil ->
@@ -241,7 +241,8 @@ defmodule ReyCode.Provider.Catalog do
   # Refresh preserves the last known models while a profile is checking.
   defp checking_entry(nil, _key), do: nil
 
-  defp checking_entry(entry, _key), do: %{entry | status: :checking, error: nil}
+  defp checking_entry(entry, _key),
+    do: %{entry | status: :checking, error: nil, failure: nil}
 
   defp take_probe(state, ref) do
     case Map.pop(state.probes, ref) do
@@ -275,8 +276,10 @@ defmodule ReyCode.Provider.Catalog do
 
   # Timeouts and crashes mark only the failed target's providers; healthy
   # entries keep their last published status.
-  defp fail_providers(providers, key, _state, message) do
-    Map.update!(providers, key, fn entry -> %{entry | status: :error, error: message} end)
+  defp fail_providers(providers, key, _state, failure) do
+    Map.update!(providers, key, fn entry ->
+      %{entry | status: :error, error: failure.message, failure: failure}
+    end)
   end
 
   defp complete_round_if_finished(%{probes: probes} = state) when map_size(probes) == 0 do
@@ -312,19 +315,16 @@ defmodule ReyCode.Provider.Catalog do
     end
   end
 
-  defp normalize_api_result(id, result, config) do
+  defp normalize_api_result(id, _result, config) do
     case ProviderRegistry.descriptor(id, config) do
       nil ->
         nil
 
       descriptor ->
-        reason =
-          case result do
-            {:error, reason} -> reason
-            other -> other
-          end
+        failure =
+          ReyCode.Failure.new(:request_failed, "Provider discovery returned an invalid result")
 
-        api_entry(descriptor, %{status: :error, error: format_reason(reason)})
+        api_entry(descriptor, %{status: :error, error: failure.message, failure: failure})
     end
   end
 
@@ -338,6 +338,7 @@ defmodule ReyCode.Provider.Catalog do
       credential_count: Map.get(discovery, :credential_count, 0),
       models: Map.get(discovery, :models, []),
       error: Map.get(discovery, :error),
+      failure: Map.get(discovery, :failure),
       checked_at: DateTime.utc_now()
     }
   end
@@ -352,6 +353,7 @@ defmodule ReyCode.Provider.Catalog do
       credential_count: 0,
       models: [],
       error: nil,
+      failure: nil,
       checked_at: nil
     }
   end
@@ -470,8 +472,4 @@ defmodule ReyCode.Provider.Catalog do
 
   defp runtime_policy(ReyCode.Provider.Simulator, config),
     do: RuntimeConfig.simulator_policy(config)
-
-  defp format_reason(reason) when is_binary(reason), do: reason
-  defp format_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
-  defp format_reason(reason), do: inspect(reason)
 end

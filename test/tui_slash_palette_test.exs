@@ -1,7 +1,7 @@
 defmodule ReyCode.TUI.SlashPaletteTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   test "matches/1 filters commands by prefix" do
     assert Enum.map(SlashPalette.matches("/ag"), & &1.command) == ["/agent", "/agents"]
@@ -132,11 +132,11 @@ defmodule ReyCode.TUI.SlashPaletteTest do
   end
 
   test "close/2 clears palette state and preserves a notice" do
-    result = SlashPalette.close(term(), "Unknown command")
+    result = SlashPalette.close(term(), Notice.new(:warning, "Unknown command"))
 
     assert result.assigns.modal == nil
     assert result.assigns.slash == nil
-    assert result.assigns.notice == "Unknown command"
+    assert %Notice{severity: :warning} = result.assigns.notice
   end
 
   defp term(opts \\ []) do

@@ -18,6 +18,7 @@ defmodule ReyCode.TUI do
     Completion,
     Keybindings,
     Mentions,
+    Notice,
     OperatorQuestion,
     PromptHistory,
     Recovery,
@@ -29,9 +30,8 @@ defmodule ReyCode.TUI do
     ToolInspector
   }
 
-  # Mentions lives in lib/rey_code/tui/mentions.ex, which the parallel
-  # compiler may not have finished when this view is compiled. Resolution
-  # is a runtime call, so the undefined-module warning is a false positive.
+  # Mentions is reached only at runtime, so an undefined-module warning would
+  # be a parallel-compile false positive.
   @compile {:no_warn_undefined, ReyCode.TUI.Mentions}
 
   @shutdown_timeout_ms 5_000
@@ -206,7 +206,7 @@ defmodule ReyCode.TUI do
 
   defp post_message(term, draft) do
     if String.trim(draft) == "" do
-      {:noreply, assign(term, notice: "Write a message first")}
+      {:noreply, assign(term, notice: Notice.new(:info, "Write a message first"))}
     else
       case expand_mentions(term, draft) do
         {:ok, expanded, session_term} -> send_message(session_term, expanded)
@@ -222,7 +222,7 @@ defmodule ReyCode.TUI do
       {:ok, expanded, _paths} ->
         case State.ensure_session(term, expanded) do
           {:ok, session_term} -> {:ok, expanded, session_term}
-          {:error, reason} -> {:error, "Could not start session: #{reason}"}
+          {:error, reason} -> {:error, Notice.new(:error, "Could not start session: #{reason}")}
         end
 
       {:error, {token, reason}} ->
@@ -230,14 +230,20 @@ defmodule ReyCode.TUI do
     end
   end
 
-  defp mention_notice(token, :file_not_found), do: "Cannot attach #{token}: file not found"
-  defp mention_notice(token, :outside_workspace), do: "Cannot attach #{token}: outside workspace"
-  defp mention_notice(token, :file_too_large), do: "Cannot attach #{token}: file too large"
+  defp mention_notice(token, :file_not_found),
+    do: Notice.new(:error, "Cannot attach #{token}: file not found")
+
+  defp mention_notice(token, :outside_workspace),
+    do: Notice.new(:error, "Cannot attach #{token}: outside workspace")
+
+  defp mention_notice(token, :file_too_large),
+    do: Notice.new(:error, "Cannot attach #{token}: file too large")
 
   defp mention_notice(token, :total_too_large),
-    do: "Cannot attach #{token}: attachments too large"
+    do: Notice.new(:error, "Cannot attach #{token}: attachments too large")
 
-  defp mention_notice(token, _reason), do: "Cannot attach #{token}: unreadable"
+  defp mention_notice(token, _reason),
+    do: Notice.new(:error, "Cannot attach #{token}: unreadable")
 
   defp send_message(term, draft) do
     session = term.assigns.projection.sessions[term.assigns.selected_session_id]
@@ -250,7 +256,7 @@ defmodule ReyCode.TUI do
            term.assigns.engine
          ) do
       {:ok, _turn_id} ->
-        notice = if follow_up?, do: "Follow-up queued", else: nil
+        notice = if follow_up?, do: Notice.new(:info, "Follow-up queued"), else: nil
 
         next =
           term
@@ -260,10 +266,11 @@ defmodule ReyCode.TUI do
         {:noreply, next}
 
       {:error, {:participants_unconfigured, _participant_ids}} ->
-        {:noreply, assign(term, notice: "Configure the Assistant model with /agents")}
+        {:noreply,
+         assign(term, notice: Notice.new(:warning, "Configure the Assistant model with /agents"))}
 
       {:error, reason} ->
-        {:noreply, assign(term, notice: "Could not send: #{reason}")}
+        {:noreply, assign(term, notice: Notice.new(:error, "Could not send: #{reason}"))}
     end
   end
 
@@ -271,7 +278,7 @@ defmodule ReyCode.TUI do
     command = String.trim(raw_command)
 
     if command == "" do
-      {:noreply, assign(term, notice: "Type a command after !")}
+      {:noreply, assign(term, notice: Notice.new(:info, "Type a command after !"))}
     else
       with {:ok, session_term} <- State.ensure_session(term, command),
            :ok <-
@@ -288,7 +295,7 @@ defmodule ReyCode.TUI do
         {:noreply, next}
       else
         {:error, reason} ->
-          {:noreply, assign(term, notice: "Could not run command: #{reason}")}
+          {:noreply, assign(term, notice: Notice.new(:error, "Could not run command: #{reason}"))}
       end
     end
   end
@@ -336,7 +343,7 @@ defmodule ReyCode.TUI do
 
     if session && session.active_turn_id do
       case Engine.cancel_turn(session.active_turn_id, "Cancelled by user", term.assigns.engine) do
-        :ok -> {:noreply, assign(term, notice: "Task cancelled")}
+        :ok -> {:noreply, assign(term, notice: Notice.new(:info, "Task cancelled"))}
         {:error, _reason} -> {:noreply, term}
       end
     else
@@ -363,8 +370,8 @@ defmodule ReyCode.TUI do
   end
 
   @impl true
-  def handle_info({:update_available, notice}, term) when is_binary(notice) do
-    {:noreply, assign(term, update_notice: notice)}
+  def handle_info({:update_available, message}, term) when is_binary(message) do
+    {:noreply, assign(term, update_notice: Notice.new(:info, message))}
   end
 
   def handle_info({:projection_snapshot, projection}, term) do
@@ -391,6 +398,19 @@ defmodule ReyCode.TUI do
       :stale -> {:noreply, term}
     end
   end
+
+  @doc """
+  Reflows after a terminal resize; Breeze force-redraws the whole frame.
+
+  No view state depends on the previous size — layout derives from
+  `assigns.breeze.terminal` on every render — so preserving assigns keeps the
+  draft, focus, and modal state intact.
+  """
+  def handle_info(:resize, term), do: {:noreply, State.reconcile_animation(term)}
+
+  # The terminal delivers frames ReyCode does not interpret (bracketed paste
+  # handshakes, focus events). Dropping them beats crashing the session.
+  def handle_info(_message, term), do: {:noreply, term}
 
   defp action(id, label, default_chords, handler) do
     %{id: id, label: label, default_chords: default_chords, handler: handler}

@@ -552,6 +552,12 @@ never written to the event log, the catalog snapshot, or the diagnostics
 report. On first use, the `/models` endpoint is queried once to populate the
 model picker; discovery refreshes periodically and whenever you press `R`.
 
+When a provider is unavailable in `Ctrl+G`, its row states the reason and the
+fix — restart with a missing key, start an unreachable local server, or load a
+model on an empty listing — and `D` shows a sanitized technical detail line
+(failure category, HTTP status or connection cause) with no request bodies.
+
+
 Add more OpenAI-compatible providers by configuring profiles, each with a base
 URL and the environment variable that holds its key (`require_key: false`
 makes a profile keyless like the built-in local ones):
@@ -695,7 +701,10 @@ environment variable that will be passed through, and a reminder that Bash is
 explicit host execution rather than a sandbox. For `write` it shows the target
 path, content size, and a bounded preview. For LSP `rename` it shows the action,
 file, new name, and workspace-edit scope. Process mutations show the action,
-name, argv, and supervised host scope. Approve with `A`, deny with `D`.
+name, argv, and supervised host scope. Nothing resolves until you choose:
+`A` approves and `D` denies immediately, the arrow keys (or `j`/`k`) highlight
+a choice that `Enter` confirms, and `Enter` with nothing highlighted leaves the
+request pending.
 
 Decisions are addressed to a specific durable tool run ID, so a stale modal can
 never approve a different request than the one displayed. Waiting approvals

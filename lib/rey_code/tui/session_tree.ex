@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.SessionTree do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, Session}
-  alias ReyCode.TUI.{SlashPalette, State, TimeAgo}
+  alias ReyCode.TUI.{Notice, SlashPalette, State, TimeAgo}
 
   @max_row_count 256
 
@@ -15,7 +15,7 @@ defmodule ReyCode.TUI.SessionTree do
   @spec open(map()) :: map()
   def open(term) do
     if rows(term.assigns.projection) == [] do
-      SlashPalette.close(term, "No Sessions yet")
+      SlashPalette.close(term, Notice.new(:info, "No Sessions yet"))
     else
       term
       |> SlashPalette.clear()
@@ -107,7 +107,9 @@ defmodule ReyCode.TUI.SessionTree do
           Context compacted through sequence {@selected.session.context_boundary_sequence}
         </box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-1 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-1 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">j/k move   Enter open   F fork selected   Esc close</box>
     </box>
     """
@@ -141,14 +143,19 @@ defmodule ReyCode.TUI.SessionTree do
       {:ok, session_id} ->
         next =
           term
-          |> Component.assign(modal: nil, session_tree: initial(), notice: "Session forked")
+          |> Component.assign(
+            modal: nil,
+            session_tree: initial(),
+            notice: Notice.new(:success, "Session forked")
+          )
           |> State.select_session(session_id)
           |> View.focus("prompt")
 
         {:noreply, next}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not fork Session: #{reason}")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:error, "Could not fork Session: #{reason}"))}
     end
   end
 

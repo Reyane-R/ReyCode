@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.ToolInspector do
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.ToolRun
   alias ReyCode.Provider.TextBuffer
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @max_run_count 256
   @max_detail_bytes 32_768
@@ -18,7 +18,7 @@ defmodule ReyCode.TUI.ToolInspector do
   @spec open(map()) :: map()
   def open(term) do
     if rows(term.assigns) == [] do
-      SlashPalette.close(term, "No ToolRuns in this Session")
+      SlashPalette.close(term, Notice.new(:info, "No ToolRuns in this Session"))
     else
       term
       |> SlashPalette.clear()
@@ -121,7 +121,9 @@ defmodule ReyCode.TUI.ToolInspector do
         </box>
         <box :for={line <- @detail_lines} class={detail_class(line)}>{line}</box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-1 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-1 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">{controls(@term.tool_inspector.step)}</box>
     </box>
     """

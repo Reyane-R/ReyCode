@@ -2,7 +2,7 @@ defmodule ReyCode.TUI.CommandActionsTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Orchestration.{Projection, Session}
-  alias ReyCode.TUI.{AnimationClock, SessionCommand, WorkCommand}
+  alias ReyCode.TUI.{AnimationClock, Notice, SessionCommand, WorkCommand}
 
   defmodule EngineStub do
     use GenServer
@@ -36,10 +36,10 @@ defmodule ReyCode.TUI.CommandActionsTest do
     assert forked.assigns.selected_session_id == "session-fork"
 
     assert {:noreply, invalid} = SessionCommand.run(term, "/rewind", "invalid")
-    assert invalid.assigns.notice == "Rewind requires a durable sequence number"
+    assert %Notice{severity: :warning} = invalid.assigns.notice
 
     assert {:noreply, exported} = SessionCommand.run(term, "/export", nil)
-    assert exported.assigns.notice =~ "Session exported to"
+    assert %Notice{severity: :success} = exported.assigns.notice
     assert File.exists?(Path.join([workspace, ".reycode", "exports", "room-1.md"]))
   end
 
@@ -49,10 +49,10 @@ defmodule ReyCode.TUI.CommandActionsTest do
     term = term(engine, workspace, "turn-1")
 
     assert {:noreply, steered} = WorkCommand.run(term, "/steer", "use less code")
-    assert steered.assigns.notice == "Steering queued for the next provider round"
+    assert %Notice{severity: :success} = steered.assigns.notice
 
     assert {:noreply, dequeued} = WorkCommand.run(term, "/dequeue", nil)
-    assert dequeued.assigns.notice == "FollowUp returned to the composer"
+    assert %Notice{severity: :success} = dequeued.assigns.notice
     assert dequeued.assigns.drafts["room-1"] == "Recovered follow-up"
   end
 

@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.ModelPicker do
   use Breeze.Component
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @spec initial() :: map()
   def initial, do: %{index: 0}
@@ -13,7 +13,10 @@ defmodule ReyCode.TUI.ModelPicker do
   def open(term) do
     case entries(term_assigns(term).providers) do
       [] ->
-        SlashPalette.close(term, "No providers configured — run /connect first")
+        SlashPalette.close(
+          term,
+          Notice.new(:warning, "No providers configured — run /connect first")
+        )
 
       _entries ->
         term
@@ -66,7 +69,9 @@ defmodule ReyCode.TUI.ModelPicker do
          %{} = primary <- primary_participant(session) do
       configure(term, entry, provider, model, label, primary)
     else
-      _other -> {:noreply, Component.assign(term, notice: "No Assistant configured")}
+      _other ->
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:warning, "No Assistant configured"))}
     end
   end
 
@@ -86,7 +91,10 @@ defmodule ReyCode.TUI.ModelPicker do
       configure(term, selected, provider, model, selected.label, primary)
     else
       _other ->
-        {:noreply, Component.assign(term, notice: "The selected model is no longer available")}
+        {:noreply,
+         Component.assign(term,
+           notice: Notice.new(:warning, "The selected model is no longer available")
+         )}
     end
   end
 
@@ -101,11 +109,16 @@ defmodule ReyCode.TUI.ModelPicker do
       :ok ->
         {:noreply,
          term
-         |> Component.assign(modal: nil, model_picker: initial(), notice: "Model set to #{label}")
+         |> Component.assign(
+           modal: nil,
+           model_picker: initial(),
+           notice: Notice.new(:success, "Model set to #{label}")
+         )
          |> View.focus("prompt")}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not set model: #{reason}")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:error, "Could not set model: #{reason}"))}
     end
   end
 
@@ -150,7 +163,9 @@ defmodule ReyCode.TUI.ModelPicker do
           {marker(index, @selected)} {display_label(entry.label, @term.breeze.terminal.width - 4)}
         </box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">Arrow keys or j/k move   Enter select   Esc cancel</box>
     </box>
     """

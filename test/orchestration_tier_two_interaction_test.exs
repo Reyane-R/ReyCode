@@ -5,6 +5,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
   alias ReyCode.Orchestration.{Engine, WorkPlan}
   alias ReyCode.Provider.{Frame, Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
+  alias ReyCode.TUI.Notice
   alias ReyCode.TUI.OperatorQuestion, as: QuestionModal
 
   @agent_registry __MODULE__.AgentRegistry
@@ -241,9 +242,9 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     }
 
     assert {:noreply, answered} = QuestionModal.handle_input("Enter", term)
-    assert answered.assigns.notice == "Answered: Safe"
+    assert %Notice{severity: :success} = answered.assigns.notice
     assert {:noreply, stale} = QuestionModal.submit(term)
-    assert stale.assigns.notice =~ "Could not answer"
+    assert %Notice{severity: :error} = stale.assigns.notice
     Wait.terminal_turn(@engine, turn_id)
     assert_receive {:selected_option, "Safe"}, 5_000
 

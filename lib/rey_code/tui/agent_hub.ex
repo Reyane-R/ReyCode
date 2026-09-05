@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.AgentHub do
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, Invocation, ModelTier, Projection}
   alias ReyCode.Provider.TextBuffer
-  alias ReyCode.TUI.{MergeReview, SlashPalette}
+  alias ReyCode.TUI.{MergeReview, Notice, SlashPalette}
 
   @wide_terminal_columns 100
   @inspector_page_line_count 18
@@ -17,7 +17,7 @@ defmodule ReyCode.TUI.AgentHub do
   @spec open(map()) :: map()
   def open(term) do
     if children(term) == [] do
-      SlashPalette.close(term, "No delegated child Invocations")
+      SlashPalette.close(term, Notice.new(:info, "No delegated child Invocations"))
     else
       term
       |> Component.assign(modal: :agent_hub, slash: nil, agent_hub: initial(), notice: nil)
@@ -69,10 +69,14 @@ defmodule ReyCode.TUI.AgentHub do
 
         case cancel_fun.(child.turn_id, "Cancelled by Operator in Agent Hub", term.assigns.engine) do
           :ok ->
-            {:noreply, Component.assign(term, notice: "Child Invocation cancelled")}
+            {:noreply,
+             Component.assign(term, notice: Notice.new(:success, "Child Invocation cancelled"))}
 
           {:error, reason} ->
-            {:noreply, Component.assign(term, notice: "Could not cancel child: #{reason}")}
+            {:noreply,
+             Component.assign(term,
+               notice: Notice.new(:error, "Could not cancel child: #{reason}")
+             )}
         end
     end
   end
@@ -86,7 +90,10 @@ defmodule ReyCode.TUI.AgentHub do
         {:noreply, term}
 
       _child ->
-        {:noreply, Component.assign(term, notice: "Selected child has no patch awaiting review")}
+        {:noreply,
+         Component.assign(term,
+           notice: Notice.new(:info, "Selected child has no patch awaiting review")
+         )}
     end
   end
 
@@ -147,7 +154,9 @@ defmodule ReyCode.TUI.AgentHub do
       >
         <.inspector child={@selected} lines={@inspector_lines}/>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-1 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-1 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">
         j/k move or scroll   Enter/Tab inspector   T tree   M patch   C cancel   Esc back
       </box>

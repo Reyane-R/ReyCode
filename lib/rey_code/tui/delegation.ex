@@ -7,7 +7,7 @@ defmodule ReyCode.TUI.Delegation do
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.{SlashPalette, State}
+  alias ReyCode.TUI.{Notice, SlashPalette, State}
 
   @spec initial() :: map()
   def initial, do: %{step: :agents, index: 0, participant_id: nil, task: ""}
@@ -16,7 +16,7 @@ defmodule ReyCode.TUI.Delegation do
   def open(term) do
     case task_participants(term) do
       [] ->
-        SlashPalette.close(term, "Create a task agent with /agent first")
+        SlashPalette.close(term, Notice.new(:warning, "Create a task agent with /agent first"))
 
       _participants ->
         Component.assign(term,
@@ -33,7 +33,10 @@ defmodule ReyCode.TUI.Delegation do
   def open_for(term, participant_id) do
     case Enum.find(task_participants(term), &(&1.id == participant_id)) do
       nil ->
-        SlashPalette.close(term, "The selected task agent is no longer available")
+        SlashPalette.close(
+          term,
+          Notice.new(:warning, "The selected task agent is no longer available")
+        )
 
       participant ->
         term
@@ -104,14 +107,17 @@ defmodule ReyCode.TUI.Delegation do
 
   defp delegate(term) do
     if String.trim(term.assigns.delegation.task) == "" do
-      {:noreply, Component.assign(term, notice: "Task is required")}
+      {:noreply, Component.assign(term, notice: Notice.new(:warning, "Task is required"))}
     else
       case State.ensure_session(term, term.assigns.delegation.task) do
         {:ok, session_term} ->
           run_delegation(session_term)
 
         {:error, reason} ->
-          {:noreply, Component.assign(term, notice: "Could not start session: #{reason}")}
+          {:noreply,
+           Component.assign(term,
+             notice: Notice.new(:error, "Could not start session: #{reason}")
+           )}
       end
     end
   end
@@ -134,15 +140,19 @@ defmodule ReyCode.TUI.Delegation do
            modal: nil,
            home: false,
            delegation: initial(),
-           notice: "Task delegated to #{name}"
+           notice: Notice.new(:success, "Task delegated to #{name}")
          )
          |> View.focus("prompt")}
 
       {:error, {:participants_unconfigured, _ids}} ->
-        {:noreply, Component.assign(term, notice: "Configure this agent's model with /agents")}
+        {:noreply,
+         Component.assign(term,
+           notice: Notice.new(:warning, "Configure this agent's model with /agents")
+         )}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not delegate task: #{reason}")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:error, "Could not delegate task: #{reason}"))}
     end
   end
 
@@ -208,7 +218,9 @@ defmodule ReyCode.TUI.Delegation do
           class="w-full h-6"
         />
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">Arrow keys or j/k move   Enter select   Esc cancel</box>
     </box>
     """

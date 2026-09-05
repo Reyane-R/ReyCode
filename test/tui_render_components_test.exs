@@ -15,7 +15,11 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     assert Breeze.Test.metadata(session).focused == "prompt"
 
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Enter")
-    assert Breeze.Test.metadata(session).assigns.notice == "Write a message first"
+
+    assert Breeze.Test.metadata(session).assigns.notice == %ReyCode.TUI.Notice{
+             severity: :info,
+             message: "Write a message first"
+           }
 
     session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "x")
@@ -198,6 +202,101 @@ defmodule ReyCode.TUI.RenderComponentsTest do
              )
 
     assert session |> Breeze.Test.render!() |> plain() =~ "⑂ feature/..."
+  end
+
+  test "terminal resize preserves drafts and reflows without crashing" do
+    session =
+      Breeze.Test.start!(ReyCode.TUI,
+        size: {120, 32},
+        theme: ReyCode.Theme.default(),
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    Breeze.Test.render!(session)
+
+    # First-run setup opens on top; close it so the composer takes input.
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
+    assert {:noreply, "prompt", true} = Breeze.Test.input(session, "x")
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "x"
+
+    resized_terminal = %{session.terminal | size: %{width: 80, height: 24}}
+    # The resize dispatch already updated the view's terminal; render at the
+    # new size to assert the reflow.
+    screen = Breeze.Test.render!(session, terminal: resized_terminal)
+    assert screen =~ "REYCODE"
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "x"
+    assert Breeze.Test.metadata(session).focused == "prompt"
+  end
+
+  test "composer readiness states what the Assistant can do right now" do
+    session =
+      Breeze.Test.start!(ReyCode.TUI,
+        size: {120, 32},
+        theme: ReyCode.Theme.default(),
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    unready = Breeze.Test.render!(session)
+    assert unready =~ "Connect a model"
+
+    providers = %{simulator: %{id: :simulator, status: :configured, models: ["test"]}}
+    generation = Breeze.Test.metadata(session).assigns.providers_generation + 1
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(
+               session,
+               {:provider_catalog_updated, %{generation: generation, providers: providers}}
+             )
+
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    engine = Breeze.Test.metadata(session).assigns.engine
+    projection = engine.snapshot()
+    session_record = projection.sessions[session_id]
+
+    participant =
+      session_record.participants
+      |> Enum.find(&(&1.kind == :primary))
+      |> Map.merge(%{provider: :simulator, model: "test"})
+
+    projection =
+      put_in(
+        projection,
+        [:sessions, session_id, Access.key(:participants)],
+        [participant | Enum.reject(session_record.participants, &(&1.kind == :primary))]
+      )
+
+    next_sequence = projection.sequence + 1
+
+    assert {:noreply, _focused} =
+             Breeze.Test.info(
+               session,
+               {:projection_snapshot, %{projection | sequence: next_sequence}}
+             )
+
+    screen = Breeze.Test.render!(session)
+    assert screen =~ "Ready"
+    refute screen =~ "Connect a model — /connect"
+  end
+
+  test "home screen leads with workspace and keeps essentials at small heights" do
+    session =
+      Breeze.Test.start!(ReyCode.TUI,
+        size: {80, 24},
+        theme: ReyCode.Theme.default(),
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Workspace"
+    assert screen =~ "Browse commands"
+    assert screen =~ "Message Assistant"
   end
 
   defp ctrl(key), do: %{"ctrlKey" => true, "key" => key}

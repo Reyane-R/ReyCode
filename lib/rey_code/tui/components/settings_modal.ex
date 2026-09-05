@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.Components.SettingsModal do
   use Breeze.Component
 
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.Settings
+  alias ReyCode.TUI.{Notice, Settings}
 
   attr :term, :map, required: true
 
@@ -38,8 +38,11 @@ defmodule ReyCode.TUI.Components.SettingsModal do
           {marker(index, @term.settings.index)} {provider.name} {Presentation.status_label(provider)}
         </box>
         <box class="pt-2 text-muted">
-          {Presentation.selection_help(
-            Enum.at(Settings.provider_options(@term.providers), @term.settings.index)
+          {clip(
+            Presentation.selection_help(
+              Enum.at(Settings.provider_options(@term.providers), @term.settings.index)
+            ),
+            @term.breeze.terminal.width
           )}
         </box>
       </box>
@@ -59,7 +62,9 @@ defmodule ReyCode.TUI.Components.SettingsModal do
           {marker(index, @term.settings.index)} {ReyCode.TUI.ModelPicker.display_label(model, @term.breeze.terminal.width - 4)}
         </box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {clip(@term.notice.message, @term.breeze.terminal.width)}
+      </box>
       <box class="pt-2 text-muted">Arrow keys or j/k move   Enter select</box>
     </box>
     """
@@ -68,13 +73,29 @@ defmodule ReyCode.TUI.Components.SettingsModal do
   defp title(%{onboarding?: true}), do: "Set up your Assistant"
   defp title(_settings), do: "Configure agents"
 
-  defp header_controls(%{onboarding?: true, step: :providers}), do: "Esc close   R recheck"
-  defp header_controls(%{step: :providers}), do: "Esc back   R recheck"
+  defp header_controls(%{onboarding?: true, step: :providers}),
+    do: "Esc close   R recheck   D details"
+
+  defp header_controls(%{step: :providers}), do: "Esc back   R recheck   D details"
   defp header_controls(_settings), do: "Esc back"
 
   defp step_label(:participants), do: "choose agents"
   defp step_label(:providers), do: "choose runtime"
   defp step_label(:models), do: "choose model"
+
+  # Breeze clips overflow at the cell boundary without a marker; ending on an
+  # ellipsis keeps long provider guidance visibly bounded instead of cut.
+  defp clip(text, width) when is_binary(text) and is_integer(width) do
+    max_graphemes = max(width - 8, 16)
+
+    if String.length(text) <= max_graphemes do
+      text
+    else
+      String.slice(text, 0, max_graphemes - 1) <> "…"
+    end
+  end
+
+  defp clip(nil, _width), do: ""
 
   defp row_class(index, index), do: "w-full px-1 bg-panel font-bold text-primary"
   defp row_class(_index, _selected), do: "w-full px-1 text-muted"

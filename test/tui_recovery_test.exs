@@ -2,7 +2,7 @@ defmodule ReyCode.TUI.RecoveryTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.Orchestration.{Message, Projection, Session, Turn}
-  alias ReyCode.TUI.Recovery
+  alias ReyCode.TUI.{Notice, Recovery}
 
   defmodule EngineStub do
     use GenServer
@@ -57,11 +57,11 @@ defmodule ReyCode.TUI.RecoveryTest do
 
     retry_term = put_in(term.assigns.modal, nil)
     assert {:noreply, retried} = ReyCode.TUI.retry_latest(nil, retry_term)
-    assert retried.assigns.notice == "Failed Turn retried as a new linked Turn"
+    assert %Notice{severity: :success} = retried.assigns.notice
     assert_receive {:retried, "failed"}
 
     assert {:noreply, dequeued} = Recovery.dequeue_latest(term)
-    assert dequeued.assigns.notice == "FollowUp returned to the composer"
+    assert %Notice{severity: :success} = dequeued.assigns.notice
     assert dequeued.assigns.drafts[session.id] == "Recovered follow-up"
     assert_receive {:dequeued, "session"}
   end
@@ -86,6 +86,6 @@ defmodule ReyCode.TUI.RecoveryTest do
     }
 
     assert {:noreply, unchanged} = Recovery.retry_latest(term)
-    assert unchanged.assigns.notice == "No failed Turn to retry"
+    assert %Notice{severity: :info} = unchanged.assigns.notice
   end
 end

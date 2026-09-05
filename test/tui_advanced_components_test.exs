@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.AdvancedComponentsTest do
   alias ReyCode.Orchestration.{Engine, InvocationCoordination, OperatorQuestion}
   alias ReyCode.RuntimeConfig.Artifacts, as: ArtifactPolicy
   alias ReyCode.Tool.Result
-  alias ReyCode.TUI.{Artifacts, MergeReview}
+  alias ReyCode.TUI.{Artifacts, MergeReview, Notice}
   alias ReyCode.TUI.OperatorQuestion, as: QuestionModal
 
   test "rich question navigation toggles selections and edits Other without resolving" do
@@ -55,6 +55,8 @@ defmodule ReyCode.TUI.AdvancedComponentsTest do
     assert other_row.assigns.operator_question.index == 2
     assert {:noreply, other_step} = QuestionModal.handle_input(" ", other_row)
     assert other_step.assigns.operator_question.step == :other
+    # Free-text answers require the question's own textarea to own focus.
+    assert other_step.focused == "question-other"
 
     assert {:noreply, edited} =
              QuestionModal.handle_event(
@@ -65,9 +67,10 @@ defmodule ReyCode.TUI.AdvancedComponentsTest do
 
     assert edited.assigns.operator_question.other == "rollback"
     assert QuestionModal.handle_event("unknown", %{}, edited) == :unhandled
-
     assert {:noreply, options} = QuestionModal.handle_input("Escape", edited)
     assert options.assigns.operator_question.step == :options
+    assert options.focused == "prompt"
+
     assert {:noreply, closed} = QuestionModal.handle_input("Escape", options)
     assert closed.assigns.modal == nil
     assert closed.focused == "prompt"
@@ -135,7 +138,7 @@ defmodule ReyCode.TUI.AdvancedComponentsTest do
 
     empty_policy = %{policy | root: root <> "-empty"}
     empty = put_in(term.assigns.config.artifacts, empty_policy)
-    assert Artifacts.open(empty).assigns.notice == "No spooled artifacts"
+    assert %Notice{severity: :info} = Artifacts.open(empty).assigns.notice
   end
 
   test "merge review navigation is bounded and unresolved engine decisions stay visible" do
@@ -168,7 +171,7 @@ defmodule ReyCode.TUI.AdvancedComponentsTest do
     assert MergeReview.handle_event("unknown", %{}, up) == :unhandled
 
     assert {:noreply, rejected} = MergeReview.handle_input("A", up)
-    assert rejected.assigns.notice =~ "Could not apply"
+    assert %Notice{severity: :error} = rejected.assigns.notice
     assert {:noreply, closed} = MergeReview.handle_input("Escape", rejected)
     assert closed.assigns.modal == :agent_hub
     assert closed.focused == "prompt"

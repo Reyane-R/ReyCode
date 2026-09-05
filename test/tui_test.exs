@@ -23,7 +23,7 @@ defmodule ReyCode.TUITest do
 
   alias ReyCode.Test.Wait
   alias ReyCode.Tool.Result
-  alias ReyCode.TUI.{AnimationClock, State}
+  alias ReyCode.TUI.{AnimationClock, Notice, State}
 
   test "starts clean and creates a fresh durable session for the first message" do
     %{engine: tui_engine_1} = start_isolated_stack([])
@@ -36,7 +36,8 @@ defmodule ReyCode.TUITest do
     assert screen =~ "AI workbench"
     assert screen =~ "Assistant"
     assert screen =~ "Quick start"
-    assert screen =~ "Recent sessions"
+    assert screen =~ "Workspace"
+    assert screen =~ "More"
     assert screen =~ "Message Assistant"
     assert screen =~ "commands"
     refute screen =~ "You ·"
@@ -703,7 +704,10 @@ defmodule ReyCode.TUITest do
     assert {:noreply, _focused} = Breeze.Test.info(session, {:update_available, notice})
 
     screen = session |> Breeze.Test.render!() |> plain()
-    assert screen =~ "Update available: 0.1.0 → v9.9.9 · run `reycode update`"
+    assert screen =~ notice
+
+    assert %Notice{severity: :info, message: ^notice} =
+             Breeze.Test.metadata(session).assigns.update_notice
   end
 
   test "exposes only session-level global shortcuts" do
@@ -1206,7 +1210,7 @@ defmodule ReyCode.TUITest do
     assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
 
     assert assigns.token_label =~ "Ⅱ tok standard 12.4k/15k"
-    assert assigns.budget_notice == "Assistant has used 83% of its standard token budget"
+    assert %Notice{severity: :warning} = assigns.budget_notice
   end
 
   test "approval and queued presentation stay static and event-invariant across stale ticks" do

@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.Decisions do
   alias Breeze.{Component, View}
   alias ReyCode.Memory.Store
   alias ReyCode.Provider.TextBuffer
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @kinds ~w(decision assumption)
   @max_entry_count 100
@@ -25,7 +25,7 @@ defmodule ReyCode.TUI.Decisions do
         |> Component.assign(modal: :decisions, decisions: initial(), notice: nil)
 
       {:error, reason} ->
-        SlashPalette.close(term, "Could not read decisions: #{reason}")
+        SlashPalette.close(term, Notice.new(:error, "Could not read decisions: #{reason}"))
     end
   end
 
@@ -115,7 +115,9 @@ defmodule ReyCode.TUI.Decisions do
         </box>
         <box :for={line <- @detail_lines} class={detail_class(line)}>{line}</box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-1 text-warning">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-1 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">{controls(@term.decisions.step)}</box>
     </box>
     """
@@ -144,15 +146,18 @@ defmodule ReyCode.TUI.Decisions do
         {:noreply, term}
 
       %{active: false} ->
-        {:noreply, Component.assign(term, notice: "Decision is already invalidated")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:info, "Decision is already invalidated"))}
 
       entry ->
         case Store.forget(workspace(term.assigns), entry.key, memory_store(term.assigns)) do
           :ok ->
-            {:noreply, Component.assign(term, notice: "Invalidated #{entry.key}")}
+            {:noreply,
+             Component.assign(term, notice: Notice.new(:success, "Invalidated #{entry.key}"))}
 
           {:error, reason} ->
-            {:noreply, Component.assign(term, notice: "Could not invalidate: #{reason}")}
+            {:noreply,
+             Component.assign(term, notice: Notice.new(:error, "Could not invalidate: #{reason}"))}
         end
     end
   end

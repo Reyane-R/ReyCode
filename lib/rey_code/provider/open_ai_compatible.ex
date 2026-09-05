@@ -33,20 +33,29 @@ defmodule ReyCode.Provider.OpenAICompatible do
              status: :configured,
              models: models,
              credential_count: credential_count(profile),
-             error: nil
+             error: nil,
+             failure: nil
            }}
 
-        {:error, message} ->
+        {:error, %Failure{} = failure} ->
           {:ok,
            %{
              status: :error,
              models: [],
              credential_count: credential_count(profile),
-             error: message
+             error: failure.message,
+             failure: failure
            }}
       end
     else
-      {:ok, %{status: :available, models: [], credential_count: 0, error: nil}}
+      {:ok,
+       %{
+         status: :available,
+         models: [],
+         credential_count: 0,
+         error: nil,
+         failure: Failure.new(:missing_credentials, "Model API credential is missing")
+       }}
     end
   end
 
@@ -167,19 +176,71 @@ defmodule ReyCode.Provider.OpenAICompatible do
          {:ok, models} <- parse_models(body) do
       {:ok, models}
     else
-      {:ok, _body, %{status: status}} ->
-        {:error, "model list request returned HTTP status #{inspect(status)}"}
+      {:ok, _body, %{status: status}} when is_integer(status) ->
+        {:error, discovery_failure(HTTP.status_error(status, ""))}
 
-      {:error, %Failure{message: message}} ->
-        {:error, message}
+      {:error, %Failure{} = failure} ->
+        {:error, discovery_failure(failure)}
 
-      {:error, reason} ->
-        {:error, "model list request failed: #{inspect(reason)}"}
+      {:error, _reason} ->
+        {:error, discovery_failure(HTTP.error(:request_failed, "", false))}
 
-      other ->
-        {:error, "model list request returned an invalid result: #{inspect(other)}"}
+      _other ->
+        {:error, discovery_failure(HTTP.error(:protocol_error, "", false))}
     end
   end
+
+  # Discovery retains only a bounded, trusted diagnostic vocabulary. Response
+  # bodies, transport messages, URLs and exception terms can contain credentials.
+  defp discovery_failure(%Failure{} = failure) do
+    category = discovery_category(failure)
+
+    cause = discovery_cause(failure.cause)
+    diagnostic = "Model list request: #{category}"
+
+    diagnostic =
+      if cause, do: diagnostic <> " (#{format_discovery_cause(cause)})", else: diagnostic
+
+    Failure.new(category, diagnostic, failure.retryable?, cause)
+  end
+
+  defp discovery_cause(status) when is_integer(status) and status in 100..599, do: status
+
+  defp discovery_cause(reason)
+       when reason in [
+              :failed_connect,
+              :econnrefused,
+              :nxdomain,
+              :enetunreach,
+              :ehostunreach,
+              :timeout
+            ],
+       do: reason
+
+  defp discovery_cause(_cause), do: nil
+
+  defp format_discovery_cause(status) when is_integer(status), do: "HTTP #{status}"
+  defp format_discovery_cause(reason), do: Atom.to_string(reason)
+
+  defp discovery_category(%Failure{cause: cause})
+       when cause in [:failed_connect, :econnrefused, :nxdomain, :enetunreach, :ehostunreach],
+       do: :provider_unavailable
+
+  defp discovery_category(%Failure{cause: :timeout}), do: :timeout
+
+  defp discovery_category(%Failure{category: category})
+       when category in [
+              :authentication_failed,
+              :provider_unavailable,
+              :timeout,
+              :rate_limited,
+              :server_error,
+              :response_too_large,
+              :protocol_error
+            ],
+       do: category
+
+  defp discovery_category(_failure), do: :request_failed
 
   defp collect_model_bytes({:partial, data}, body, max_bytes) do
     if byte_size(body) + byte_size(data) > max_bytes do
@@ -196,10 +257,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
         parse_model_entries(models)
 
       {:ok, _invalid} ->
-        {:error, "model list response has an invalid schema"}
+        {:error, HTTP.error(:protocol_error, "Invalid model list schema", false)}
 
       {:error, _reason} ->
-        {:error, "model list response is not valid JSON"}
+        {:error, HTTP.error(:protocol_error, "Invalid model list JSON", false)}
     end
   end
 
@@ -209,7 +270,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
         {:cont, {:ok, [id | acc]}}
 
       _invalid, _acc ->
-        {:halt, {:error, "model list response has an invalid schema"}}
+        {:halt, {:error, HTTP.error(:protocol_error, "Invalid model list schema", false)}}
     end)
     |> case do
       {:ok, ids} -> {:ok, ids |> Enum.uniq() |> Enum.sort()}

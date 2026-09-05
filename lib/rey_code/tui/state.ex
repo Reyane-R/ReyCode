@@ -20,6 +20,7 @@ defmodule ReyCode.TUI.State do
     MergeReview,
     ModelPicker,
     ModelTiers,
+    Notice,
     OperatorQuestion,
     PromptHistory,
     SessionPicker,
@@ -168,10 +169,10 @@ defmodule ReyCode.TUI.State do
       draft: Map.get(assigns.drafts, assigns.selected_session_id, ""),
       git_branch: git_branch(session && session.workspace),
       question_label: question_label(session, assigns.projection),
-      update_notice: Map.get(assigns, :update_notice),
       token_label: token_label(session, assigns.projection, assigns.config, budget),
       token_label_class: token_label_class(budget),
       budget_notice: budget_notice(budget),
+      composer_status: composer_status(session, assigns.providers),
       message_width: message_width,
       timeline_id: timeline_id(session.id),
       recent_session_rows: recent_session_rows(assigns),
@@ -286,10 +287,58 @@ defmodule ReyCode.TUI.State do
 
   defp budget_notice(%{ratio: ratio} = budget) when is_number(ratio) and ratio >= 0.8 do
     percent = round(ratio * 100)
-    "#{budget.participant} has used #{percent}% of its #{budget.tier} token budget"
+
+    Notice.new(
+      :warning,
+      "#{budget.participant} has used #{percent}% of its #{budget.tier} token budget"
+    )
   end
 
   defp budget_notice(_budget), do: nil
+
+  @doc """
+  Classifies composer readiness from the Primary Participant and catalog.
+
+  The label states what the Assistant can do right now — never a generic
+  input-ready "Ready" while no model can answer.
+  """
+  @spec composer_status(map(), map()) :: %{label: String.t(), class: String.t()}
+  def composer_status(session, providers) do
+    session
+    |> primary_participant()
+    |> status_for(providers)
+  end
+
+  defp status_for(nil, _providers), do: connect_status()
+
+  defp status_for(primary, providers) do
+    provider = Map.get(providers, primary.provider)
+
+    cond do
+      unconfigured?(primary) ->
+        connect_status()
+
+      provider && provider.status == :checking ->
+        %{label: "Checking providers…", class: "text-muted"}
+
+      Presentation.ready?(provider, primary) ->
+        %{label: "Ready", class: "text-muted"}
+
+      true ->
+        %{label: "Provider unavailable — /connect", class: "text-warning"}
+    end
+  end
+
+  defp primary_participant(nil), do: nil
+
+  defp primary_participant(session),
+    do: Enum.find(session.participants, &(&1.kind == :primary))
+
+  defp unconfigured?(primary) do
+    primary.provider == :unconfigured or is_nil(primary.model)
+  end
+
+  defp connect_status, do: %{label: "Connect a model — /connect", class: "text-warning"}
 
   defp meter_bar(session, projection, config) do
     used = token_usage(session, projection)
@@ -415,8 +464,10 @@ defmodule ReyCode.TUI.State do
     if generation <= term.assigns.providers_generation do
       term
     else
+      refresh = Notice.new(:info, Presentation.refresh_notice())
+
       notice =
-        if term.assigns.notice == Presentation.refresh_notice(),
+        if term.assigns.notice == refresh,
           do: nil,
           else: term.assigns.notice
 

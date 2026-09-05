@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.ModelTiers do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, ModelTier}
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @spec initial() :: map()
   def initial, do: %{step: :participants, index: 0, participant_id: nil}
@@ -65,7 +65,9 @@ defmodule ReyCode.TUI.ModelTiers do
           {marker(index, @term.model_tiers.index)} {tier} · {ModelTier.budget_tokens(tier)} tokens
         </box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">Arrow keys or j/k move   Enter select   Esc back</box>
     </box>
     """
@@ -93,8 +95,11 @@ defmodule ReyCode.TUI.ModelTiers do
            tier,
            term.assigns.engine
          ) do
-      :ok -> close(term, "Model tier set to #{tier}")
-      {:error, reason} -> Component.assign(term, notice: "Could not set tier: #{reason}")
+      :ok ->
+        close(term, Notice.new(:success, "Model tier set to #{tier}"))
+
+      {:error, reason} ->
+        Component.assign(term, notice: Notice.new(:error, "Could not set tier: #{reason}"))
     end
   end
 

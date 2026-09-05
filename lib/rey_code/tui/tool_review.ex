@@ -9,12 +9,12 @@ defmodule ReyCode.TUI.ToolReview do
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.{Engine, Projection}
   alias ReyCode.Security.Environment
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @options [:approve, :deny]
 
   @spec initial() :: map()
-  def initial, do: %{invocation_id: nil, review: nil, index: 0}
+  def initial, do: %{invocation_id: nil, review: nil, index: nil}
 
   @spec options() :: [atom()]
   def options, do: @options
@@ -25,24 +25,33 @@ defmodule ReyCode.TUI.ToolReview do
     invocation = pending_invocation(term.assigns.projection, session && session.active_turn_id)
 
     if invocation do
-      Component.assign(term,
+      term
+      |> Component.assign(
         modal: :tool_review,
         slash: nil,
         tool_review: %{
           invocation_id: invocation.id,
           review: invocation.pending_tool_review,
-          index: 0
+          index: nil
         },
         notice: nil
       )
+      # The approval modal owns every key while open; a focused composer
+      # textarea would otherwise capture printable A/D decisions as draft text.
+      |> View.focus(nil)
     else
-      SlashPalette.close(term, "No tool request is awaiting approval")
+      SlashPalette.close(term, Notice.new(:info, "No tool request is awaiting approval"))
     end
   end
 
   @spec move(map(), integer()) :: map()
   def move(term, offset) do
-    index = Integer.mod(term.assigns.tool_review.index + offset, length(@options))
+    index =
+      case term.assigns.tool_review.index do
+        nil -> if offset < 0, do: length(@options) - 1, else: 0
+        selected -> Integer.mod(selected + offset, length(@options))
+      end
+
     Component.assign(term, tool_review: %{term.assigns.tool_review | index: index})
   end
 
@@ -56,6 +65,13 @@ defmodule ReyCode.TUI.ToolReview do
   end
 
   @spec submit(map()) :: {:noreply, map()}
+  def submit(%{assigns: %{tool_review: %{index: nil}}} = term) do
+    {:noreply,
+     Component.assign(term,
+       notice: Notice.new(:info, "Choose A approve or D deny, or use arrows then Enter.")
+     )}
+  end
+
   def submit(term) do
     review_state = term.assigns.tool_review
     decision = Enum.at(@options, review_state.index)
@@ -78,7 +94,10 @@ defmodule ReyCode.TUI.ToolReview do
          |> View.focus("prompt")}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not resolve tool request: #{reason}")}
+        {:noreply,
+         Component.assign(term,
+           notice: Notice.new(:error, "Could not resolve tool request: #{reason}")
+         )}
     end
   end
 
@@ -92,8 +111,8 @@ defmodule ReyCode.TUI.ToolReview do
   defp pending_invocation(projection, turn_id),
     do: Projection.pending_tool_invocation(projection, turn_id)
 
-  defp resolution_notice(:approve), do: "Tool request approved"
-  defp resolution_notice(:deny), do: "Tool request denied"
+  defp resolution_notice(:approve), do: Notice.new(:success, "Tool request approved")
+  defp resolution_notice(:deny), do: Notice.new(:success, "Tool request denied")
 
   @doc "Keeps global focus unchanged while the review is open."
   @spec focus(map()) :: map()
@@ -143,8 +162,13 @@ defmodule ReyCode.TUI.ToolReview do
       >
         {marker(index, @term.tool_review.index)} {decision}
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
-      <box class="pt-3 text-muted">A approve   D deny   Enter confirm   Esc close</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
+      <box :if={is_nil(@term.tool_review.index)} class="pt-2 text-muted">
+        No decision selected. Enter does nothing until you choose.
+      </box>
+      <box class="pt-3 text-muted">A approve now   D deny now   ↑↓ choose then Enter   Esc close</box>
     </box>
     """
   end

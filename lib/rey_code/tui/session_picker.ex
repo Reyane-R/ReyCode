@@ -3,7 +3,7 @@ defmodule ReyCode.TUI.SessionPicker do
 
   use Breeze.Component
   alias Breeze.{Component, View}
-  alias ReyCode.TUI.{SlashPalette, State, TimeAgo}
+  alias ReyCode.TUI.{Notice, SlashPalette, State, TimeAgo}
 
   @spec initial() :: map()
   def initial, do: %{index: 0}
@@ -12,7 +12,7 @@ defmodule ReyCode.TUI.SessionPicker do
   def open(term) do
     case sessions(term) do
       [] ->
-        SlashPalette.close(term, "No previous sessions yet")
+        SlashPalette.close(term, Notice.new(:info, "No previous sessions yet"))
 
       _sessions ->
         term
@@ -99,7 +99,9 @@ defmodule ReyCode.TUI.SessionPicker do
           {marker(index, @selected)} {session.title}  ·  {TimeAgo.format(session.created_at)}  ·  {Path.basename(session.workspace)}
         </box>
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">Arrow keys or j/k move   Enter resume   Esc cancel</box>
     </box>
     """

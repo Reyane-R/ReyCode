@@ -5,7 +5,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.{Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
-  alias ReyCode.TUI.MergeReview
+  alias ReyCode.TUI.{MergeReview, Notice}
 
   @agent_registry __MODULE__.AgentRegistry
   @event_registry __MODULE__.EventRegistry
@@ -368,7 +368,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
 
     assert child.pending_tool_review.arguments["diff"] =~ "+after"
     assert {:noreply, resolved} = MergeReview.submit(merge_term(child))
-    assert resolved.assigns.notice == "Patch applied"
+    assert %Notice{severity: :success} = resolved.assigns.notice
     Wait.terminal_turn(@engine, turn_id)
 
     assert File.read!(
@@ -390,7 +390,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
       end)
 
     assert {:noreply, resolved} = MergeReview.handle_input("D", merge_term(child))
-    assert resolved.assigns.notice == "Patch discarded"
+    assert %Notice{severity: :success} = resolved.assigns.notice
     Wait.terminal_turn(@engine, turn_id)
     workspace = Engine.snapshot(@engine).sessions[session_id].workspace
     assert File.read!(Path.join(workspace, "sample.txt")) == "before\n"

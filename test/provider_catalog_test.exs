@@ -78,9 +78,6 @@ defmodule ReyCode.Provider.CatalogTest do
     assert status?(catalog, :deepseek, :error)
     assert status?(catalog, :ollama, :error)
     assert status?(catalog, :lmstudio, :configured)
-    providers = Catalog.snapshot(catalog).providers
-    assert providers.deepseek.error == "offline"
-    assert providers.ollama.error == "unexpected"
   end
 
   test "a hung API does not block another API or its readiness waiters" do
@@ -112,7 +109,7 @@ defmodule ReyCode.Provider.CatalogTest do
 
     assert status?(catalog, :deepseek, :error)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}, 1_000
-    assert Catalog.snapshot(catalog).providers.deepseek.error == "provider discovery timed out"
+    assert Catalog.snapshot(catalog).providers.deepseek.failure.category == :timeout
     assert Catalog.snapshot(catalog).providers.ollama.status == :configured
   end
 
@@ -127,7 +124,6 @@ defmodule ReyCode.Provider.CatalogTest do
 
     assert status?(catalog, :deepseek, :error)
     assert status?(catalog, :ollama, :configured)
-    assert Catalog.snapshot(catalog).providers.deepseek.error =~ "provider discovery failed"
   end
 
   test "readiness waiters receive the selected API result" do

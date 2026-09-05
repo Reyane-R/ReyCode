@@ -8,6 +8,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.Activity
+  alias ReyCode.TUI.Notice
   attr :modal, :any, required: true
   attr :home, :boolean, required: true
   attr :sessions, :list, required: true
@@ -23,8 +24,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :draft, :string, required: true
   attr :notice, :any, required: true
   attr :budget_notice, :any, required: true
+  attr :composer_status, :map, required: true
   attr :token_label_class, :string, required: true
-  attr :update_notice, :string, required: true
+  attr :update_notice, :any, required: true
 
   attr :terminal_width, :integer, required: true
   attr :terminal_height, :integer, required: true
@@ -37,6 +39,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           :if={@home}
           session={@session}
           recent_session_rows={@recent_session_rows}
+          composer_status={@composer_status}
           update_notice={@update_notice}
         />
         <.session_header
@@ -58,7 +61,12 @@ defmodule ReyCode.TUI.Components.MainScreen do
           message_width={@message_width}
           activity_frame={@activity_frame}
         />
-        <.composer draft={@draft} notice={@notice} budget_notice={@budget_notice}/>
+        <.composer
+          draft={@draft}
+          notice={@notice}
+          budget_notice={@budget_notice}
+          composer_status={@composer_status}
+        />
         <.slash_palette
           modal={@modal}
           slash_rows={@slash_rows}
@@ -72,22 +80,48 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   attr :session, :map, required: true
   attr :recent_session_rows, :list, required: true
-  attr :update_notice, :string, required: true
+  attr :composer_status, :map, required: true
+  attr :update_notice, :any, required: true
 
   defp home_panel(assigns) do
     ~H"""
-    <box class="h-full w-full px-4 pt-2 overflow-hidden">
+    <.scroll id="home-scroll" class="h-full w-full overflow-scroll mute-scrollbar-40 px-4 pt-2">
       <box class="inline w-full border-b border-muted pb-1">
         <box class="font-bold text-primary">REYCODE</box>
         <box class="pl-2 text-muted">AI workbench</box>
-        <box :if={@update_notice} class="w-full text-right text-warning">{@update_notice}</box>
+        <box :if={@update_notice} class={"w-full text-right " <> Notice.text_class(@update_notice)}>
+          {@update_notice.message}
+        </box>
       </box>
+      <box class="pt-2 text-muted">Workspace</box>
+      <box class="font-bold">{compact_home(@session.workspace)}</box>
       <box class="pt-2 text-muted">Assistant</box>
-      <box class="font-bold">{primary_summary(@session)}</box>
+      <box class="inline w-full">
+        <box class="font-bold">{primary_summary(@session)}</box>
+        <box
+          :if={@composer_status.label != "Ready"}
+          class={"w-full text-right " <> @composer_status.class}
+        >
+          {@composer_status.label}
+        </box>
+      </box>
       <box class="pt-2 text-muted">Quick start</box>
       <box class="inline w-full">
         <box class="w-12 text-muted">/</box>
         <box>Browse commands</box>
+      </box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">@file</box>
+        <box>Attach workspace context</box>
+      </box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">/resume</box>
+        <box>Continue a previous session</box>
+      </box>
+      <box class="pt-2 text-muted">More</box>
+      <box class="inline w-full">
+        <box class="w-12 text-muted">/connect</box>
+        <box>Choose a model provider</box>
       </box>
       <box class="inline w-full">
         <box class="w-12 text-muted">/agent</box>
@@ -101,10 +135,6 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box class="w-12 text-muted">/hub</box>
         <box>Inspect delegated work</box>
       </box>
-      <box class="inline w-full">
-        <box class="w-12 text-muted">@file</box>
-        <box>Attach workspace context</box>
-      </box>
       <box class="pt-2 text-muted">Teammates · {length(task_participants(@session))}</box>
       <box :if={task_participants(@session) == []} class="text-muted">
         None yet. Create one when a responsibility repeats.
@@ -117,7 +147,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box :for={session <- @recent_session_rows} class="text-muted">
         {session.title} · {session.meta}
       </box>
-    </box>
+    </.scroll>
     """
   end
 
@@ -126,7 +156,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :activity_frame, :string, required: true
   attr :git_branch, :any, required: true
   attr :question_label, :string, required: true
-  attr :update_notice, :string, required: true
+  attr :update_notice, :any, required: true
   attr :token_label_class, :string, required: true
   attr :terminal_width, :integer, required: true
 
@@ -147,8 +177,11 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box :if={@question_label != ""} class="w-full text-right text-warning">
           {@question_label}
         </box>
-        <box :if={@question_label == "" and @update_notice} class="w-full text-right text-warning">
-          {@update_notice}
+        <box
+          :if={@question_label == "" and @update_notice}
+          class={"w-full text-right " <> Notice.text_class(@update_notice)}
+        >
+          {@update_notice.message}
         </box>
       </box>
     </box>
@@ -158,17 +191,28 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :draft, :string, required: true
   attr :notice, :any, required: true
   attr :budget_notice, :any, required: true
+  attr :composer_status, :map, required: true
 
   defp composer(assigns) do
     ~H"""
     <box class="h-6 w-full bg-surface border-t border-muted px-2 overflow-hidden">
       <box class="inline w-full">
         <box class="font-bold text-primary">Message Assistant</box>
-        <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="w-full text-right text-muted">
-          Ready
+        <box
+          :if={is_nil(@notice) and is_nil(@budget_notice)}
+          class={"w-full text-right " <> @composer_status.class}
+        >
+          {@composer_status.label}
         </box>
-        <box :if={not is_nil(@notice)} class="w-full text-right text-error">Needs attention</box>
-        <box :if={not is_nil(@budget_notice)} class="w-full text-right text-warning">Token limit</box>
+        <box :if={not is_nil(@notice)} class={"w-full text-right " <> Notice.text_class(@notice)}>
+          {Notice.label(@notice)}
+        </box>
+        <box
+          :if={is_nil(@notice) and not is_nil(@budget_notice)}
+          class="w-full text-right text-warning"
+        >
+          {Notice.label(@budget_notice)}
+        </box>
       </box>
       <.textarea
         id="prompt"
@@ -182,8 +226,15 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="text-muted">
         Enter send · Shift+Enter new line · ↑↓ history
       </box>
-      <box :if={not is_nil(@notice)} class="text-error">Error · {@notice}</box>
-      <box :if={not is_nil(@budget_notice)} class="text-warning">Token limit · {@budget_notice}</box>
+      <box :if={not is_nil(@notice)} class={Notice.text_class(@notice)}>
+        {Notice.label(@notice)} · {@notice.message}
+      </box>
+      <box
+        :if={is_nil(@notice) and not is_nil(@budget_notice)}
+        class={Notice.text_class(@budget_notice)}
+      >
+        {Notice.label(@budget_notice)} · {@budget_notice.message}
+      </box>
     </box>
     """
   end

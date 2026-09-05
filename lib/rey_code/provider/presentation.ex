@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.Presentation do
   @moduledoc "Pure presentation calculations for provider runtimes and readiness."
 
+  alias ReyCode.Failure
   alias ReyCode.Provider.Registry
 
   @doc "Formats a participant's configured runtime and current catalog status."
@@ -59,10 +60,20 @@ defmodule ReyCode.Provider.Presentation do
   @doc "Formats a provider catalog status for display."
   @spec status_label(map() | nil) :: String.t()
   def status_label(nil), do: "unknown"
+  def status_label(%{status: :configured, models: []}), do: "no models"
+  def status_label(%{failure: %Failure{category: :missing_credentials}}), do: "key required"
+
+  def status_label(%{failure: %Failure{category: :authentication_failed}}),
+    do: "authentication failed"
+
+  def status_label(%{failure: %Failure{category: :provider_unavailable}}),
+    do: "server unavailable"
+
+  def status_label(%{failure: %Failure{category: :timeout}}), do: "timed out"
   def status_label(%{status: :configured}), do: "configured"
   def status_label(%{status: :checking}), do: "checking"
   def status_label(%{status: :missing}), do: "missing"
-  def status_label(%{status: :available}), do: "needs model or login"
+  def status_label(%{status: :available}), do: "setup required"
   def status_label(%{status: :unchecked}), do: "not checked"
   def status_label(%{status: :error}), do: "error"
   def status_label(%{status: status}), do: to_string(status)
@@ -71,31 +82,33 @@ defmodule ReyCode.Provider.Presentation do
   @spec selection_help(map() | nil) :: String.t()
   def selection_help(nil), do: ""
 
+  def selection_help(%{status: :configured, models: []} = entry), do: no_models_help(entry)
+
   def selection_help(%{id: id, status: :configured} = entry) do
     "#{provider_display_name(id, entry)} · #{length(entry.models)} models"
   end
 
-  def selection_help(%{id: id, status: :available}) do
-    case Registry.fetch_api_profile(id) do
-      {:ok, profile} -> "Set #{profile.key_env} to use #{profile.name}, then press R to recheck."
-      _ -> "Set the API key, then press R to recheck."
-    end
-  end
+  def selection_help(%{status: :checking}), do: refresh_notice()
 
-  def selection_help(%{status: :unchecked}),
-    do: "Provider discovery is disabled in this environment."
-
-  def selection_help(%{error: error}) when is_binary(error), do: error
-  def selection_help(_entry), do: ""
+  def selection_help(entry), do: unavailable_help(entry)
 
   @doc "Returns actionable help when a provider cannot be selected."
   @spec unavailable_help(map()) :: String.t()
-  def unavailable_help(%{id: id}) do
+  def unavailable_help(%{status: :configured, models: []} = entry), do: no_models_help(entry)
+
+  def unavailable_help(%{status: :checking}), do: refresh_notice()
+
+  def unavailable_help(%{id: id} = entry) do
     case Registry.fetch_api_profile(id) do
-      {:ok, profile} -> "Set #{profile.key_env} to use #{profile.name}, then press R to recheck."
-      _ -> "Provider is not configured"
+      {:ok, profile} -> setup_help(profile, entry)
+      _ -> "Provider is not configured. Select a model API in /connect."
     end
   end
+
+  @doc "Returns a sanitized technical discovery diagnostic, separate from setup help."
+  @spec details(map() | nil) :: String.t() | nil
+  def details(%{failure: %Failure{message: message}}), do: message
+  def details(_entry), do: nil
 
   @doc "Returns the notice shown while provider discovery refreshes."
   @spec refresh_notice() :: String.t()
@@ -104,6 +117,65 @@ defmodule ReyCode.Provider.Presentation do
   @doc "Removes provider namespaces from a model identifier."
   @spec short_model(String.t()) :: String.t()
   def short_model(model), do: model |> String.split("/") |> List.last()
+
+  defp setup_help(profile, %{status: :unchecked}) do
+    if profile.require_key do
+      "Provider discovery is disabled. Set #{profile.key_env}, enable provider_discovery, " <>
+        "then restart ReyCode to use #{profile.name}."
+    else
+      "Provider discovery is disabled. Start or check the #{profile.name} server, " <>
+        "enable provider_discovery, then restart ReyCode."
+    end
+  end
+
+  defp setup_help(profile, %{failure: %Failure{category: :authentication_failed}}) do
+    if profile.require_key do
+      "#{profile.name} rejected authentication. Check #{profile.key_env} and account access, " <>
+        "then restart ReyCode with the corrected key."
+    else
+      "#{profile.name} rejected authentication. This profile sends no API key. " <>
+        "Check the server's access settings, then press R to recheck."
+    end
+  end
+
+  defp setup_help(profile, %{failure: %Failure{category: category}})
+       when category in [:provider_unavailable, :timeout] do
+    server_help(profile)
+  end
+
+  defp setup_help(profile, %{status: :available}) do
+    if profile.require_key do
+      "Restart ReyCode with #{profile.key_env} set to use #{profile.name}. " <>
+        "An export in another shell cannot update this running process."
+    else
+      server_help(profile)
+    end
+  end
+
+  defp setup_help(profile, _entry) do
+    "Could not list #{profile.name} models. Check the server/API configuration and service status, " <>
+      "then press R to recheck. Press D for technical details."
+  end
+
+  defp server_help(%{require_key: false, name: name}) do
+    "Start or check the #{name} server and its configured endpoint, then press R to recheck."
+  end
+
+  defp server_help(%{name: name}) do
+    "Cannot reach #{name}. Check the API endpoint, network and service status, then press R to recheck."
+  end
+
+  defp no_models_help(%{id: id}) do
+    case Registry.fetch_api_profile(id) do
+      {:ok, %{require_key: false, name: name}} ->
+        "#{name} is reachable but lists no models. Download or load a model on the server, " <>
+          "then press R to recheck."
+
+      _ ->
+        "The API lists no models. Check your account's model access and API endpoint, " <>
+          "then press R to recheck."
+    end
+  end
 
   defp provider_display_name(id, entry) do
     case Registry.fetch_api_profile(id) do

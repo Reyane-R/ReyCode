@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.WorkPlan do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Projection
-  alias ReyCode.TUI.SlashPalette
+  alias ReyCode.TUI.{Notice, SlashPalette}
 
   @spec open(map()) :: map()
   def open(term) do
@@ -21,7 +21,7 @@ defmodule ReyCode.TUI.WorkPlan do
         notice: nil
       )
     else
-      SlashPalette.close(term, "No Invocation has a WorkPlan")
+      SlashPalette.close(term, Notice.new(:info, "No Invocation has a WorkPlan"))
     end
   end
 

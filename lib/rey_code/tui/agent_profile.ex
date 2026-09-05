@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.AgentProfile do
 
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
-  alias ReyCode.TUI.{Settings, SlashPalette}
+  alias ReyCode.TUI.{Notice, Settings, SlashPalette}
 
   @spec initial() :: map()
   def initial, do: %{step: :name, name: "", responsibility: ""}
@@ -36,7 +36,7 @@ defmodule ReyCode.TUI.AgentProfile do
     term = put_value(term, :name, value)
 
     if String.trim(value) == "" do
-      {:noreply, Component.assign(term, notice: "Agent name is required")}
+      {:noreply, Component.assign(term, notice: Notice.new(:warning, "Agent name is required"))}
     else
       {:noreply,
        term
@@ -78,10 +78,12 @@ defmodule ReyCode.TUI.AgentProfile do
          |> Settings.open_for(participant_id)}
 
       {:error, :participant_responsibility_required} ->
-        {:noreply, Component.assign(term, notice: "Responsibility is required")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:warning, "Responsibility is required"))}
 
       {:error, reason} ->
-        {:noreply, Component.assign(term, notice: "Could not create agent: #{reason}")}
+        {:noreply,
+         Component.assign(term, notice: Notice.new(:error, "Could not create agent: #{reason}"))}
     end
   end
 
@@ -134,7 +136,9 @@ defmodule ReyCode.TUI.AgentProfile do
           class="w-full h-5"
         />
       </box>
-      <box :if={not is_nil(@term.notice)} class="pt-2 text-error">{@term.notice}</box>
+      <box :if={not is_nil(@term.notice)} class={"pt-2 " <> Notice.text_class(@term.notice)}>
+        {Notice.label(@term.notice)} · {@term.notice.message}
+      </box>
       <box class="pt-2 text-muted">Enter continue   Esc cancel</box>
     </box>
     """

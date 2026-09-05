@@ -35,6 +35,7 @@ defmodule ReyCode.TUI.Render do
       draft={@draft}
       notice={@notice}
       budget_notice={@budget_notice}
+      composer_status={@composer_status}
       slash={@slash}
     />
     <.active term={assigns}/>

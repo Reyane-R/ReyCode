@@ -4,6 +4,7 @@ defmodule ReyCode.TUI.Settings do
   alias Breeze.{Component, View}
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.{Catalog, Presentation, Registry}
+  alias ReyCode.TUI.Notice
 
   @doc "Keeps global focus unchanged while the wizard is open."
   @spec focus(map()) :: map()
@@ -25,6 +26,13 @@ defmodule ReyCode.TUI.Settings do
   def handle_input(key, %{assigns: %{settings: %{step: :providers}}} = term)
       when key in ["r", "R"] do
     {:noreply, refresh(term)}
+  end
+
+  def handle_input(key, %{assigns: %{settings: %{step: :providers}}} = term)
+      when key in ["d", "D"] do
+    entry = Enum.at(provider_options(term.assigns.providers), term.assigns.settings.index)
+    message = Presentation.details(entry) || "No technical details for this provider."
+    {:noreply, Component.assign(term, notice: Notice.new(:info, message))}
   end
 
   def handle_input(key, %{assigns: %{settings: %{step: :models}}} = term)
@@ -126,7 +134,9 @@ defmodule ReyCode.TUI.Settings do
     else
       term
       |> open()
-      |> Component.assign(notice: "The selected model is no longer available")
+      |> Component.assign(
+        notice: Notice.new(:warning, "The selected model is no longer available")
+      )
     end
   end
 
@@ -138,9 +148,11 @@ defmodule ReyCode.TUI.Settings do
     if count == 0 do
       term
     else
-      update(term, fn settings ->
+      term
+      |> update(fn settings ->
         %{settings | index: Integer.mod(settings.index + offset, count)}
       end)
+      |> Component.assign(notice: nil)
     end
   end
 
@@ -160,16 +172,17 @@ defmodule ReyCode.TUI.Settings do
   def confirm(%{assigns: %{settings: %{step: :providers}}} = term) do
     case Enum.at(provider_options(term.assigns.providers), term.assigns.settings.index) do
       nil ->
-        Component.assign(term, notice: "Select a provider runtime")
+        Component.assign(term, notice: Notice.new(:warning, "Select a provider runtime"))
 
       %{status: :checking} = entry ->
-        Component.assign(term, notice: "#{entry.name} is still being checked")
+        Component.assign(term, notice: Notice.new(:info, "#{entry.name} is still being checked"))
 
       %{status: status} = entry when status != :configured ->
-        Component.assign(term, notice: Presentation.unavailable_help(entry))
+        severity = if status == :error, do: :error, else: :warning
+        Component.assign(term, notice: Notice.new(severity, Presentation.unavailable_help(entry)))
 
       %{models: []} = entry ->
-        Component.assign(term, notice: "No models available for #{entry.name}")
+        Component.assign(term, notice: Notice.new(:warning, Presentation.unavailable_help(entry)))
 
       %{id: id} ->
         term
@@ -186,7 +199,8 @@ defmodule ReyCode.TUI.Settings do
 
     if model,
       do: save(term, provider, model),
-      else: Component.assign(term, notice: "No models available")
+      else:
+        Component.assign(term, notice: Notice.new(:info, "No models match the current filter"))
   end
 
   @doc "Returns to the previous settings step or closes the wizard."
@@ -226,10 +240,10 @@ defmodule ReyCode.TUI.Settings do
   @spec refresh(map()) :: map()
   def refresh(term) do
     if Enum.any?(term.assigns.providers, fn {_id, entry} -> entry.status == :unchecked end) do
-      Component.assign(term, notice: "Provider discovery is disabled")
+      Component.assign(term, notice: Notice.new(:warning, "Provider discovery is disabled"))
     else
       Catalog.refresh(term.assigns.provider_catalog)
-      Component.assign(term, notice: Presentation.refresh_notice())
+      Component.assign(term, notice: Notice.new(:info, Presentation.refresh_notice()))
     end
   end
 
@@ -347,7 +361,9 @@ defmodule ReyCode.TUI.Settings do
         |> View.focus("prompt")
 
       {:error, reason} ->
-        Component.assign(term, notice: "Could not configure agents: #{reason}")
+        Component.assign(term,
+          notice: Notice.new(:error, "Could not configure agents: #{reason}")
+        )
     end
   end
 
