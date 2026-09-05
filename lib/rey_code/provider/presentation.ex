@@ -6,27 +6,13 @@ defmodule ReyCode.Provider.Presentation do
   @doc "Formats a participant's configured runtime and current catalog status."
   @spec runtime_label(map(), map()) :: String.t()
   def runtime_label(%{provider: :unconfigured}, _providers),
-    do: "OpenCode · not configured"
+    do: "Model API · not configured"
 
   def runtime_label(%{provider: :simulator}, _providers), do: "Simulator (test only)"
 
-  def runtime_label(%{provider: :opencode, model: model}, providers) do
-    status = Map.get(providers, :opencode)
-
-    cond do
-      is_nil(model) ->
-        "OpenCode · model required"
-
-      status && status.status == :configured && model not in status.models ->
-        "OpenCode · #{short_model(model)} · unavailable"
-
-      status ->
-        "OpenCode · #{short_model(model)} · #{status_label(status)}"
-
-      true ->
-        "OpenCode · #{short_model(model)}"
-    end
-  end
+  def runtime_label(%{provider: provider}, _providers)
+      when provider in [:opencode, :omp, :open_code, "opencode", "omp", "open_code"],
+      do: "#{Registry.display_name(provider)} · select a model API in /connect"
 
   def runtime_label(%{provider: provider, model: model}, _providers) do
     [provider_name(provider), if(is_binary(model), do: short_model(model))]
@@ -44,10 +30,10 @@ defmodule ReyCode.Provider.Presentation do
   def short_runtime_label(%{provider: :unconfigured}), do: "not configured"
   def short_runtime_label(%{provider: :simulator}), do: "simulator"
 
-  def short_runtime_label(%{provider: :opencode, model: model}) when is_binary(model),
+  def short_runtime_label(%{model: model}) when is_binary(model),
     do: short_model(model)
 
-  def short_runtime_label(%{provider: :opencode}), do: "model required"
+  def short_runtime_label(%{model: nil}), do: "model required"
   def short_runtime_label(participant), do: to_string(participant.provider)
 
   @doc "Checks whether a participant's configured model is ready in a catalog entry."
@@ -85,21 +71,6 @@ defmodule ReyCode.Provider.Presentation do
   @spec selection_help(map() | nil) :: String.t()
   def selection_help(nil), do: ""
 
-  def selection_help(%{id: :opencode, status: :configured} = provider) do
-    "OpenCode #{provider.version} · #{provider.credential_count} credentials · #{length(provider.models)} models"
-  end
-
-  def selection_help(%{id: :opencode, status: :missing}),
-    do: "Install OpenCode, then press R to recheck. See https://opencode.ai/docs"
-
-  def selection_help(%{id: :opencode, status: :available}),
-    do: "Run `opencode auth login` in another terminal, then press R to recheck."
-
-  def selection_help(%{id: :opencode, status: :unchecked}),
-    do: "Provider discovery is disabled in this environment."
-
-  def selection_help(%{id: :opencode, error: error}) when is_binary(error), do: error
-
   def selection_help(%{id: id, status: :configured} = entry) do
     "#{provider_display_name(id, entry)} · #{length(entry.models)} models"
   end
@@ -119,11 +90,6 @@ defmodule ReyCode.Provider.Presentation do
 
   @doc "Returns actionable help when a provider cannot be selected."
   @spec unavailable_help(map()) :: String.t()
-  def unavailable_help(%{id: :opencode, status: :missing}), do: "OpenCode is not installed"
-
-  def unavailable_help(%{id: :opencode}),
-    do: "Run `opencode auth login`, then press R to recheck"
-
   def unavailable_help(%{id: id}) do
     case Registry.fetch_api_profile(id) do
       {:ok, profile} -> "Set #{profile.key_env} to use #{profile.name}, then press R to recheck."

@@ -32,7 +32,13 @@ defmodule ReyCode.ModelEvalTaskTest do
     def handle_call({action, _provider, _model}, _from, test_pid)
         when action in [:resolve, :resolve_when_ready] do
       if action == :resolve_when_ready, do: send(test_pid, :resolve_when_ready)
-      runtime = %Runtime{module: ScriptedProvider, status: :available, executable: test_pid}
+
+      runtime = %Runtime{
+        module: ScriptedProvider,
+        status: :available,
+        config: %{test_pid: test_pid}
+      }
+
       {:reply, {:ok, runtime}, test_pid}
     end
   end
@@ -43,7 +49,7 @@ defmodule ReyCode.ModelEvalTaskTest do
     alias ReyCode.Provider.{Frame, Response, ToolCall}
 
     @impl true
-    def stream(%Runtime{executable: test_pid}, request, emit) do
+    def stream(%Runtime{config: %{test_pid: test_pid}}, request, emit) do
       task =
         Enum.find_value(request.messages, fn
           %{role: :user, content: content} -> content

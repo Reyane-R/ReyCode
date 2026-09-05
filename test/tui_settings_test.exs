@@ -42,7 +42,7 @@ defmodule ReyCode.TUI.SettingsTest do
   test "first-run setup does not interrupt configured or used selected Sessions" do
     configured = %{
       participants: [
-        %{id: "builder", kind: :primary, provider: :opencode, model: "openai/gpt"}
+        %{id: "builder", kind: :primary, provider: :ollama, model: "openai/gpt"}
       ],
       message_order: []
     }
@@ -87,35 +87,35 @@ defmodule ReyCode.TUI.SettingsTest do
     result = Settings.confirm(term)
 
     assert result.assigns.settings.step == :models
-    assert result.assigns.settings.provider == :opencode
+    assert result.assigns.settings.provider == :ollama
     assert result.assigns.settings.query == ""
   end
 
   test "open_at/3 revalidates and preselects one Primary model" do
-    result = Settings.open_at(term(), :opencode, "openai/gpt")
+    result = Settings.open_at(term(), :ollama, "openai/gpt")
 
     assert result.assigns.modal == :settings
     assert result.assigns.settings.step == :models
     assert result.assigns.settings.participant_ids == ["builder"]
-    assert result.assigns.settings.provider == :opencode
+    assert result.assigns.settings.provider == :ollama
     assert result.assigns.settings.index == 1
   end
 
   test "open_at/3 rejects a stale model into the regular settings flow" do
-    result = Settings.open_at(term(), :opencode, "missing")
+    result = Settings.open_at(term(), :ollama, "missing")
 
     assert result.assigns.settings.step == :participants
     assert result.assigns.notice == "The selected model is no longer available"
   end
 
   test "models/2 filters case-insensitively" do
-    settings = %{Settings.initial() | provider: :opencode, query: "CLAUDE"}
+    settings = %{Settings.initial() | provider: :ollama, query: "CLAUDE"}
 
     assert Settings.models(providers(), settings) == ["anthropic/claude"]
   end
 
   test "display_label keeps long model names on one terminal line" do
-    label = "OMP · omp/deepseek/deepseek-v4-flash"
+    label = "Ollama · local/deepseek/deepseek-v4-flash"
     display = ModelPicker.display_label(label, 18)
 
     assert String.length(display) == 18
@@ -138,7 +138,7 @@ defmodule ReyCode.TUI.SettingsTest do
     result = Settings.back(term)
 
     assert result.assigns.settings.step == :providers
-    assert result.assigns.settings.index == 1
+    assert result.assigns.settings.index == 0
     assert result.assigns.settings.provider == :deepseek
     assert result.assigns.settings.query == ""
   end
@@ -190,9 +190,9 @@ defmodule ReyCode.TUI.SettingsTest do
 
   defp providers do
     %{
-      opencode: %{
-        id: :opencode,
-        name: "OpenCode",
+      ollama: %{
+        id: :ollama,
+        name: "Ollama",
         status: :configured,
         models: ["anthropic/claude", "openai/gpt"]
       }

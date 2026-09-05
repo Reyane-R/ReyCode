@@ -17,11 +17,11 @@ defmodule ReyCode.Provider.Catalog do
 
   use GenServer
 
-  alias ReyCode.Provider.{OMP, Runtime}
-  alias ReyCode.Provider.Registry, as: ProviderRegistry
-  alias ReyCode.RuntimeConfig
-
   alias ReyCode.Provider.Catalog.Snapshot
+  alias ReyCode.Provider.OpenAICompatible
+  alias ReyCode.Provider.Registry, as: ProviderRegistry
+  alias ReyCode.Provider.Runtime
+  alias ReyCode.RuntimeConfig
 
   @refresh_interval :timer.minutes(5)
   @retry_interval :timer.seconds(15)
@@ -81,8 +81,6 @@ defmodule ReyCode.Provider.Catalog do
   def init(opts) do
     config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
     profiles = ProviderRegistry.api_profiles(config)
-    opencode_module = ProviderRegistry.descriptor(:opencode, config).module
-    omp_module = ProviderRegistry.descriptor(:omp, config).module
 
     providers =
       ProviderRegistry.descriptors(config)
@@ -91,12 +89,11 @@ defmodule ReyCode.Provider.Catalog do
 
     state = %{
       providers: providers,
-      profiles: profiles,
       registry: Keyword.get(opts, :registry, ReyCode.EventRegistry),
       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
       config: config,
       discovery?: Keyword.get(opts, :discovery?, config.providers.discovery?),
-      probe_targets: probe_targets(opts, profiles, opencode_module, omp_module, config),
+      probe_targets: probe_targets(opts, profiles, config),
       refresh_interval: Keyword.get(opts, :refresh_interval, @refresh_interval),
       retry_interval: Keyword.get(opts, :retry_interval, @retry_interval),
       probe_timeout: Keyword.get(opts, :probe_timeout, @probe_timeout),
@@ -113,44 +110,15 @@ defmodule ReyCode.Provider.Catalog do
     end
   end
 
-  # One target per independent failure domain: executables, credentials, and
-  # transports fail separately, so each probe gets its own task and timeout.
-  # An injected `api_discover/0` (test seam) remains one fan-out target whose
-  # result map merges into every profile entry at once.
-  defp probe_targets(opts, profiles, opencode_module, omp_module, config) do
-    injected_discover? = Keyword.has_key?(opts, :discover)
+  # API profiles are independent failure domains. Tests can inject discovery
+  # per profile without introducing a second provider execution protocol.
+  defp probe_targets(opts, profiles, config) do
+    discover =
+      Keyword.get(opts, :discover, fn profile ->
+        OpenAICompatible.discover(profile, policy: config.open_ai)
+      end)
 
-    opencode_fun =
-      Keyword.get(opts, :discover) ||
-        fn ->
-          opencode_module.discover(open_code: config.open_code, providers: config.providers)
-        end
-
-    omp_fun =
-      Keyword.get(opts, :omp_discover) ||
-        if injected_discover?,
-          do: fn -> {:error, :missing_executable} end,
-          else: fn -> omp_module.discover(omp: config.omp, providers: config.providers) end
-
-    base_targets = [
-      {:opencode, opencode_fun},
-      {:omp, omp_fun}
-    ]
-
-    api_targets =
-      case Keyword.fetch(opts, :api_discover) do
-        {:ok, api_discover} ->
-          [{:api_profiles, api_discover}]
-
-        :error ->
-          Enum.map(profiles, fn profile ->
-            module = ProviderRegistry.descriptor(profile.id).module
-
-            {profile.id, fn -> module.discover(profile, policy: config.open_ai) end}
-          end)
-      end
-
-    base_targets ++ api_targets
+    Enum.map(profiles, fn profile -> {profile.id, fn -> discover.(profile) end} end)
   end
 
   @impl true
@@ -270,12 +238,8 @@ defmodule ReyCode.Provider.Catalog do
     next
   end
 
-  # Injected API fan-out entries and per-profile entries both carry the full
-  # provider shape; `checking` preserves the last known models/executable.
+  # Refresh preserves the last known models while a profile is checking.
   defp checking_entry(nil, _key), do: nil
-
-  defp checking_entry(entry, :api_profiles),
-    do: %{entry | status: :checking, error: nil}
 
   defp checking_entry(entry, _key), do: %{entry | status: :checking, error: nil}
 
@@ -291,7 +255,7 @@ defmodule ReyCode.Provider.Catalog do
   defp settle_probe(state, probe, update) do
     providers = update.(state.providers)
 
-    settled_keys = expand_keys(probe.key, state)
+    settled_keys = [probe.key]
 
     state =
       state
@@ -302,24 +266,6 @@ defmodule ReyCode.Provider.Catalog do
     complete_round_if_finished(state)
   end
 
-  defp expand_keys(:api_profiles, state), do: Enum.map(state.profiles, & &1.id)
-  defp expand_keys(key, _state), do: [key]
-
-  defp merge_result(providers, :api_profiles, api_results, config) do
-    Enum.reduce(api_results || %{}, providers, fn {id, result}, acc ->
-      case normalize_api_result(id, result, config) do
-        nil -> acc
-        entry -> put_in(acc, [id], entry)
-      end
-    end)
-  end
-
-  defp merge_result(providers, :opencode, result, _config),
-    do: Map.put(providers, :opencode, normalize_open_code(result))
-
-  defp merge_result(providers, :omp, result, _config),
-    do: Map.put(providers, :omp, normalize_omp(result))
-
   defp merge_result(providers, id, result, config) do
     case normalize_api_result(id, result, config) do
       nil -> providers
@@ -329,12 +275,6 @@ defmodule ReyCode.Provider.Catalog do
 
   # Timeouts and crashes mark only the failed target's providers; healthy
   # entries keep their last published status.
-  defp fail_providers(providers, :api_profiles, state, message) do
-    Enum.reduce(state.profiles, providers, fn profile, acc ->
-      Map.put(acc, profile.id, %{acc[profile.id] | status: :error, error: message})
-    end)
-  end
-
   defp fail_providers(providers, key, _state, message) do
     Map.update!(providers, key, fn entry -> %{entry | status: :error, error: message} end)
   end
@@ -365,95 +305,28 @@ defmodule ReyCode.Provider.Catalog do
     end)
   end
 
-  defp normalize_open_code({:ok, discovery}) do
-    status = if(discovery.models == [], do: :available, else: :configured)
-    descriptor = ProviderRegistry.descriptor(:opencode)
-
-    %{
-      id: descriptor.id,
-      name: descriptor.name,
-      description: descriptor.description,
-      module: descriptor.module,
-      status: status,
-      version: discovery.version,
-      executable: discovery.executable,
-      executable_identity: Map.get(discovery, :executable_identity),
-      credential_count: discovery.credential_count,
-      models: discovery.models,
-      error: nil,
-      checked_at: DateTime.utc_now()
-    }
-  end
-
-  defp normalize_open_code({:error, :missing_executable}) do
-    %{
-      pending_open_code()
-      | status: :missing,
-        error: "opencode executable not found",
-        checked_at: DateTime.utc_now()
-    }
-  end
-
-  defp normalize_open_code({:error, reason}) do
-    %{
-      pending_open_code()
-      | status: :error,
-        error: format_reason(reason),
-        checked_at: DateTime.utc_now()
-    }
-  end
-
-  defp normalize_open_code(other), do: normalize_open_code({:error, inspect(other)})
-
-  defp normalize_omp({:ok, discovery}) do
-    status = if(discovery.models == [], do: :available, else: :configured)
-    descriptor = ProviderRegistry.descriptor(:omp)
-
-    %{
-      id: descriptor.id,
-      name: descriptor.name,
-      description: descriptor.description,
-      module: descriptor.module,
-      status: status,
-      version: discovery.version,
-      executable: discovery.executable,
-      executable_identity: Map.get(discovery, :executable_identity),
-      credential_count: discovery.credential_count,
-      models: discovery.models,
-      error: nil,
-      checked_at: DateTime.utc_now()
-    }
-  end
-
-  defp normalize_omp({:error, :missing_executable}) do
-    %{
-      pending_omp()
-      | status: :missing,
-        error: "omp executable not found",
-        checked_at: DateTime.utc_now()
-    }
-  end
-
-  defp normalize_omp({:error, reason}) do
-    %{
-      pending_omp()
-      | status: :error,
-        error: format_reason(reason),
-        checked_at: DateTime.utc_now()
-    }
-  end
-
-  defp normalize_omp(other), do: normalize_omp({:error, inspect(other)})
-
   defp normalize_api_result(id, {:ok, discovery}, config) do
     case ProviderRegistry.descriptor(id, config) do
-      %{id: :opencode} -> nil
       nil -> nil
       descriptor -> api_entry(descriptor, discovery)
     end
   end
 
-  defp normalize_api_result(_id, _result, _config), do: nil
+  defp normalize_api_result(id, result, config) do
+    case ProviderRegistry.descriptor(id, config) do
+      nil ->
+        nil
+
+      descriptor ->
+        reason =
+          case result do
+            {:error, reason} -> reason
+            other -> other
+          end
+
+        api_entry(descriptor, %{status: :error, error: format_reason(reason)})
+    end
+  end
 
   defp api_entry(descriptor, discovery) do
     %{
@@ -462,8 +335,6 @@ defmodule ReyCode.Provider.Catalog do
       description: descriptor.description,
       module: descriptor.module,
       status: Map.get(discovery, :status, :error),
-      version: nil,
-      executable: nil,
       credential_count: Map.get(discovery, :credential_count, 0),
       models: Map.get(discovery, :models, []),
       error: Map.get(discovery, :error),
@@ -478,21 +349,11 @@ defmodule ReyCode.Provider.Catalog do
       description: descriptor.description,
       module: descriptor.module,
       status: :checking,
-      version: nil,
-      executable: nil,
       credential_count: 0,
       models: [],
       error: nil,
       checked_at: nil
     }
-  end
-
-  defp pending_open_code do
-    ProviderRegistry.descriptor(:opencode) |> pending_provider()
-  end
-
-  defp pending_omp do
-    ProviderRegistry.descriptor(:omp) |> pending_provider()
   end
 
   defp update_status(state, status) do
@@ -575,9 +436,6 @@ defmodule ReyCode.Provider.Catalog do
     %Runtime{
       module: entry.module,
       provider_id: entry.id,
-      executable: Map.get(entry, :executable),
-      executable_identity: Map.get(entry, :executable_identity),
-      version: Map.get(entry, :version),
       config: runtime_policy(entry.module, state.config),
       workspace_policy: state.config.workspace,
       models: Map.get(entry, :models, []),
@@ -601,7 +459,6 @@ defmodule ReyCode.Provider.Catalog do
         description: "test-only deterministic provider",
         module: ReyCode.Provider.Simulator,
         status: :configured,
-        version: "test only",
         checked_at: DateTime.utc_now()
       })
     else
@@ -609,9 +466,7 @@ defmodule ReyCode.Provider.Catalog do
     end
   end
 
-  defp runtime_policy(ReyCode.Provider.OpenCode, config), do: config.open_code
   defp runtime_policy(ReyCode.Provider.OpenAICompatible, config), do: config.open_ai
-  defp runtime_policy(OMP, config), do: config.omp
 
   defp runtime_policy(ReyCode.Provider.Simulator, config),
     do: RuntimeConfig.simulator_policy(config)

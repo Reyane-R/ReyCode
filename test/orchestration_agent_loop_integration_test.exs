@@ -40,7 +40,7 @@ defmodule ReyCode.Orchestration.AgentLoopIntegrationTest do
       runtime = %Runtime{
         module: ScriptedProvider,
         status: :available,
-        executable: test_pid
+        config: %{test_pid: test_pid}
       }
 
       {:reply, {:ok, runtime}, test_pid}
@@ -53,7 +53,7 @@ defmodule ReyCode.Orchestration.AgentLoopIntegrationTest do
     alias ReyCode.Provider.{Frame, Response, ToolCall}
 
     @impl true
-    def stream(%Runtime{executable: test_pid}, request, emit) do
+    def stream(%Runtime{config: %{test_pid: test_pid}}, request, emit) do
       send(test_pid, {:provider_round, request.round_index})
 
       case request.round_index do

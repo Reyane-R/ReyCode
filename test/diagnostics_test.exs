@@ -11,8 +11,6 @@ defmodule ReyCode.DiagnosticsTest do
         app_version: "9.8.7",
         config: %{
           event_path: database_path,
-          provider_timeout_ms: 12_345,
-          opencode_max_prompt_bytes: 4_096,
           squad_rework_budget: 5,
           secret_token: "must-not-leak"
         },
@@ -30,7 +28,7 @@ defmodule ReyCode.DiagnosticsTest do
           if String.ends_with?(path, "diagnostics"), do: {:ok, 8_192}, else: :unavailable
         end,
         catalog_snapshot: %{
-          opencode: %{
+          deepseek: %{
             status: :configured,
             executable: "/opt/bin/opencode",
             version: "1.2.3",
@@ -50,18 +48,14 @@ defmodule ReyCode.DiagnosticsTest do
     assert report.paths.database.path == database_path
     assert report.paths.database.free_bytes == nil
 
-    assert report.opencode == %{
-             status: :configured,
-             ready: true,
-             installed: true,
-             executable: "/opt/bin/opencode",
-             version: "1.2.3"
-           }
-
-    assert report.limits.provider_timeout_ms == 12_345
-    assert report.limits.opencode_max_prompt_bytes == 4_096
+    deepseek = Enum.find(report.api_providers, &(&1.id == :deepseek))
+    assert deepseek.status == :configured
+    assert deepseek.ready
+    assert deepseek.request_timeout_ms == 600_000
+    assert deepseek.max_output_bytes == 10_000_000
     assert report.limits.squad_rework_budget == 5
-    assert report.limits.opencode_max_output_bytes == 10_000_000
+    refute Map.has_key?(report, :opencode)
+    refute Map.has_key?(report, :omp)
 
     encoded = Jason.encode!(report)
     refute encoded =~ "must-not-leak"
@@ -86,7 +80,7 @@ defmodule ReyCode.DiagnosticsTest do
           %{exists: false, type: nil, readable: nil, writable: false}
         end,
         free_space_probe: fn _path -> :unavailable end,
-        catalog_snapshot: %{opencode: %{status: :missing}}
+        catalog_snapshot: %{deepseek: %{status: :available}}
       )
 
     assert report.paths.data.path == data_home
@@ -94,13 +88,9 @@ defmodule ReyCode.DiagnosticsTest do
     assert report.paths.database.exists == false
     assert report.paths.database.free_bytes == nil
 
-    assert report.opencode == %{
-             status: :missing,
-             ready: false,
-             installed: false,
-             executable: nil,
-             version: nil
-           }
+    deepseek = Enum.find(report.api_providers, &(&1.id == :deepseek))
+    assert deepseek.status == :available
+    refute deepseek.ready
   end
 end
 

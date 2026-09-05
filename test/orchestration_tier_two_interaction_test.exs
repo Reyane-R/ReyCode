@@ -27,7 +27,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
       runtime = %Runtime{
         module: ReyCode.Orchestration.TierTwoInteractionTest.Provider,
         status: :available,
-        executable: test_pid
+        config: %{test_pid: test_pid}
       }
 
       {:reply, {:ok, runtime}, test_pid}
@@ -39,7 +39,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     alias ReyCode.Provider.{Frame, Response, Runtime, ToolCall}
 
     @impl true
-    def stream(%Runtime{executable: test_pid}, request, emit) do
+    def stream(%Runtime{config: %{test_pid: test_pid}}, request, emit) do
       send(test_pid, {:provider_round, request.invocation_id, request.round_index})
 
       case {directive(request), request.round_index} do

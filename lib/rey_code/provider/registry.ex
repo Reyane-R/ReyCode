@@ -7,11 +7,11 @@ defmodule ReyCode.Provider.Registry do
   they are not live providers.
   """
 
-  alias ReyCode.Provider.{OMP, OpenAICompatible, OpenCode}
+  alias ReyCode.Provider.OpenAICompatible
   alias ReyCode.Provider.OpenAICompatible.Profile
   alias ReyCode.RuntimeConfig
 
-  @historical_ids [:demo, :unconfigured]
+  @historical_ids [:demo, :unconfigured, :opencode, :omp, :open_code]
 
   @type descriptor :: %{
           id: atom(),
@@ -68,36 +68,21 @@ defmodule ReyCode.Provider.Registry do
   def configurable_provider?(provider, opts \\ []) do
     id = normalize_provider_id(provider, Keyword.get(opts, :config))
 
-    id == :opencode or
-      (id == :simulator and simulator_enabled?(opts)) or
+    (id == :simulator and simulator_enabled?(opts)) or
       Enum.any?(api_profiles(Keyword.get(opts, :config)), &(&1.id == id))
   end
 
   @doc "Returns metadata for providers backed by live runtime modules."
   @spec descriptors(ReyCode.RuntimeConfig.t() | nil) :: [descriptor()]
   def descriptors(config \\ nil) do
-    [
+    Enum.map(api_profiles(config), fn profile ->
       %{
-        id: :opencode,
-        name: "OpenCode",
-        description: "CLI runtime",
-        module: OpenCode
-      },
-      %{
-        id: :omp,
-        name: "OMP",
-        description: "CLI runtime",
-        module: OMP
+        id: profile.id,
+        name: profile.name,
+        description: "OpenAI-compatible API",
+        module: OpenAICompatible
       }
-      | Enum.map(api_profiles(config), fn profile ->
-          %{
-            id: profile.id,
-            name: profile.name,
-            description: "OpenAI-compatible API",
-            module: OpenAICompatible
-          }
-        end)
-    ]
+    end)
   end
 
   @doc "Looks up live provider metadata by atom or known string ID."
@@ -124,5 +109,10 @@ defmodule ReyCode.Provider.Registry do
   defp open_ai_policy(%RuntimeConfig{} = config), do: config.open_ai
 
   defp special_display_name(:simulator, _provider), do: "Simulator"
+
+  defp special_display_name(id, _provider) when id in [:opencode, :open_code],
+    do: "OpenCode (retired)"
+
+  defp special_display_name(:omp, _provider), do: "OMP (retired)"
   defp special_display_name(_id, provider), do: to_string(provider)
 end

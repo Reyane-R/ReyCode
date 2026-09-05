@@ -16,7 +16,7 @@ defmodule ReyCode.SquadMixTaskTest do
     Mix.Task.reenable("rey_code.squad")
 
     assert_raise Mix.Error, ~r/--model MODEL/, fn ->
-      Mix.Task.run("rey_code.squad", ["--provider", "opencode", "A theme"])
+      Mix.Task.run("rey_code.squad", ["--provider", "deepseek", "A theme"])
     end
   end
 
@@ -70,10 +70,10 @@ defmodule ReyCode.SquadMixTaskTest do
     Application.put_env(:rey_code, :squad_rework_budget, 99)
     Mix.Task.reenable("rey_code.squad")
 
-    assert_raise Mix.Error, ~r/Provider opencode model is unavailable/, fn ->
+    assert_raise Mix.Error, ~r/Provider deepseek model is unavailable/, fn ->
       Mix.Task.run(
         "rey_code.squad",
-        ["--provider", "opencode", "--model", "provider/model", "A theme"]
+        ["--provider", "deepseek", "--model", "provider/model", "A theme"]
       )
     end
 
@@ -82,12 +82,13 @@ defmodule ReyCode.SquadMixTaskTest do
     assert Application.get_env(:rey_code, :squad_rework_budget) == 99
   end
 
-  test "provider resolution accepts CLI, keyed API, and keyless local profiles" do
+  test "provider resolution accepts API profiles and rejects retired CLI providers" do
     config = ReyCode.RuntimeConfig.fresh()
 
-    assert SquadTask.provider_id("opencode", config) == {:ok, :opencode}
     assert SquadTask.provider_id("deepseek", config) == {:ok, :deepseek}
     assert SquadTask.provider_id("ollama", config) == {:ok, :ollama}
+    assert SquadTask.provider_id("opencode", config) == {:error, :unknown_provider}
+    assert SquadTask.provider_id("omp", config) == {:error, :unknown_provider}
     assert SquadTask.provider_id("unknown", config) == {:error, :unknown_provider}
   end
 

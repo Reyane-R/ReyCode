@@ -55,7 +55,7 @@ defmodule ReyCode.SubscriptionMonotonicTest do
     end
 
     def handle_call(:broadcast_next, _from, registry) do
-      broadcast(registry, 3, %{omp: %{status: :configured}})
+      broadcast(registry, 3, %{ollama: %{status: :configured}})
       {:reply, :ok, registry}
     end
 
@@ -132,9 +132,9 @@ defmodule ReyCode.SubscriptionMonotonicTest do
       # stale snapshot it receives ahead of it.
       assert :ok = GenServer.call(catalog, :broadcast_next)
 
-      assert %{omp: %{status: :configured}} =
+      assert %{ollama: %{status: :configured}} =
                Wait.catalog(catalog, fn
-                 %{omp: %{status: :configured}} = providers -> providers
+                 %{ollama: %{status: :configured}} = providers -> providers
                  _other -> nil
                end)
     end
@@ -161,15 +161,14 @@ defmodule ReyCode.SubscriptionMonotonicTest do
 
       parent = self()
 
-      discover = fn ->
-        send(parent, {:probe_started, self()})
+      discover = fn profile ->
+        send(parent, {:probe_started, profile.id, self()})
 
         receive do
           :release ->
             {:ok,
              %{
-               executable: "/bin/none",
-               version: "0",
+               status: :available,
                models: [],
                credential_count: 0
              }}
@@ -186,38 +185,42 @@ defmodule ReyCode.SubscriptionMonotonicTest do
            discovery?: true}
         )
 
-      assert_receive {:probe_started, first_probe}, 500
+      probes =
+        for _ <- 1..3 do
+          assert_receive {:probe_started, _id, pid}, 500
+          pid
+        end
 
       # Subscribing registers this process and pins a baseline version.
       %Snapshot{generation: baseline} = Catalog.subscribe(catalog)
 
-      send(first_probe, :release)
+      Enum.each(probes, &send(&1, :release))
 
       # Sibling settlements interleave freely; every published generation must
-      # still strictly exceed the subscribed baseline, ending at OpenCode's
+      # still strictly exceed the subscribed baseline, ending at DeepSeek's
       # own settled result.
-      settled = collect_until_opencode_settled(baseline)
+      settled = collect_until_deepseek_settled(baseline)
 
-      assert settled.providers.opencode.status in [:available, :configured]
+      assert settled.providers.deepseek.status in [:available, :configured]
       assert %Snapshot{generation: current} = Catalog.snapshot(catalog)
       assert current >= settled.generation
     end
 
-    defp collect_until_opencode_settled(baseline),
-      do: collect_until_opencode_settled(baseline, baseline)
+    defp collect_until_deepseek_settled(baseline),
+      do: collect_until_deepseek_settled(baseline, baseline)
 
-    defp collect_until_opencode_settled(baseline, previous) do
+    defp collect_until_deepseek_settled(baseline, previous) do
       receive do
         {:provider_catalog_updated,
-         %Snapshot{generation: generation, providers: %{opencode: %{status: status}}} = snapshot}
+         %Snapshot{generation: generation, providers: %{deepseek: %{status: status}}} = snapshot}
         when generation > previous and status != :checking ->
           snapshot
 
         {:provider_catalog_updated, %Snapshot{generation: generation}}
         when generation > previous ->
-          collect_until_opencode_settled(baseline, generation)
+          collect_until_deepseek_settled(baseline, generation)
       after
-        5_000 -> flunk("catalog never published a settled OpenCode result")
+        5_000 -> flunk("catalog never published a settled DeepSeek result")
       end
     end
   end

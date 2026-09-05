@@ -23,20 +23,20 @@ defmodule ReyCode.RuntimeConfigTest do
     refute Map.has_key?(config, :event_path)
     refute Map.has_key?(config, :data_dir)
     refute Map.has_key?(config, :start_tui)
-    assert config.open_code.max_prompt_bytes > 0
-    assert config.open_code.max_output_bytes > 0
-    assert config.open_code.max_diagnostic_bytes > 0
+    refute Map.has_key?(config, :open_code)
+    refute Map.has_key?(config, :omp)
+    assert config.open_ai.chunk_bytes > 0
   end
 
   test "reads configured values instead of defaults" do
     config =
       load_with(%{
-        provider_timeout_ms: 1_234,
+        tool_bash_timeout_ms: 1_234,
         global_concurrency: 7,
         workspace_roots: ["/tmp/a", "/tmp/b"]
       })
 
-    assert config.open_code.provider_timeout_ms == 1_234
+    assert config.tools.bash.timeout_ms == 1_234
     assert config.orchestration.global_concurrency == 7
     assert config.workspace.roots == ["/tmp/a", "/tmp/b"]
   end
@@ -49,8 +49,8 @@ defmodule ReyCode.RuntimeConfigTest do
   test "accepts :infinity only for concurrency and queue limits" do
     assert %RuntimeConfig{} = load_with(%{global_queue_limit: :infinity})
 
-    assert_raise ArgumentError, ~r/invalid provider_timeout_ms/, fn ->
-      load_with(%{provider_timeout_ms: :infinity})
+    assert_raise ArgumentError, ~r/invalid tool_bash_timeout_ms/, fn ->
+      load_with(%{tool_bash_timeout_ms: :infinity})
     end
   end
 
@@ -64,8 +64,8 @@ defmodule ReyCode.RuntimeConfigTest do
     cases = [
       {:provider_discovery, "yes", ~r/expected true or false/},
       {:default_provider, "simulator", ~r/expected an atom/},
-      {:opencode_max_output_bytes, "lots", ~r/invalid opencode_max_output_bytes/},
-      {:opencode_env_allowlist, ["A", 2], ~r/expected a list of strings/},
+      {:tool_bash_max_output_bytes, "lots", ~r/invalid tool_bash_max_output_bytes/},
+      {:tool_bash_env_allowlist, ["A", 2], ~r/expected a list of strings/},
       {:openai_compatible_providers, [%{}, "x"], ~r/providers\[0\]\.id.*missing/},
       {:squad_simulator, %{seed: 0}, ~r/expected a keyword list/},
       {:workspace_roots, "/only", ~r/expected a list/},
@@ -96,7 +96,8 @@ defmodule ReyCode.RuntimeConfigTest do
           {%{valid | base_url: "https://"}, ~r/base_url.*HTTP\(S\)/},
           {%{valid | base_url: "https://local example.test"}, ~r/base_url.*HTTP\(S\)/},
           {Map.put(valid, :request_timeout_ms, 0), ~r/request_timeout_ms.*>= 1/},
-          {%{valid | id: :opencode}, ~r/reserved provider id/}
+          {%{valid | id: :opencode}, ~r/reserved provider id/},
+          {%{valid | id: :omp}, ~r/reserved provider id/}
         ] do
       assert_raise ArgumentError, expectation, fn ->
         RuntimeConfig.fresh(openai_compatible_providers: [profile])
@@ -159,10 +160,10 @@ defmodule ReyCode.RuntimeConfigTest do
   end
 
   test "assembles focused policies without flat runtime fields" do
-    config = RuntimeConfig.fresh(provider_timeout_ms: 456)
+    config = RuntimeConfig.fresh(tool_bash_timeout_ms: 456)
 
-    assert config.open_code.provider_timeout_ms == 456
-    refute Map.has_key?(config, :provider_timeout_ms)
+    assert config.tools.bash.timeout_ms == 456
+    refute Map.has_key?(config, :tool_bash_timeout_ms)
     refute Map.has_key?(config, :tool_bash_timeout_ms)
     refute Map.has_key?(config, :workspace_roots)
   end
@@ -206,28 +207,6 @@ defmodule ReyCode.RuntimeConfigTest do
       steering_max_bytes: config.orchestration.steering_max_bytes,
       default_provider: config.providers.default_provider,
       provider_discovery: config.providers.discovery?,
-      provider_timeout_ms: config.open_code.provider_timeout_ms,
-      provider_discovery_command_timeout_ms: config.providers.discovery_command_timeout_ms,
-      provider_discovery_output_bytes: config.providers.discovery_output_bytes,
-      opencode_path: config.open_code.path,
-      opencode_max_prompt_bytes: config.open_code.max_prompt_bytes,
-      opencode_max_output_bytes: config.open_code.max_output_bytes,
-      opencode_max_diagnostic_bytes: config.open_code.max_diagnostic_bytes,
-      opencode_text_chunk_bytes: config.open_code.text_chunk_bytes,
-      opencode_text_chunk_latency_ms: config.open_code.text_chunk_latency_ms,
-      opencode_cpu_seconds: config.open_code.cpu_seconds,
-      opencode_open_files: config.open_code.open_files,
-      opencode_env_allowlist: config.open_code.env_allowlist,
-      omp_path: config.omp.path,
-      omp_max_prompt_bytes: config.omp.max_prompt_bytes,
-      omp_max_output_bytes: config.omp.max_output_bytes,
-      omp_max_diagnostic_bytes: config.omp.max_diagnostic_bytes,
-      omp_text_chunk_bytes: config.omp.text_chunk_bytes,
-      omp_text_chunk_latency_ms: config.omp.text_chunk_latency_ms,
-      omp_cpu_seconds: config.omp.cpu_seconds,
-      omp_open_files: config.omp.open_files,
-      omp_env_allowlist: config.omp.env_allowlist,
-      omp_discovery_output_bytes: config.omp.discovery_output_bytes,
       openai_compatible_chunk_bytes: config.open_ai.chunk_bytes,
       openai_compatible_chunk_latency_ms: config.open_ai.chunk_latency_ms,
       openai_compatible_base_url_overrides: config.open_ai.base_url_overrides,

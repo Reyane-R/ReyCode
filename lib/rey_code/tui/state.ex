@@ -595,6 +595,7 @@ defmodule ReyCode.TUI.State do
     {rows, hidden_note_row_count + provider_activity_hidden_note_rows(invocation)}
   end
 
+  # Compatibility: retired CLI activity is still rendered from durable history.
   defp provider_trace_rows(
          %{participant: %{provider: provider}} = invocation,
          workspace,

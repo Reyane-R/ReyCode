@@ -57,7 +57,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
       runtime = %Runtime{
         module: ScriptedProvider,
         status: :available,
-        executable: test_pid
+        config: %{test_pid: test_pid}
       }
 
       {:reply, {:ok, runtime}, test_pid}
@@ -70,7 +70,7 @@ defmodule ReyCode.Orchestration.DelegationTest do
     alias ReyCode.Provider.{Frame, Response, ToolCall}
 
     @impl true
-    def stream(%Runtime{executable: test_pid}, request, emit) do
+    def stream(%Runtime{config: %{test_pid: test_pid}}, request, emit) do
       case {request.label, request.round_index} do
         {"assistant response", round} when round in [0, 1, 2] ->
           parent_round(test_pid, request, round)

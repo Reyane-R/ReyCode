@@ -5,7 +5,6 @@ config :os_mon, start_disksup: false
 config :rey_code,
   agent_delay_ms: 45,
   provider_discovery: true,
-  provider_timeout_ms: 600_000,
   allow_simulator_provider: false,
   default_provider: :unconfigured,
   squad_rework_budget: 3,

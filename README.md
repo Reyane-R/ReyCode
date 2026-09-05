@@ -1,20 +1,19 @@
 # ReyCode
 
-ReyCode is a terminal-native coding harness with OMP-style sessions: one
+ReyCode is a standalone terminal coding harness with one
 Primary Assistant for ordinary conversation and explicit task agents for
 specialized work.
 
 ## Why ReyCode
 
-ReyCode is a durable orchestration layer for terminal coding agents, not a model
-client. Providers like OpenCode own the model conversation; ReyCode owns the
-agent loop, trusted tool execution with owner approval, event-sourced history
-that survives restarts and Session forks, and multi-agent squad workflows with a
-release gate. A deterministic simulator backs automated FSM, failure-injection,
-and Monte Carlo testing. Use ReyCode when you want tools run against your
-workspace under your control, work that resumes after a crash, or several
-specialized agents on one task; OpenCode alone suffices if you only need to talk
-to a model in a terminal.
+ReyCode connects directly to hosted or local model APIs and owns the complete
+coding loop: conversation context, model requests, tool execution, owner
+approvals, delegation, and durable history. A deterministic simulator backs
+automated workflow and failure-injection tests. Sessions and recorded decisions
+survive restarts, and optional squad workflows add explicit release gates.
+
+No OMP or OpenCode installation is required. Models return text and tool
+requests; ReyCode authorizes and executes those requests itself.
 
 Active decisions and their acceptance criteria are recorded in
 [DECISIONS.md](DECISIONS.md).
@@ -446,16 +445,16 @@ as three separately validated artifacts.
 The squad dashboard and directive controls are headless operational surfaces;
 they are intentionally absent from the ordinary session TUI.
 
-Run one live squad from the command line. Any provider works — a CLI runtime,
-a keyed API profile, or a keyless local one. Use `--workspace` to choose the
+Run one live squad from the command line with a keyed model API profile
+or a keyless local model server. Use `--workspace` to choose the
 project directory; otherwise the current workspace is used. The `--release`
 flag selects the release authority (`auto` for leader-authoritative, `wait`
 for owner review):
 
 ```sh
 mix rey_code.squad \
-  --provider opencode \
-  --model openai/gpt-5.6-sol \
+  --provider deepseek \
+  --model deepseek-chat \
   --workspace "$PWD" \
   --release auto \
   "Implement the requested change"
@@ -500,7 +499,7 @@ mix rey_code.eval \
 ```
 
 Each `--agent` resolves the most recent exact-named task Participant profile
-(for example, Luna on OpenCode or DeepSeek and Local on the keyless Ollama
+(for example, Luna on DeepSeek and Local on the keyless Ollama
 profile). ReyCode copies only those profiles into a fresh durable Session and
 runs independent, blind invocations; the automatically-created Primary
 Participant is not auditioned. Missing or unavailable profiles produce their
@@ -521,46 +520,21 @@ Workspace roots and tool approval are identical to ordinary runs: `bash` and
 `write` still need owner approval, so unattended auditions should use
 read-only tasks.
 
-## OpenCode and OMP
+## Model API setup
 
-OpenCode and OMP are CLI providers behind the `ReyCode.Provider` behaviour.
-Press `Ctrl+G` or submit `/connect` or `/agents` to configure one agent or every
-agent in the current Session. ReyCode reports whether each CLI is
-installed, checking, configured, or missing rather than treating process
-presence as an online state.
+Press `Ctrl+G`, `/connect`, or `/agents` to select a model for the Primary
+Assistant or a task agent. ReyCode connects directly to OpenAI-compatible chat
+completion APIs. Each response returns normalized text, usage, and tool calls;
+ReyCode executes approved tools and sends their results in the next model round.
 
-If a CLI has no available models, authenticate in another terminal and press
-`R` in the configuration screen:
-
-```sh
-opencode auth login
-# OMP credentials use OMP's own login/configuration flow.
-```
-
-Set explicit executable paths when the CLI is not on `PATH`:
-
-```sh
-export REYCODE_OPENCODE_PATH=/path/to/opencode
-export REYCODE_OMP_PATH=/path/to/omp
-```
-
-Each CLI keeps its own credential store authoritative. API keys are never
-copied into ReyCode's append-only event log. The adapters stream one bounded
-provider round and retain legacy provider-managed tool execution; ReyCode
-continues to own orchestration, durability, and approvals.
-
-## API providers
-
-ReyCode drives OpenAI-compatible chat completion APIs directly — these are
-first-class providers, not a fallback. This is where the native agent runtime
-lives: each round streams text and usage, returns normalized tool calls, and
-ReyCode's own `AgentLoop` executes those requests through its trusted tool
-registry, feeds results back into the provider conversation, and keeps every
-round durable. Nothing is chat-only; there is no provider-side recursive tool
-loop.
+Existing Sessions that used OMP or OpenCode retain their history and provider
+attribution. Those providers are retired and cannot run new work. Reassign the
+Session's participants through `/connect`; no credentials or model identities
+are transferred automatically. The former CLI executable and process-limit
+settings no longer apply. Configure request limits on model API profiles.
 
 DeepSeek ships as a built-in keyed profile. Set its API key in your
-environment and it appears alongside OpenCode in `Ctrl+G`:
+environment and select a model in `Ctrl+G`:
 
 ```sh
 export DEEPSEEK_API_KEY=sk-...
@@ -576,8 +550,7 @@ provider.
 ReyCode reads keys from the environment at invocation time only. They are
 never written to the event log, the catalog snapshot, or the diagnostics
 report. On first use, the `/models` endpoint is queried once to populate the
-model picker; the result is refreshed on the same schedule as OpenCode
-discovery and whenever you press `R`.
+model picker; discovery refreshes periodically and whenever you press `R`.
 
 Add more OpenAI-compatible providers by configuring profiles, each with a base
 URL and the environment variable that holds its key (`require_key: false`
@@ -628,9 +601,8 @@ degrade into chat-only mode never happens.
 
 Fresh Sessions copy the current Assistant and task-agent runtime assignments.
 Sending is blocked only when the addressed agent has no ready runtime. The
-ReyCode-owned tool loop is active for all providers with the `:reycode_tools`
-capability (OpenAI-compatible and the simulator); OpenCode's stdio adapter uses
-the legacy `:provider_managed_tools` capability.
+ReyCode-owned tool loop is the only execution path for model APIs and the
+test simulator. Providers cannot execute tools on ReyCode's behalf.
 
 ### Tool security model
 
@@ -834,7 +806,7 @@ mix rey_code.doctor --json
 
 The report includes runtime and operating system versions, the resolved data and
 database paths with permissions and available space when the platform exposes it,
-OpenCode executable/version readiness from the provider catalog, and configured
+model API readiness and sanitized endpoint origins, and configured
 operational limits. It never includes credential names, environment variables,
 model names, event contents, or prompts. The JSON form is intended for support
 automation and deployment checks.

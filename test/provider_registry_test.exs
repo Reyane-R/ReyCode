@@ -19,8 +19,6 @@ defmodule ReyCode.Provider.RegistryTest do
     cfg = config(openai_compatible_providers: @profiles)
 
     assert Registry.live_provider_ids(config: cfg, allow_simulator?: false) == [
-             :opencode,
-             :omp,
              :deepseek,
              :ollama,
              :lmstudio,
@@ -28,8 +26,6 @@ defmodule ReyCode.Provider.RegistryTest do
            ]
 
     assert Registry.live_provider_ids(config: cfg, allow_simulator?: true) == [
-             :opencode,
-             :omp,
              :deepseek,
              :ollama,
              :lmstudio,
@@ -38,8 +34,6 @@ defmodule ReyCode.Provider.RegistryTest do
            ]
 
     assert Enum.map(Registry.descriptors(cfg), &Map.take(&1, [:id, :name, :description])) == [
-             %{id: :opencode, name: "OpenCode", description: "CLI runtime"},
-             %{id: :omp, name: "OMP", description: "CLI runtime"},
              %{
                id: :deepseek,
                name: "DeepSeek",
@@ -62,7 +56,8 @@ defmodule ReyCode.Provider.RegistryTest do
              }
            ]
 
-    assert Registry.descriptor(:opencode).module == ReyCode.Provider.OpenCode
+    assert Registry.descriptor(:opencode) == nil
+    assert Registry.descriptor(:omp) == nil
     assert Registry.descriptor(:local_api, cfg).module == ReyCode.Provider.OpenAICompatible
     assert Registry.normalize_provider_id("local_api", cfg) == :local_api
     assert Registry.display_name("local_api", cfg) == "Local API"
@@ -94,12 +89,13 @@ defmodule ReyCode.Provider.RegistryTest do
     assert profile.name == "DeepSeek"
     assert Registry.fetch_api_profile("unknown") == {:error, :unknown_provider}
 
-    assert Registry.display_name(:opencode) == "OpenCode"
+    assert Registry.display_name(:opencode) == "OpenCode (retired)"
     assert Registry.display_name("deepseek") == "DeepSeek"
     assert Registry.display_name(:simulator) == "Simulator"
     assert Registry.display_name("unknown") == "unknown"
 
-    assert Registry.configurable_provider?("opencode", allow_simulator?: false)
+    refute Registry.configurable_provider?("opencode", allow_simulator?: false)
+    refute Registry.configurable_provider?("omp", allow_simulator?: false)
     assert Registry.configurable_provider?("deepseek", allow_simulator?: false)
     assert Registry.configurable_provider?("ollama", allow_simulator?: false)
     assert Registry.configurable_provider?(:lmstudio, allow_simulator?: false)

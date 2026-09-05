@@ -410,9 +410,9 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     providers = %{
-      omp: %{
-        id: :omp,
-        name: "OMP",
+      ollama: %{
+        id: :ollama,
+        name: "Ollama",
         status: :configured,
         models: ["openai-codex/gpt-5.4-mini"]
       }
@@ -424,7 +424,7 @@ defmodule ReyCode.TUITest do
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Tab")
     screen = session |> Breeze.Test.render!() |> plain()
 
-    assert screen =~ "omp/openai-codex/gpt-5.4-mini"
+    assert screen =~ "ollama/openai-codex/gpt-5.4-mini"
   end
 
   test "model filter treats terminal DEL as Backspace in the rendered TUI" do
@@ -433,11 +433,11 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     providers = %{
-      omp: %{
-        id: :omp,
-        name: "OMP",
+      ollama: %{
+        id: :ollama,
+        name: "Ollama",
         status: :configured,
-        models: ["omp/alpha", "omp/alpine"]
+        models: ["ollama/alpha", "ollama/alpine"]
       }
     }
 
@@ -456,14 +456,14 @@ defmodule ReyCode.TUITest do
     type(session, "alph")
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "Filter: alph  (type to search"
-    assert screen =~ "omp/alpha"
-    refute screen =~ "omp/alpine"
+    assert screen =~ "ollama/alpha"
+    refute screen =~ "ollama/alpine"
 
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "\x7F")
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "Filter: alp  (type to search"
-    assert screen =~ "omp/alpha"
-    assert screen =~ "omp/alpine"
+    assert screen =~ "ollama/alpha"
+    assert screen =~ "ollama/alpine"
   end
 
   test "model selection failure stays visible in a short terminal" do
@@ -471,10 +471,10 @@ defmodule ReyCode.TUITest do
     session = start_session({100, 20}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
 
-    models = Enum.map(1..12, &"omp/model-#{&1}")
+    models = Enum.map(1..12, &"ollama/model-#{&1}")
 
     providers = %{
-      omp: %{id: :omp, name: "OMP", status: :configured, models: models}
+      ollama: %{id: :ollama, name: "Ollama", status: :configured, models: models}
     }
 
     assert {:noreply, _focused} = push_providers(session, providers)
@@ -619,7 +619,8 @@ defmodule ReyCode.TUITest do
     assert {:noreply, _focused, true} = Breeze.Test.input(session, "Enter")
     screen = Breeze.Test.render!(session)
     assert screen =~ "Select a runtime"
-    assert screen =~ "OpenCode"
+    refute screen =~ "OpenCode"
+    assert screen =~ "DeepSeek"
     refute screen =~ "Demo"
     assert screen =~ "Provider discovery is disabled"
   end
@@ -650,12 +651,11 @@ defmodule ReyCode.TUITest do
 
     screen = Breeze.Test.render!(session)
     assert screen =~ "Select a runtime"
-    assert screen =~ "OpenCode"
+    refute screen =~ "OpenCode"
     assert screen =~ "DeepSeek"
+    refute screen =~ "OMP"
 
-    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
     assert Breeze.Test.render!(session) =~ "Provider discovery is disabled"
-    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
     assert Breeze.Test.render!(session) =~ "DEEPSEEK_API_KEY"
   end
@@ -1392,7 +1392,7 @@ defmodule ReyCode.TUITest do
            end)
 
     assert Enum.any?(projection.messages, fn {_id, m} ->
-             String.contains?(m.body, "ReyCode is a terminal-native coding harness")
+             String.contains?(m.body, File.read!("README.md"))
            end)
   end
 
@@ -1765,7 +1765,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ "What ReyCode can do"
     assert screen =~ "Durable conversations scoped to one workspace"
     assert screen =~ "Providers now"
-    assert screen =~ "OMP"
+    assert screen =~ "model APIs"
     assert screen =~ "Type / for commands"
   end
 

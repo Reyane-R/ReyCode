@@ -27,28 +27,16 @@ defmodule ReyCode.DoctorMixTaskTest do
         free_bytes: nil
       }
     },
-    opencode: %{
-      status: :configured,
-      ready: true,
-      installed: true,
-      executable: "/usr/bin/opencode",
-      version: "2.0.0"
-    },
-    omp: %{
-      status: :missing,
-      ready: false,
-      installed: false,
-      executable: nil,
-      version: nil
-    },
     api_providers: [
       %{
         id: :deepseek,
         name: "DeepSeek",
-        endpoint: "https://api.deepseek.com"
+        endpoint: "https://api.deepseek.com",
+        status: :configured,
+        ready: true
       }
     ],
-    limits: %{provider_timeout_ms: 600_000, squad_rework_budget: 3}
+    limits: %{max_replay_events: 2_000, squad_rework_budget: 3}
   }
 
   test "renders a concise human report" do
@@ -62,9 +50,10 @@ defmodule ReyCode.DoctorMixTaskTest do
     assert output =~ "free=1.0 MiB"
     assert output =~ "Database path: /var/lib/rey_code/rey_code.sqlite3"
     assert output =~ "readable=unknown"
-    assert output =~ "OpenCode: status=configured, ready=yes"
+    refute output =~ "OpenCode"
+    refute output =~ "OMP"
     assert output =~ "DeepSeek (deepseek): endpoint=https://api.deepseek.com"
-    assert output =~ "provider_timeout_ms=600000"
+    assert output =~ "max_replay_events=2000"
   end
 
   test "renders one machine-readable JSON document" do
@@ -73,13 +62,8 @@ defmodule ReyCode.DoctorMixTaskTest do
     assert decoded["app"]["version"] == "1.2.3"
     assert decoded["paths"]["database"]["free_bytes"] == nil
 
-    assert decoded["opencode"] == %{
-             "executable" => "/usr/bin/opencode",
-             "installed" => true,
-             "ready" => true,
-             "status" => "configured",
-             "version" => "2.0.0"
-           }
+    assert [%{"id" => "deepseek", "ready" => true}] = decoded["api_providers"]
+    refute Map.has_key?(decoded, "opencode")
   end
 
   test "mix task emits JSON diagnostics" do
@@ -94,6 +78,6 @@ defmodule ReyCode.DoctorMixTaskTest do
     assert decoded["app"]["name"] == "rey_code"
     assert is_binary(decoded["app"]["version"])
     assert is_map(decoded["paths"]["database"])
-    assert is_map(decoded["opencode"])
+    assert is_list(decoded["api_providers"])
   end
 end

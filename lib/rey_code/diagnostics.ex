@@ -21,8 +21,6 @@ defmodule ReyCode.Diagnostics do
           system: map(),
           runtime: map(),
           paths: map(),
-          opencode: map(),
-          omp: map(),
           api_providers: [map()],
           limits: map(),
           security: map()
@@ -50,10 +48,8 @@ defmodule ReyCode.Diagnostics do
         data: path_report(data_path, path_probe, free_space_probe),
         database: path_report(database_path, path_probe, free_space_probe)
       },
-      opencode: opencode_report(catalog),
-      omp: omp_report(catalog),
       limits: limits(config),
-      api_providers: api_providers_report(config),
+      api_providers: api_providers_report(config, catalog),
       security: %{workspace_roots: workspace_roots(config)}
     }
   end
@@ -236,49 +232,27 @@ defmodule ReyCode.Diagnostics do
   defp safe_snapshot(source) do
     source.()
   catch
-    :exit, _reason -> %{}
+    :exit, _reason -> %ReyCode.Provider.Catalog.Snapshot{generation: 0, providers: %{}}
   end
 
   defp discovery_checking?(snapshot) do
     snapshot
-    |> Enum.filter(fn {key, _entry} -> key in [:opencode, :omp, "opencode", "omp"] end)
     |> Enum.any?(fn {_key, entry} -> entry_get(entry, :status, :unavailable) == :checking end)
   end
 
-  defp opencode_report(snapshot) do
-    entry = entry_get(snapshot, :opencode, %{})
-    status = entry_get(entry, :status, :unavailable)
-    executable = entry_get(entry, :executable)
-
-    %{
-      status: status,
-      ready: status in [:configured, "configured"],
-      installed: is_binary(executable) and executable != "",
-      executable: executable,
-      version: entry_get(entry, :version)
-    }
-  end
-
-  defp omp_report(snapshot) do
-    entry = entry_get(snapshot, :omp, %{})
-    status = entry_get(entry, :status, :unavailable)
-    executable = entry_get(entry, :executable)
-
-    %{
-      status: status,
-      ready: status in [:configured, "configured"],
-      installed: is_binary(executable) and executable != "",
-      executable: executable,
-      version: entry_get(entry, :version)
-    }
-  end
-
-  defp api_providers_report(config) do
+  defp api_providers_report(config, catalog) do
     Enum.map(Registry.api_profiles(config), fn profile ->
+      status = catalog |> entry_get(profile.id, %{}) |> entry_get(:status, :unavailable)
+
       %{
         id: profile.id,
         name: profile.name,
-        endpoint: sanitize_endpoint(profile.base_url)
+        endpoint: sanitize_endpoint(profile.base_url),
+        status: status,
+        ready: status in [:configured, "configured"],
+        request_timeout_ms: profile.request_timeout_ms,
+        max_prompt_bytes: profile.max_prompt_bytes,
+        max_output_bytes: profile.max_output_bytes
       }
     end)
   end
@@ -322,25 +296,7 @@ defmodule ReyCode.Diagnostics do
       web_search_max_results: config.tools.research.max_results,
       web_search_max_bytes: config.tools.research.max_bytes,
       document_read_timeout_ms: config.tools.research.document_timeout_ms,
-      opencode_cpu_seconds: config.open_code.cpu_seconds,
-      opencode_max_diagnostic_bytes: config.open_code.max_diagnostic_bytes,
-      opencode_max_output_bytes: config.open_code.max_output_bytes,
-      opencode_max_prompt_bytes: config.open_code.max_prompt_bytes,
-      opencode_open_files: config.open_code.open_files,
-      opencode_text_chunk_bytes: config.open_code.text_chunk_bytes,
-      opencode_text_chunk_latency_ms: config.open_code.text_chunk_latency_ms,
-      omp_cpu_seconds: config.omp.cpu_seconds,
-      omp_max_diagnostic_bytes: config.omp.max_diagnostic_bytes,
-      omp_max_output_bytes: config.omp.max_output_bytes,
-      omp_max_prompt_bytes: config.omp.max_prompt_bytes,
-      omp_open_files: config.omp.open_files,
-      omp_text_chunk_bytes: config.omp.text_chunk_bytes,
-      omp_text_chunk_latency_ms: config.omp.text_chunk_latency_ms,
-      omp_discovery_output_bytes: config.omp.discovery_output_bytes,
       projection_checkpoint_interval: config.persistence.checkpoint_interval,
-      provider_discovery_command_timeout_ms: config.providers.discovery_command_timeout_ms,
-      provider_discovery_output_bytes: config.providers.discovery_output_bytes,
-      provider_timeout_ms: config.open_code.provider_timeout_ms,
       squad_rework_budget: config.squad.rework_budget,
       workspace_concurrency: config.orchestration.workspace_concurrency,
       workspace_queue_limit: config.orchestration.workspace_queue_limit
@@ -371,7 +327,7 @@ defmodule ReyCode.Diagnostics do
     Map.get(config, key, Map.get(config, Atom.to_string(key), default))
   end
 
-  defp entry_get(map, key, default \\ nil)
+  defp entry_get(map, key, default)
 
   defp entry_get(map, key, default) when is_map(map) do
     Map.get(map, key, Map.get(map, Atom.to_string(key), default))

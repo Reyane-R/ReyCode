@@ -45,7 +45,12 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
 
     def handle_call({action, _provider, _model}, _from, state)
         when action in [:resolve, :resolve_when_ready] do
-      runtime = %Runtime{module: BlockingProvider, status: :available, executable: state.test_pid}
+      runtime = %Runtime{
+        module: BlockingProvider,
+        status: :available,
+        config: %{test_pid: state.test_pid}
+      }
+
       {:reply, {:ok, runtime}, state}
     end
   end
@@ -57,7 +62,7 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
     alias ReyCode.Provider.{Frame, Response, Runtime}
 
     @impl true
-    def stream(%Runtime{executable: test_pid}, request, emit) do
+    def stream(%Runtime{config: %{test_pid: test_pid}}, request, emit) do
       send(test_pid, {:provider_waiting, request.invocation_id, self()})
 
       receive do

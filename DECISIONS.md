@@ -13,14 +13,30 @@ live in [History](#history).
 
 ## North Star
 
-ReyCode is a **standalone harness** (D20/D22): terminal-native,
-personal-first, with OpenCode's UX feel and omp-grade depth. The user sees
-sessions, one primary assistant, and explicit independently configured task
-agents. Advanced orchestration workflows never appear in the default
-interface. OpenCode remains one provider among several,
-not the runtime. Personal-first scope (D1) still governs sequencing.
+ReyCode is a **standalone harness** (D20/D22/D37): terminal-native and
+personal-first. ReyCode owns the conversation, model API calls, tool execution,
+approvals, and delegation. The default interface exposes one Primary Assistant
+and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
+
+### D37 — Model APIs are the only live provider execution path (Policy — 2026-09-04)
+
+The Owner explicitly chose a standalone coding tool. ReyCode therefore removes
+OMP and OpenCode CLI adapters, discovery, launch configuration, and setup flows.
+Every live model adapter returns one normalized ProviderRound; ReyCode owns
+all continuation, ToolRuns, approvals, and delegation. Hosted and local
+OpenAI-compatible APIs remain supported; the simulator remains test-only.
+
+Historical provider IDs and persisted activity remain readable at replay and
+presentation seams. They are reserved against reuse as custom profile IDs and
+cannot resolve or configure new executions. Existing assignments require an
+explicit model API selection; no implicit provider/model substitution occurs.
+
+This supersedes D2, D21, and D24's CLI-provider retention policy. D29's adopted
+interaction patterns remain ReyCode behavior, independent of OMP execution.
+Model API request limits belong to profiles; retired CLI process settings are
+removed rather than silently becoming unrelated API settings.
 
 ### D36 — Workspace command approvals are narrow presentation-independent policy (Executed — 2026-08-29)
 

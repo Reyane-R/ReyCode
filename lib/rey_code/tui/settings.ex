@@ -225,7 +225,7 @@ defmodule ReyCode.TUI.Settings do
   @doc "Refreshes provider discovery while selecting a runtime."
   @spec refresh(map()) :: map()
   def refresh(term) do
-    if get_in(term.assigns.providers, [:opencode, :status]) == :unchecked do
+    if Enum.any?(term.assigns.providers, fn {_id, entry} -> entry.status == :unchecked end) do
       Component.assign(term, notice: "Provider discovery is disabled")
     else
       Catalog.refresh(term.assigns.provider_catalog)

@@ -15,9 +15,7 @@ defmodule ReyCode.RuntimeConfig do
   alias ReyCode.RuntimeConfig.{
     Artifacts,
     Logging,
-    OMP,
     OpenAICompatible,
-    OpenCode,
     Orchestration,
     Persistence,
     Providers,
@@ -32,8 +30,6 @@ defmodule ReyCode.RuntimeConfig do
   @enforce_keys [
     :orchestration,
     :providers,
-    :open_code,
-    :omp,
     :open_ai,
     :squad,
     :persistence,
@@ -48,8 +44,6 @@ defmodule ReyCode.RuntimeConfig do
   @type t :: %__MODULE__{
           orchestration: Orchestration.t(),
           providers: Providers.t(),
-          open_code: OpenCode.t(),
-          omp: OMP.t(),
           open_ai: OpenAICompatible.t(),
           squad: Squad.t(),
           persistence: Persistence.t(),
@@ -133,34 +127,7 @@ defmodule ReyCode.RuntimeConfig do
       providers: %Providers{
         allow_simulator?: values.allow_simulator_provider,
         default_provider: values.default_provider,
-        discovery?: values.provider_discovery,
-        discovery_command_timeout_ms: values.provider_discovery_command_timeout_ms,
-        discovery_output_bytes: values.provider_discovery_output_bytes
-      },
-      open_code: %OpenCode{
-        path: values.opencode_path,
-        provider_timeout_ms: values.provider_timeout_ms,
-        max_prompt_bytes: values.opencode_max_prompt_bytes,
-        max_output_bytes: values.opencode_max_output_bytes,
-        max_diagnostic_bytes: values.opencode_max_diagnostic_bytes,
-        text_chunk_bytes: values.opencode_text_chunk_bytes,
-        text_chunk_latency_ms: values.opencode_text_chunk_latency_ms,
-        cpu_seconds: values.opencode_cpu_seconds,
-        open_files: values.opencode_open_files,
-        env_allowlist: values.opencode_env_allowlist
-      },
-      omp: %OMP{
-        path: values.omp_path,
-        provider_timeout_ms: values.provider_timeout_ms,
-        max_prompt_bytes: values.omp_max_prompt_bytes,
-        max_output_bytes: values.omp_max_output_bytes,
-        max_diagnostic_bytes: values.omp_max_diagnostic_bytes,
-        text_chunk_bytes: values.omp_text_chunk_bytes,
-        text_chunk_latency_ms: values.omp_text_chunk_latency_ms,
-        cpu_seconds: values.omp_cpu_seconds,
-        open_files: values.omp_open_files,
-        env_allowlist: values.omp_env_allowlist,
-        discovery_output_bytes: values.omp_discovery_output_bytes
+        discovery?: values.provider_discovery
       },
       open_ai: %OpenAICompatible{
         chunk_bytes: values.openai_compatible_chunk_bytes,

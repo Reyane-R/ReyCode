@@ -414,8 +414,6 @@ owns the logic.
 
 ```
 lib/rey_code/provider.ex              ← behaviour (interface)
-lib/rey_code/provider/open_code.ex    ← OpenCode CLI adapter
-lib/rey_code/provider/omp.ex          ← OMP RPC CLI adapter
 lib/rey_code/provider/open_ai_compatible.ex ← HTTP API adapter
 lib/rey_code/provider/simulator.ex    ← Test-only deterministic provider
 lib/rey_code/provider/catalog.ex      ← Discovery, readiness, runtime resolution
@@ -424,12 +422,6 @@ lib/rey_code/provider/catalog.ex      ← Discovery, readiness, runtime resoluti
 The `Provider` behaviour defines one callback: `stream/3`. Each adapter
 implements it:
 
-- **OpenCode** runs the `opencode` CLI as a subprocess, parses its NDJSON
-  output, and emits frames. This is the legacy `provider_managed_tools` mode
-  — OpenCode executes tools itself.
-- **OMP** runs the `omp` CLI in RPC mode, parses JSONL assistant events, and
-  emits normalized text, reasoning-note, and tool-lifecycle frames. OMP
-  executes its own coding-agent tools.
 - **OpenAI-compatible** makes HTTP streaming requests to chat completion APIs,
   assembles normalized tool calls from SSE chunks, and returns a `Response`.
 - **Simulator** returns deterministic responses for testing. It can inject
@@ -438,7 +430,8 @@ implements it:
 The **Catalog** (`catalog.ex`) is a GenServer that periodically discovers which
 providers are available, what models they offer, and whether they're ready. It
 resolves frozen `Runtime` structs for each invocation so the provider sees only
-the policy it needs.
+the policy it needs. ReyCode launches no external coding-agent runtime;
+only the AgentLoop executes tools and schedules subsequent model rounds.
 
 ### Layer 6: Tool Registry (workspace execution)
 
@@ -624,7 +617,7 @@ lib/rey_code/
 ├── agent_loop.ex               ← Durable tool loop (the "brain" of an invocation)
 ├── agent.ex                    ← Agent GenServer, frame buffering, error wrapping
 ├── provider.ex                 ← Provider behaviour (interface)
-├── provider/                   ← OpenCode, OpenAI, simulator, catalog, frames
+├── provider/                   ← Model APIs, simulator, catalog, frames
 ├── tool_registry.ex            ← Tool dispatch, authorization, execution
 ├── tool/                       ← read, write, edit, bash, grep, glob, list
 ├── security/                   ← canonical_path, workspace, environment
@@ -676,7 +669,7 @@ If you're looking at a bug and don't know where to start:
 
 4. **Is it a provider bug?** (AI not responding, wrong tool calls)
    → Look in `lib/rey_code/provider/`. Start with the specific adapter
-   (`open_code.ex` or `open_ai_compatible.ex`).
+   (`open_ai_compatible.ex`) and its transport modules.
 
 5. **Is it a tool bug?** (read/write/edit/bash behaving wrong)
    → Look in `lib/rey_code/tool/`. Each tool is a single module with a

@@ -113,7 +113,7 @@ defmodule ReyCode.Capabilities do
     %{
       title: "Providers",
       items: [
-        "Select OpenCode, OMP, or OpenAI-compatible models",
+        "Connect directly to hosted or local model APIs",
         "Refresh readiness and available models without storing credentials"
       ]
     },

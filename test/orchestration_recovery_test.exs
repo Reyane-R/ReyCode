@@ -43,7 +43,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
       runtime = %Runtime{
         module: BlockingProvider,
         status: :available,
-        executable: test_pid
+        config: %{test_pid: test_pid}
       }
 
       {:reply, {:ok, runtime}, test_pid}
@@ -56,7 +56,7 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     alias ReyCode.Provider.Response
 
     @impl true
-    def stream(%Runtime{executable: test_pid}, request, _emit) do
+    def stream(%Runtime{config: %{test_pid: test_pid}}, request, _emit) do
       send(test_pid, {:provider_waiting, request.invocation_id, self()})
 
       receive do

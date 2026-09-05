@@ -30,30 +30,6 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:allow_simulator_provider, fn -> false end, :boolean},
       {:default_provider, fn -> :unconfigured end, :atom},
       {:provider_discovery, fn -> true end, :boolean},
-      {:provider_timeout_ms, fn -> 600_000 end, {:integer, 1}},
-      {:provider_discovery_command_timeout_ms, fn -> 5_000 end, {:integer, 1}},
-      {:provider_discovery_output_bytes, fn -> 256_000 end, {:integer, 1}},
-      # OpenCode execution policy
-      {:opencode_path, fn -> nil end, :optional_string},
-      {:opencode_max_prompt_bytes, fn -> 128_000 end, {:integer, 1}},
-      {:opencode_max_output_bytes, fn -> 10_000_000 end, {:integer, 1}},
-      {:opencode_max_diagnostic_bytes, fn -> 64_000 end, {:integer, 1}},
-      {:opencode_text_chunk_bytes, fn -> 8_192 end, {:integer, 1}},
-      {:opencode_text_chunk_latency_ms, fn -> 50 end, {:integer, 0}},
-      {:opencode_cpu_seconds, fn -> 900 end, {:integer, 1}},
-      {:opencode_open_files, fn -> 1_024 end, {:integer, 1}},
-      {:opencode_env_allowlist, fn -> [] end, {:list_of, :binary}},
-      # OMP execution policy
-      {:omp_path, fn -> nil end, :optional_string},
-      {:omp_max_prompt_bytes, fn -> 128_000 end, {:integer, 1}},
-      {:omp_max_output_bytes, fn -> 10_000_000 end, {:integer, 1}},
-      {:omp_max_diagnostic_bytes, fn -> 64_000 end, {:integer, 1}},
-      {:omp_text_chunk_bytes, fn -> 8_192 end, {:integer, 1}},
-      {:omp_text_chunk_latency_ms, fn -> 50 end, {:integer, 0}},
-      {:omp_cpu_seconds, fn -> 900 end, {:integer, 1}},
-      {:omp_open_files, fn -> 1_024 end, {:integer, 1}},
-      {:omp_env_allowlist, fn -> [] end, {:list_of, :binary}},
-      {:omp_discovery_output_bytes, fn -> 1_048_576 end, {:integer, 1}},
       # OpenAI-compatible streaming policy
       {:openai_compatible_chunk_bytes, fn -> 8_192 end, {:integer, 1}},
       {:openai_compatible_chunk_latency_ms, fn -> 50 end, {:integer, 0}},
@@ -281,7 +257,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
         required_profile_value!(profile, :key_env, path, &non_empty_string?/1, "a string")
     end
 
-    if id in [:opencode, :simulator, :demo, :unconfigured] do
+    if id in [:opencode, :open_code, :omp, :simulator, :demo, :unconfigured] do
       raise ArgumentError, "invalid #{path}.id: #{inspect(id)} (reserved provider id)"
     end
 

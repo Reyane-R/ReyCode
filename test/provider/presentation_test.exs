@@ -6,31 +6,18 @@ defmodule ReyCode.Provider.PresentationTest do
   describe "runtime_label/2" do
     test "formats unconfigured and simulator runtimes" do
       assert Presentation.runtime_label(%{provider: :unconfigured, model: nil}, %{}) ==
-               "OpenCode · not configured"
+               "Model API · not configured"
 
       assert Presentation.runtime_label(%{provider: :simulator, model: nil}, %{}) ==
                "Simulator (test only)"
     end
 
-    test "formats OpenCode model requirements and catalog states" do
-      participant = %{provider: :opencode, model: "openai/gpt-5.6-sol"}
-
-      assert Presentation.runtime_label(%{participant | model: nil}, %{}) ==
-               "OpenCode · model required"
-
-      assert Presentation.runtime_label(participant, %{}) == "OpenCode · gpt-5.6-sol"
-
-      assert Presentation.runtime_label(participant, %{
-               opencode: %{status: :checking, models: []}
-             }) == "OpenCode · gpt-5.6-sol · checking"
-
-      assert Presentation.runtime_label(participant, %{
-               opencode: %{status: :configured, models: [participant.model]}
-             }) == "OpenCode · gpt-5.6-sol · configured"
-
-      assert Presentation.runtime_label(participant, %{
-               opencode: %{status: :configured, models: ["openai/another-model"]}
-             }) == "OpenCode · gpt-5.6-sol · unavailable"
+    test "retired CLI assignments explain how to reconnect" do
+      for provider <- [:opencode, :omp, :open_code] do
+        label = Presentation.runtime_label(%{provider: provider, model: "old/model"}, %{})
+        assert label =~ "retired"
+        assert label =~ "/connect"
+      end
     end
 
     test "uses API provider display names and short model names" do
@@ -73,21 +60,13 @@ defmodule ReyCode.Provider.PresentationTest do
 
   test "presents provider selection and unavailable setup help" do
     assert Presentation.selection_help(%{
-             id: :opencode,
-             status: :configured,
-             version: "1.0.0",
-             credential_count: 2,
-             models: ["openai/gpt"]
-           }) == "OpenCode 1.0.0 · 2 credentials · 1 models"
-
-    assert Presentation.selection_help(%{
              id: :deepseek,
              name: "DeepSeek",
              status: :available
            }) =~ "DEEPSEEK_API_KEY"
 
     assert Presentation.unavailable_help(%{id: :opencode, status: :missing}) ==
-             "OpenCode is not installed"
+             "Provider is not configured"
 
     assert Presentation.unavailable_help(%{id: :deepseek}) =~ "DEEPSEEK_API_KEY"
     assert Presentation.refresh_notice() == "Checking providers..."

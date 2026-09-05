@@ -89,12 +89,12 @@ defmodule ReyCode.Agent do
   end
 
   @spec provider_error(atom()) :: String.t()
-  def provider_error(:missing), do: "Provider executable is not installed"
+  def provider_error(:missing), do: "Model API is unavailable"
   def provider_error(:available), do: "Provider needs credentials or an available model"
   def provider_error(:unchecked), do: "Provider discovery is disabled"
   def provider_error(:model_required), do: "Select a model before running this agent"
   def provider_error(:model_unavailable), do: "The selected model is no longer available"
-  def provider_error(:unknown_provider), do: "Unknown provider runtime"
+  def provider_error(:unknown_provider), do: "Select a supported model API in /connect"
   def provider_error(:provider_check_timeout), do: "Provider discovery timed out"
   def provider_error(reason), do: "Provider is unavailable: #{inspect(reason)}"
 

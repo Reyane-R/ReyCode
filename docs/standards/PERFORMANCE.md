@@ -8,7 +8,6 @@ These are design envelopes, not benchmarks. Changes to a data-plane path update 
 |---|---|
 | Request duration | 600,000 ms default provider deadline |
 | OpenAI-compatible retained output | Profile maximum, 10,000,000 bytes default |
-| OpenCode retained output | 10,000,000 bytes schema default; production may override |
 | Text frame batch | 16 frames per Agent persistence batch |
 | Text chunk target | 8,192 bytes |
 | Text flush latency | 50 ms |
@@ -16,21 +15,9 @@ These are design envelopes, not benchmarks. Changes to a data-plane path update 
 
 Design intent: network latency dominates. Buffer short text to reduce event transactions while flushing within interactive latency. Output caps bound binary retention and parsing.
 
-### OMP native activity sketch
-
-```text
-Path: OMP JSONL thinking/tool events → normalized Provider frames → EventStore → Projection → TUI
-Expected operations/second: 1–10 activity frames during an interactive Invocation
-Peak operations/second: Producer-driven, within the 10,000,000-byte OMP output cap
-Network bytes and latency: No additional requests; existing subprocess JSONL bytes are normalized inline
-Storage bytes and latency: One provider_frame_recorded event per note or tool start/update/end; batched up to 16 frames
-Retained memory: Newest 256 provider activity events plus newest 100 note strings per Invocation
-CPU work per item: One map normalization; timeline lifecycle folding/sort is bounded to 256 events
-Batch size: 16 normalized frames per persistence batch
-Maximum duration: Existing 600,000 ms provider deadline
-Failure at each bound: OMP output truncation fails closed; Projection drops oldest activity after 256 events
-Measurement plan: Track frame-batch count and render latency in provider/TUI profiling
-```
+Historical provider activity remains readable, bounded to the newest 256 events
+per Invocation. New model API calls return text and ToolCalls; tool activity is
+recorded through ReyCode's durable ToolRun lifecycle.
 
 ## Event storage and replay
 

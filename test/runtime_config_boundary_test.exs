@@ -27,7 +27,6 @@ defmodule ReyCode.RuntimeConfigBoundaryTest do
       MapSet.new([
         "test/runtime_config_test.exs",
         "test/squad_mix_task_test.exs",
-        "test/provider/open_code/process_test.exs",
         "test/application_boot_test.exs"
       ])
 

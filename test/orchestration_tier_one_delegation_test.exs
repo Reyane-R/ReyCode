@@ -27,7 +27,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
       runtime = %Runtime{
         module: ReyCode.Orchestration.TierOneDelegationTest.Provider,
         status: :available,
-        executable: test_pid
+        config: %{test_pid: test_pid}
       }
 
       {:reply, {:ok, runtime}, test_pid}
@@ -45,7 +45,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
     }
 
     @impl true
-    def stream(%Runtime{executable: test_pid}, request, emit) do
+    def stream(%Runtime{config: %{test_pid: test_pid}}, request, emit) do
       case {request.label, request.round_index} do
         {"assistant response", 0} ->
           parent_start(request)

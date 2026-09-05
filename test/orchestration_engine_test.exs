@@ -560,7 +560,7 @@ defmodule ReyCode.Orchestration.EngineTest do
     assert Engine.snapshot(engine) == Projector.replay(events)
   end
 
-  test "rejects an OpenCode model when provider discovery is unavailable" do
+  test "rejects a model API when provider discovery is unavailable" do
     %{engine: engine} = start_isolated_engine([])
 
     assert {:ok, session_id} =
@@ -570,7 +570,7 @@ defmodule ReyCode.Orchestration.EngineTest do
              Engine.configure_participants(
                session_id,
                ["assistant"],
-               :opencode,
+               :deepseek,
                "openai/gpt-5.6-sol",
                engine
              )
