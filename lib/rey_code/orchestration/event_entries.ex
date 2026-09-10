@@ -10,6 +10,7 @@ defmodule ReyCode.Orchestration.EventEntries do
     Participant,
     Session,
     Squad,
+    StrategicReview,
     ToolRun,
     Turn,
     WorkPlan
@@ -154,13 +155,20 @@ defmodule ReyCode.Orchestration.EventEntries do
           "input_kind" => Atom.to_string(turn.input_kind),
           "participant_id" => turn.participant_id,
           "retry_of_turn_id" => turn.retry_of_turn_id
-        },
+        }
+        |> strategy_review(turn.strategy_review),
         :turn,
         turn.id,
         turn.session_id,
         turn.id
       )
     ]
+  end
+
+  defp strategy_review(data, nil), do: data
+
+  defp strategy_review(data, packet) do
+    Map.put(data, "strategy_review", StrategicReview.to_wire(packet))
   end
 
   @doc "Builds the source message and running-independent Turn for DetachedDelegation."

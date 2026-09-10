@@ -2,7 +2,7 @@ defmodule ReyCode.SessionExport do
   @moduledoc "Deterministically renders one durable Session Projection as Markdown or HTML."
 
   alias ReyCode.Memory.Store
-  alias ReyCode.Orchestration.Projection
+  alias ReyCode.Orchestration.{Projection, VerifiedChange, VerifiedChangeResolution}
   alias ReyCode.Provider.TextBuffer
 
   @max_export_bytes 10_000_000
@@ -51,6 +51,7 @@ defmodule ReyCode.SessionExport do
 
     [
       header,
+      verification(session, :markdown),
       decisions_markdown(decisions)
       | Enum.map(messages(session, projection), &message_markdown(&1, projection))
     ]
@@ -59,6 +60,7 @@ defmodule ReyCode.SessionExport do
 
   defp document(session, projection, :html, decisions) do
     body = [
+      verification(session, :html),
       decisions_html(decisions)
       | Enum.map(messages(session, projection), &message_html(&1, projection))
     ]
@@ -81,6 +83,26 @@ defmodule ReyCode.SessionExport do
       "</body></html>"
     ]
     |> IO.iodata_to_binary()
+  end
+
+  defp verification(%{verified_change: nil}, _format), do: ""
+
+  defp verification(session, format) do
+    resolution = session.verified_change_resolution
+
+    evidence =
+      session.verified_change
+      |> VerifiedChange.to_wire()
+      |> Map.put("owner_resolution", resolution && VerifiedChangeResolution.to_wire(resolution))
+      |> Jason.encode!(pretty: true)
+
+    case format do
+      :markdown ->
+        ["## Verification evidence\n\n```json\n", evidence, "\n```\n\n"]
+
+      :html ->
+        ["<section><h2>Verification evidence</h2><pre>", html(evidence), "</pre></section>"]
+    end
   end
 
   defp messages(session, projection) do

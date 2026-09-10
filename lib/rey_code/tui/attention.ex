@@ -1,6 +1,6 @@
 defmodule ReyCode.TUI.Attention do
   @moduledoc """
-  Emits one terminal bell when a new durable tool approval needs the Operator.
+  Emits one terminal bell when a new durable owner review needs the Operator.
 
   Projection comparison prevents repeated signals as unrelated events arrive.
   Non-terminal output is silent.
@@ -15,12 +15,31 @@ defmodule ReyCode.TUI.Attention do
   @doc "Signals the terminal once when the current projection introduces an approval."
   @spec notify(map(), map(), (-> boolean())) :: :ok
   def notify(previous, current, terminal? \\ &terminal?/0) do
-    if MapSet.size(new_approval_ids(previous, current)) > 0 and terminal?.() do
+    new_reviews = MapSet.difference(verification_ids(current), verification_ids(previous))
+
+    if (MapSet.size(new_approval_ids(previous, current)) > 0 or MapSet.size(new_reviews) > 0) and
+         terminal?.() do
       IO.write(:stderr, "\a")
     end
 
     :ok
   end
+
+  defp verification_ids(%{sessions: sessions}) do
+    Enum.reduce(sessions, MapSet.new(), fn
+      {_id, %{verified_change_resolution: %{id: id, status: :indeterminate}}}, ids ->
+        MapSet.put(ids, {:reconcile, id})
+
+      {_id, %{verified_change: %{id: id, phase: phase}, verified_change_resolution: nil}}, ids
+      when phase in ["ready", "blocked"] ->
+        MapSet.put(ids, {:verification, id})
+
+      _session, ids ->
+        ids
+    end)
+  end
+
+  defp verification_ids(_projection), do: MapSet.new()
 
   defp approval_ids(%{invocations: invocations}) when is_map(invocations) do
     Enum.reduce(invocations, MapSet.new(), fn {_id, invocation}, ids ->

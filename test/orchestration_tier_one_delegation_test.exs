@@ -367,7 +367,10 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
              "before\n"
 
     assert child.pending_tool_review.arguments["diff"] =~ "+after"
-    assert {:noreply, resolved} = MergeReview.submit(merge_term(child))
+    assert {:noreply, unselected} = MergeReview.submit(merge_term(child))
+    assert %Notice{severity: :info} = unselected.assigns.notice
+    assert {:noreply, selected} = MergeReview.handle_input("ArrowLeft", unselected)
+    assert {:noreply, resolved} = MergeReview.submit(selected)
     assert %Notice{severity: :success} = resolved.assigns.notice
     Wait.terminal_turn(@engine, turn_id)
 
@@ -401,7 +404,7 @@ defmodule ReyCode.Orchestration.TierOneDelegationTest do
     %Breeze.Term{
       assigns: %{
         engine: @engine,
-        merge_review: %{child_invocation_id: child.id, offset: 0},
+        merge_review: %{MergeReview.initial() | child_invocation_id: child.id},
         modal: :merge_review,
         notice: nil,
         projection: Engine.snapshot(@engine)

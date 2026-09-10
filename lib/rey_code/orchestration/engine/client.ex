@@ -64,7 +64,8 @@ defmodule ReyCode.Orchestration.Engine.Client do
     GenServer.call(server, {:take_tool_run, invocation_id}, :infinity)
   end
 
-  @spec tool_run_started(GenServer.server(), String.t(), String.t()) :: :ok | {:error, term()}
+  @spec tool_run_started(GenServer.server(), String.t(), String.t()) ::
+          :ok | {:ok, ReyCode.Tool.Request.t()} | {:error, term()}
   def tool_run_started(server, invocation_id, run_id) do
     GenServer.call(server, {:tool_run_started, invocation_id, run_id}, :infinity)
   end

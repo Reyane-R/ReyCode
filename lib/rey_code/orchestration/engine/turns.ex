@@ -2,7 +2,9 @@ defmodule ReyCode.Orchestration.Engine.Turns do
   @moduledoc "Handles user-facing turn commands for the Engine."
 
   alias ReyCode.Orchestration.Engine.{Admission, Identity, Lifecycle, Persistence}
-  alias ReyCode.Orchestration.{EventEntries, Mode, Squad, Validation}
+  alias ReyCode.Orchestration.Engine.VerifiedChangeResolution
+  alias ReyCode.Orchestration.{EventEntries, Mode, Squad, Validation, VerifiedChangeContext}
+  alias ReyCode.Orchestration.{StrategicReview, Turn}
   alias ReyCode.Provider.Catalog
 
   @type response :: {:reply, term(), map()}
@@ -10,14 +12,74 @@ defmodule ReyCode.Orchestration.Engine.Turns do
   @doc "Validates and queues one user message for orchestration."
   @spec post_message(map(), term(), term(), term()) :: response()
   def post_message(state, session_id, raw_body, mode) do
-    queue(state, session_id, raw_body, mode, nil, nil)
+    queue(state, %Turn{session_id: session_id, mode: mode}, raw_body)
   end
 
   @doc "Validates and queues one task addressed to a task participant."
   @spec delegate_task(map(), term(), term(), term()) :: response()
   def delegate_task(state, session_id, participant_id, raw_body) do
-    queue(state, session_id, raw_body, :delegate, participant_id, nil)
+    case Map.get(state.projection.sessions, session_id) do
+      %{verified_change: record} when not is_nil(record) ->
+        {:reply, {:error, :verified_change_not_owner}, state}
+
+      _ ->
+        queue(
+          state,
+          %Turn{session_id: session_id, mode: :delegate, participant_id: participant_id},
+          raw_body
+        )
+    end
   end
+
+  @doc "Captures one bounded review packet before queuing the ordinary delegate lifecycle."
+  @spec advise_strategy(map(), term(), term(), term(), list()) :: response()
+  def advise_strategy(state, session_id, participant_id, focus, memory_entries) do
+    with %{} = session <- state.projection.sessions[session_id],
+         nil <- session.verified_change,
+         {:ok, packet} <-
+           StrategicReview.capture(state.projection, session, memory_entries, focus) do
+      turn = %Turn{
+        session_id: session_id,
+        mode: :delegate,
+        participant_id: participant_id,
+        strategy_review: packet
+      }
+
+      queue(state, turn, if(focus in [nil, ""], do: "Review session strategy", else: focus))
+    else
+      nil -> {:reply, {:error, :session_not_found}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+      %{} -> {:reply, {:error, :verified_change_not_owner}, state}
+    end
+  end
+
+  @doc """
+  Queues one report-only verified-change stage turn addressed to a task participant.
+
+  Only the verified-change coordinator may post stage turns, only during the
+  analyzing or releasing phases, and the verified-change boundary leaves the
+  stage Invocation without tools.
+  """
+  @spec post_verified_stage(map(), term(), term(), term()) :: response()
+  def post_verified_stage(state, session_id, participant_id, raw_body) do
+    cond do
+      not Map.has_key?(state.projection.sessions, session_id) ->
+        {:reply, {:error, :session_not_found}, state}
+
+      not stage_phase?(state.projection.sessions[session_id]) ->
+        {:reply, {:error, :verified_change_not_owner}, state}
+
+      true ->
+        queue(
+          state,
+          %Turn{session_id: session_id, mode: :delegate, participant_id: participant_id},
+          raw_body
+        )
+    end
+  end
+
+  defp stage_phase?(%{verified_change: %{phase: phase}}), do: phase in ~w(analyzing releasing)
+  defp stage_phase?(_session), do: false
 
   @doc "Queues a new Turn linked to one failed terminal Turn."
   @spec retry(map(), term()) :: response()
@@ -28,7 +90,20 @@ defmodule ReyCode.Orchestration.Engine.Turns do
 
       %{status: :terminal, outcome: :failed} = turn ->
         message = state.projection.messages[turn.user_message_id]
-        queue(state, turn.session_id, message.body, turn.mode, turn.participant_id, turn.id)
+
+        if state.projection.sessions[turn.session_id].verified_change do
+          {:reply, {:error, :verified_change_not_owner}, state}
+        else
+          retry = %Turn{
+            session_id: turn.session_id,
+            mode: turn.mode,
+            participant_id: turn.participant_id,
+            retry_of_turn_id: turn.id,
+            strategy_review: turn.strategy_review
+          }
+
+          queue(state, retry, message.body)
+        end
 
       _turn ->
         {:reply, {:error, :turn_not_retryable}, state}
@@ -42,6 +117,7 @@ defmodule ReyCode.Orchestration.Engine.Turns do
 
     with %{} <- turn,
          true <- turn.status == :running,
+         :ok <- strategy_steering(turn),
          {:ok, body} <- Validation.message(raw_body),
          :ok <- steering_size(body, state.config.orchestration.steering_max_bytes),
          {:ok, invocation} <- steering_invocation(turn, state),
@@ -79,7 +155,9 @@ defmodule ReyCode.Orchestration.Engine.Turns do
     end
   end
 
-  defp queue(state, session_id, raw_body, mode, participant_id, retry_of_turn_id) do
+  defp queue(state, turn, raw_body) do
+    %{session_id: session_id, mode: mode, participant_id: participant_id} = turn
+
     cond do
       not Map.has_key?(state.projection.sessions, session_id) ->
         {:reply, {:error, :session_not_found}, state}
@@ -90,25 +168,43 @@ defmodule ReyCode.Orchestration.Engine.Turns do
       true ->
         session = state.projection.sessions[session_id]
 
-        with {:ok, body} <- Validation.message(raw_body),
+        with :ok <- VerifiedChangeResolution.admit_work(state),
+             {:ok, body} <- Validation.message(raw_body),
+             :ok <- verification_admission(session),
+             :ok <-
+               VerifiedChangeContext.admit(
+                 session.verified_change,
+                 state.config.orchestration.context_budget_tokens
+               ),
              :ok <- runtime_preflight(session, mode, participant_id, state),
              :ok <- Admission.admit_turn(session, state) do
-          Lifecycle.queue_message(state, session_id, body, mode, participant_id, retry_of_turn_id)
+          Lifecycle.queue_message(state, turn, body)
         else
           {:error, reason} -> {:reply, {:error, reason}, state}
         end
     end
   end
 
+  defp strategy_steering(%Turn{strategy_review: nil}), do: :ok
+  defp strategy_steering(%Turn{}), do: {:error, :strategy_review_frozen}
+
   defp steering_size(body, max_bytes) do
     if byte_size(body) <= max_bytes, do: :ok, else: {:error, :steering_too_large}
   end
+
+  defp verification_admission(%{verified_change: %{phase: phase}})
+       when phase in ~w(ready blocked),
+       do: {:error, :verified_change_terminal}
+
+  defp verification_admission(_session), do: :ok
 
   defp steering_invocation(turn, state) do
     candidates =
       turn.invocation_order
       |> Enum.map(&state.projection.invocations[&1])
-      |> Enum.filter(&(&1.status in [:queued, :running, :waiting_tool_approval]))
+      |> Enum.filter(
+        &(&1.status in [:queued, :running, :waiting_tool_approval, :waiting_operator])
+      )
 
     case candidates do
       [invocation] -> {:ok, invocation}

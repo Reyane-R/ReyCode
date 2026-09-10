@@ -35,6 +35,7 @@ defmodule ReyCode.TUI.State do
 
   @max_trace_note_graphemes 240
   @max_trace_note_rows_count 100
+  @max_expanded_message_count 128
 
   @doc "Subscribes the root view and initializes its stable assign shapes."
   @spec mount(keyword(), map()) :: {:ok, map()}
@@ -75,6 +76,7 @@ defmodule ReyCode.TUI.State do
         projection: projection,
         selected_session_id: selected_session_id,
         drafts: %{},
+        expanded_message_ids: [],
         mode: :direct,
         home: true,
         modal: nil,
@@ -163,7 +165,15 @@ defmodule ReyCode.TUI.State do
           activity,
           assigns.animation_now_ms,
           target_graphemes
-        ),
+        )
+        |> Enum.map(fn item ->
+          Map.put(
+            item,
+            :execution_details_expanded?,
+            item.kind == :message and
+              item.id in assigns.expanded_message_ids
+          )
+        end),
       activity: activity,
       activity_frame: frame,
       draft: Map.get(assigns.drafts, assigns.selected_session_id, ""),
@@ -307,6 +317,27 @@ defmodule ReyCode.TUI.State do
     session
     |> primary_participant()
     |> status_for(providers)
+  end
+
+  @doc "Mirrors ordinary message admission: active or queued work makes a FollowUp."
+  @spec send_label(map()) :: String.t()
+  def send_label(session) do
+    if session.active_turn_id != nil or session.queued_turn_ids != [], do: "Queue", else: "Send"
+  end
+
+  @doc "Expands multiline drafts within terminal bounds; slash completion keeps its fixed geometry."
+  @spec composer_height(String.t(), atom() | nil, pos_integer()) :: pos_integer()
+  def composer_height(_draft, :slash, _height), do: 2
+
+  def composer_height(draft, _modal, height) do
+    line_count = draft |> String.split("\n") |> length()
+
+    # Multiline input needs both border rows in addition to its content rows.
+    input_height = if line_count == 1, do: 2, else: line_count + 2
+
+    input_height
+    |> max(2)
+    |> min(min(8, max(div(height, 3), 2)))
   end
 
   defp status_for(nil, _providers), do: connect_status()
@@ -515,8 +546,27 @@ defmodule ReyCode.TUI.State do
   @spec select_session(map(), String.t(), boolean()) :: map()
   def select_session(term, session_id, home? \\ false) do
     term
-    |> Component.assign(selected_session_id: session_id, home: home?)
+    |> Component.assign(selected_session_id: session_id, home: home?, expanded_message_ids: [])
     |> reconcile_animation()
+  end
+
+  @doc "Toggles bounded transient execution disclosure for a selected-session Message."
+  @spec toggle_execution_details(map(), term()) :: map()
+  def toggle_execution_details(term, message_id) do
+    session = term.assigns.projection.sessions[term.assigns.selected_session_id]
+
+    if is_binary(message_id) and not is_nil(session) and message_id in session.message_order do
+      ids = term.assigns.expanded_message_ids
+
+      ids =
+        if message_id in ids,
+          do: List.delete(ids, message_id),
+          else: Enum.take([message_id | ids], @max_expanded_message_count)
+
+      Component.assign(term, expanded_message_ids: ids)
+    else
+      term
+    end
   end
 
   @doc "Stops local animation before TUI teardown."

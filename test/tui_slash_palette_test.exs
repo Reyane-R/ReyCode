@@ -4,7 +4,11 @@ defmodule ReyCode.TUI.SlashPaletteTest do
   alias ReyCode.TUI.{Notice, SlashPalette}
 
   test "matches/1 filters commands by prefix" do
-    assert Enum.map(SlashPalette.matches("/ag"), & &1.command) == ["/agent", "/agents"]
+    assert Enum.take(Enum.map(SlashPalette.matches("/ag"), & &1.command), 2) == [
+             "/agent",
+             "/agents"
+           ]
+
     assert SlashPalette.matches("/missing") == []
   end
 
@@ -15,7 +19,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert Enum.map(SlashPalette.matches("/exp"), & &1.command) == ["/export"]
 
     assert Enum.map(SlashPalette.matches("/"), & &1.command) ==
-             ~w(/task /agent /agents /model /connect /new /resume /plan /artifacts /help)
+             ~w(/verify /task /agent /agents /model /connect /new /resume /plan /artifacts /help)
   end
 
   test "the registry is the single consistent source of commands and actions" do
@@ -82,7 +86,9 @@ defmodule ReyCode.TUI.SlashPaletteTest do
   test "move/2 wraps around matching commands" do
     term = term(query: "/ag")
 
-    assert SlashPalette.move(term, -1).assigns.slash.index == 1
+    assert SlashPalette.move(term, -1).assigns.slash.index ==
+             length(SlashPalette.matches("/ag")) - 1
+
     assert SlashPalette.move(term, 1).assigns.slash.index == 1
   end
 
@@ -119,7 +125,9 @@ defmodule ReyCode.TUI.SlashPaletteTest do
       |> Enum.map(fn {candidate, _index} -> candidate.label end)
 
     assert Enum.take(labels, 4) == ~w(/steer /cancel /dequeue /hub)
-    assert Enum.slice(labels, 4, 7) == ~w(/task /agent /agents /model /connect /new /resume)
+
+    assert Enum.slice(labels, 4, 8) ==
+             ~w(/verify /task /agent /agents /model /connect /new /resume)
   end
 
   test "cancel/1 restores the original draft" do
@@ -163,6 +171,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
 
   defp contextual_term do
     session = %{
+      verified_change: nil,
       participants: [],
       workspace: "/tmp",
       active_turn_id: "turn-active",

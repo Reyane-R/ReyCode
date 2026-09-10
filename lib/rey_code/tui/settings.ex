@@ -16,8 +16,14 @@ defmodule ReyCode.TUI.Settings do
 
   @doc "Handles one key press while the settings wizard is active."
   @spec handle_input(String.t(), map()) :: {:noreply, map()}
-  def handle_input(key, term) when key in ["ArrowUp", "ArrowDown", "j", "k"] do
-    offset = if key in ["ArrowUp", "k"], do: -1, else: 1
+  def handle_input(key, term) when key in ["ArrowUp", "ArrowDown"] do
+    offset = if key == "ArrowUp", do: -1, else: 1
+    {:noreply, move(term, offset)}
+  end
+
+  def handle_input(key, %{assigns: %{settings: %{step: step}}} = term)
+      when key in ["j", "k"] and step in [:participants, :providers] do
+    offset = if key == "k", do: -1, else: 1
     {:noreply, move(term, offset)}
   end
 

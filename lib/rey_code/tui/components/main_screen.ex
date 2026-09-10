@@ -7,8 +7,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   import ReyCode.TUI.Components.MainScreen.Timeline, only: [timeline: 1]
 
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.Activity
-  alias ReyCode.TUI.Notice
+  alias ReyCode.TUI.{Action, Activity, Cancellation, Notice, State, Verification}
   attr :modal, :any, required: true
   attr :home, :boolean, required: true
   attr :sessions, :list, required: true
@@ -45,6 +44,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <.session_header
           :if={session_visible?(@home)}
           session={@session}
+          projection={@projection}
           activity={@activity}
           activity_frame={@activity_frame}
           git_branch={@git_branch}
@@ -62,6 +62,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
           activity_frame={@activity_frame}
         />
         <.composer
+          modal={@modal}
+          terminal_height={@terminal_height}
+          session={@session}
           draft={@draft}
           notice={@notice}
           budget_notice={@budget_notice}
@@ -106,6 +109,15 @@ defmodule ReyCode.TUI.Components.MainScreen do
         </box>
       </box>
       <box class="pt-2 text-muted">Quick start</box>
+      <box
+        id="verification-setup"
+        implicit={Action}
+        focusable
+        br-change="verification_setup"
+        class="text-primary"
+      >
+        /verify  Verify an isolated change
+      </box>
       <box class="inline w-full">
         <box class="w-12 text-muted">/</box>
         <box>Browse commands</box>
@@ -162,7 +174,13 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   defp session_header(assigns) do
     ~H"""
-    <box class="h-5 w-full bg-surface border-b border-muted px-2">
+    <box
+      class={if @session.verified_change do
+      "h-9 w-full bg-surface border-b border-muted px-2"
+    else
+      "h-5 w-full bg-surface border-b border-muted px-2"
+    end}
+    >
       <box class="inline w-full overflow-hidden">
         <box class="font-bold text-primary">{primary_summary(@session)}</box>
         <box class="text-muted">
@@ -184,6 +202,51 @@ defmodule ReyCode.TUI.Components.MainScreen do
           {@update_notice.message}
         </box>
       </box>
+      <box :if={@session.verified_change} class="text-primary">
+        {Verification.summary(@session, @projection)}
+      </box>
+      <box :if={@session.verified_change} class="text-warning">
+        {Verification.source_label(@session)}
+      </box>
+      <box :if={@session.verified_change} class="inline w-full">
+        <box
+          id="verification-review"
+          implicit={Action}
+          focusable
+          br-change="verification_review"
+          class="pr-2 text-primary"
+        >
+          /changes Review
+        </box>
+        <box
+          :if={Cancellation.verified_active?(@session)}
+          id="verification-cancel"
+          implicit={Action}
+          focusable
+          br-change="verification_cancel"
+          class="pr-2 text-warning"
+        >
+          /cancel Stop
+        </box>
+        <box
+          id="verification-tools"
+          implicit={Action}
+          focusable
+          br-change="verification_tools"
+          class="pr-2 text-muted"
+        >
+          /tools
+        </box>
+        <box
+          id="verification-question"
+          implicit={Action}
+          focusable
+          br-change="verification_question"
+          class="text-muted"
+        >
+          /answer
+        </box>
+      </box>
     </box>
     """
   end
@@ -194,8 +257,17 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :composer_status, :map, required: true
 
   defp composer(assigns) do
+    assigns =
+      Map.put(
+        assigns,
+        :input_height,
+        State.composer_height(assigns.draft, Map.get(assigns, :modal), assigns.terminal_height)
+      )
+
     ~H"""
-    <box class="h-6 w-full bg-surface border-t border-muted px-2 overflow-hidden">
+    <box
+      class={"h-#{@input_height + 4} w-full bg-surface border-t border-muted px-2 overflow-hidden"}
+    >
       <box class="inline w-full">
         <box class="font-bold text-primary">Message Assistant</box>
         <box
@@ -221,10 +293,10 @@ defmodule ReyCode.TUI.Components.MainScreen do
         textarea-submit-on-enter={true}
         br-change="prompt_changed"
         br-submit="prompt_submitted"
-        class="w-full h-2 border focus:border-primary bg-surface"
+        class={"w-full h-#{@input_height} border focus:border-primary bg-surface"}
       />
       <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="text-muted">
-        Enter send · Shift+Enter new line · ↑↓ history
+        Enter {State.send_label(@session)} · /steer · Shift+Enter new line · ↑↓ history
       </box>
       <box :if={not is_nil(@notice)} class={Notice.text_class(@notice)}>
         {Notice.label(@notice)} · {@notice.message}

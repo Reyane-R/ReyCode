@@ -9,8 +9,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     EventEntries,
     Mode,
     ToolRuns,
-    Turn,
-    Validation
+    Validation,
+    VerifiedChange
   }
 
   alias ReyCode.Orchestration.Engine.{
@@ -18,7 +18,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     DelegationFinalization,
     Identity,
     Options,
-    Persistence
+    Persistence,
+    Sessions
   }
 
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
@@ -84,7 +85,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     end
   end
 
-  def queue_message(state, session_id, body, mode, participant_id, retry_of_turn_id) do
+  def queue_message(state, turn, body) do
+    session_id = turn.session_id
     turn_id = Identity.new_id("turn")
     message_id = Identity.new_id("msg")
     context_sequence = state.projection.sequence + 1
@@ -93,14 +95,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     input_kind =
       if session.active_turn_id || session.queued_turn_ids != [], do: :follow_up, else: :operator
 
-    turn = %Turn{
-      id: turn_id,
-      session_id: session_id,
-      mode: mode,
-      participant_id: participant_id,
-      input_kind: input_kind,
-      retry_of_turn_id: retry_of_turn_id
-    }
+    turn = %{turn | id: turn_id, input_kind: input_kind}
 
     entries = EventEntries.queue_turn(turn, body, message_id, context_sequence)
 
@@ -223,6 +218,8 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   def recover_invocations(state) do
+    state = recover_verified_changes(state)
+
     state.projection.invocations
     |> Map.values()
     |> Enum.sort_by(fn invocation ->
@@ -231,6 +228,50 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     |> Enum.reduce(state, &recover_invocation(&2, &1))
     |> pump_admission()
     |> DelegationFinalization.resume_stale_delegations()
+  end
+
+  # Block every interrupted journal before any recovery path can pump work.
+  # Terminal journals also need cancellation: a prior recovery may have stopped
+  # after the journal append but before cancelling its Turns.
+  defp recover_verified_changes(state) do
+    state =
+      Enum.reduce(state.projection.session_order, state, fn session_id, acc ->
+        case acc.projection.sessions[session_id].verified_change do
+          nil ->
+            acc
+
+          %{phase: phase} when phase in ~w(ready blocked) ->
+            acc
+
+          record ->
+            blocked = %{
+              record
+              | phase: "blocked",
+                error: "Interrupted during #{record.phase}; not resumed"
+            }
+
+            {:reply, :ok, next} =
+              Sessions.record_verified_change(acc, session_id, VerifiedChange.to_wire(blocked))
+
+            next
+        end
+      end)
+
+    state.projection.turns
+    |> Map.values()
+    |> Enum.filter(fn turn ->
+      turn.status != :terminal and
+        state.projection.sessions[turn.session_id].verified_change != nil
+    end)
+    |> Enum.reduce(state, fn turn, acc ->
+      invocations = cancellable_turn_invocations(acc, turn)
+      invocation_ids = Enum.map(invocations, & &1.id)
+
+      acc
+      |> persist_turn_cancellation(turn, invocations, "Verified change interrupted; not resumed")
+      |> Admission.drop_executions(invocation_ids)
+      |> kill_cancelled_executions(invocation_ids)
+    end)
   end
 
   # A waiting approval is dormant: it holds no worker or admission slot and is
@@ -323,15 +364,7 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     invocation_entries = build_invocation_entries(session, turn, specs)
     turn_entry = EventEntries.turn_started(turn)
 
-    context_entries =
-      case ContextCompaction.entry(
-             session,
-             state.projection,
-             state.config.orchestration.context_budget_tokens
-           ) do
-        :unchanged -> []
-        {:compact, entry} -> [entry]
-      end
+    context_entries = context_entries(state, session, turn)
 
     state =
       if turn.mode == :squad do
@@ -354,6 +387,20 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
       end
 
     start_invocation_workers(state, invocation_entries)
+  end
+
+  defp context_entries(_state, _session, %{strategy_review: packet}) when not is_nil(packet),
+    do: []
+
+  defp context_entries(state, session, _turn) do
+    case ContextCompaction.entry(
+           session,
+           state.projection,
+           state.config.orchestration.context_budget_tokens
+         ) do
+      :unchanged -> []
+      {:compact, entry} -> [entry]
+    end
   end
 
   defp retire_legacy_turn(state, turn) do
@@ -429,7 +476,10 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   def build_invocation_entries(session, turn, specs) do
-    capture = ProjectInstructions.capture(session.workspace)
+    capture =
+      if turn.strategy_review,
+        do: %{content: "", digest: nil, sources: []},
+        else: ProjectInstructions.capture(session.workspace)
 
     specs =
       Enum.map(specs, fn spec ->
@@ -501,6 +551,13 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   defp monitor_execution(state, invocation_id, pid) do
+    invocation = state.projection.invocations[invocation_id]
+    turn = state.projection.turns[invocation.turn_id]
+
+    if owner = Map.get(state.verified_changes, turn.session_id) do
+      GenServer.cast(owner.pid, {:own_provider, pid})
+    end
+
     ref = Process.monitor(pid)
     workspace = Admission.workspace(state, invocation_id)
 

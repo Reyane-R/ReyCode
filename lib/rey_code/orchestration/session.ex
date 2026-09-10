@@ -1,10 +1,12 @@
 defmodule ReyCode.Orchestration.Session do
   @moduledoc "A durable workspace-rooted conversation in the orchestration projection."
 
-  alias ReyCode.Orchestration.Participant
+  alias ReyCode.Orchestration.{Participant, VerifiedChange, VerifiedChangeResolution}
   alias ReyCode.Orchestration.Squad.Seat
 
   @fields [
+    :verified_change,
+    :verified_change_resolution,
     :id,
     :slug,
     :title,
@@ -22,7 +24,9 @@ defmodule ReyCode.Orchestration.Session do
     :created_at
   ]
 
-  defstruct id: nil,
+  defstruct verified_change: nil,
+            verified_change_resolution: nil,
+            id: nil,
             slug: nil,
             title: nil,
             workspace: nil,
@@ -39,6 +43,8 @@ defmodule ReyCode.Orchestration.Session do
             created_at: nil
 
   @type t :: %__MODULE__{
+          verified_change: VerifiedChange.t() | nil,
+          verified_change_resolution: VerifiedChangeResolution.t() | nil,
           id: String.t() | nil,
           slug: String.t() | nil,
           title: String.t() | nil,
@@ -64,7 +70,10 @@ defmodule ReyCode.Orchestration.Session do
 
     %{
       session
-      | participants: Enum.map(session.participants || [], &Participant.from_map/1),
+      | verified_change: VerifiedChange.from_map(session.verified_change),
+        verified_change_resolution:
+          VerifiedChangeResolution.from_map(session.verified_change_resolution),
+        participants: Enum.map(session.participants || [], &Participant.from_map/1),
         squad_seats:
           Map.new(session.squad_seats || %{}, fn {id, seat} ->
             {id, Seat.from_map(seat)}

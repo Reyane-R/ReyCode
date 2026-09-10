@@ -5,6 +5,39 @@ defmodule ReyCode.EventContractTest do
 
   @metadata [aggregate_type: :room, aggregate_id: "room-1", room_id: "room-1"]
 
+  defp valid_data(:verified_change_resolution_recorded) do
+    %{
+      "room_id" => "room-1",
+      "record" => %{
+        "id" => "resolution-1",
+        "change_id" => "change-1",
+        "patch_hash" => "hash",
+        "decision" => "apply",
+        "status" => "requested",
+        "error" => nil
+      }
+    }
+  end
+
+  defp valid_data(:verified_change_recorded) do
+    %{
+      "room_id" => "room-1",
+      "record" => %{
+        "id" => "change-1",
+        "phase" => "preparing",
+        "source_workspace" => "/source",
+        "workspace" => "/work",
+        "base_commit" => "base",
+        "prompt" => "Fix it",
+        "commands" => ["mix test"],
+        "max_repair_count" => 1,
+        "repair_count" => 0,
+        "timeout_ms" => 1000,
+        "check_timeout_ms" => 1000
+      }
+    }
+  end
+
   describe "payload contracts cover every supported type" do
     test "every type declares required and optional field rules" do
       for type <- Event.types() do
@@ -24,6 +57,7 @@ defmodule ReyCode.EventContractTest do
   describe "ill-typed payloads are rejected naming the type and field" do
     test "key-complete but malformed values fail validation" do
       cases = [
+        {:verified_change_resolution_recorded, "record", %{"status" => "applied"}},
         {:room_created, "participants", "not-a-list"},
         {:room_created, "title", 42},
         {:participant_added, "kind", "chief"},

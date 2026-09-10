@@ -201,6 +201,36 @@ defmodule ReyCode.TUI.SettingsTest do
     assert result.assigns.settings.index == 0
   end
 
+  test "j and k type into model search while arrows navigate matching models" do
+    settings = %{Settings.initial() | step: :models, provider: :ollama, index: 1}
+    providers = put_in(providers(), [:ollama, :models], ["jk-small", "jk-large"])
+    term = term(settings: settings, providers: providers)
+
+    assert {:noreply, typed_j} = Settings.handle_input("j", term)
+    assert typed_j.assigns.settings.query == "j"
+    assert typed_j.assigns.settings.index == 0
+    assert {:noreply, down} = Settings.handle_input("ArrowDown", typed_j)
+    assert down.assigns.settings.index == 1
+    assert {:noreply, typed_k} = Settings.handle_input("k", down)
+    assert typed_k.assigns.settings.query == "jk"
+    assert typed_k.assigns.settings.index == 0
+    assert {:noreply, up} = Settings.handle_input("ArrowUp", typed_k)
+    assert up.assigns.settings.index == 1
+    assert up.assigns.settings.query == "jk"
+  end
+
+  test "j and k still navigate participant and provider selection" do
+    for step <- [:participants, :providers] do
+      settings = %{Settings.initial("room-1") | step: step}
+      term = term(settings: settings, providers: providers_with_deepseek())
+      assert {:noreply, down} = Settings.handle_input("j", term)
+      assert down.assigns.settings.index == 1
+      assert {:noreply, up} = Settings.handle_input("k", down)
+      assert up.assigns.settings.index == 0
+      assert up.assigns.settings.query == ""
+    end
+  end
+
   defp term(overrides \\ []) do
     session = %{
       participants: [

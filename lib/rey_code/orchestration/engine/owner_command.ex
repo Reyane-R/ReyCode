@@ -8,25 +8,36 @@ defmodule ReyCode.Orchestration.Engine.OwnerCommand do
   a shell; the result is appended durably when the command finishes.
   """
 
-  alias ReyCode.Orchestration.Engine.{Identity, Persistence}
+  alias ReyCode.Orchestration.Engine.{Identity, Persistence, SourceTask, VerifiedChangeResolution}
   alias ReyCode.Orchestration.{EventEntries, Validation}
   alias ReyCode.Security.Workspace
   alias ReyCode.Tool.{Bash, Request, Result}
   @display_limit 4_000
+  @max_commands_count 32
 
   @doc "Validates and asynchronously starts one owner shell command."
   @spec run(map(), term(), term()) :: {:reply, :ok | {:error, atom()}, map()}
 
   def run(state, session_id, raw_command) do
     with %{} = session <- state.projection.sessions[session_id],
+         :ok <- VerifiedChangeResolution.admit_work(state),
          {:ok, command} <- Validation.owner_command(raw_command),
-         :ok <- dispatch(state, session, command) do
-      {:reply, :ok, state}
+         {:ok, next} <- dispatch(state, session, command) do
+      {:reply, :ok, next}
     else
       nil -> {:reply, {:error, :session_not_found}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
   end
+
+  @doc "Releases tracked source execution only after the bounded shell operation returns."
+  def finish_task(state, ref, result) do
+    {{session_id, message_id, command}, tasks} = Map.pop(state.owner_command_tasks, ref)
+    Process.demonitor(ref, [:flush])
+    finish(%{state | owner_command_tasks: tasks}, session_id, message_id, command, result)
+  end
+
+  def down(state, ref, _reason), do: finish_task(state, ref, Result.error(:owner_command_crashed))
 
   @doc "Appends the durable transcript message for one finished owner command."
   @spec finish(map(), term(), String.t(), String.t(), map()) :: {:noreply, map()}
@@ -40,19 +51,25 @@ defmodule ReyCode.Orchestration.Engine.OwnerCommand do
   end
 
   defp dispatch(state, session, command) do
+    if map_size(state.owner_command_tasks) >= @max_commands_count do
+      {:error, :owner_command_capacity_exceeded}
+    else
+      start_command(state, session, command)
+    end
+  end
+
+  defp start_command(state, session, command) do
     message_id = Identity.new_id("msg")
-    parent = self()
     config = state.config
     workspace = session.workspace
 
-    task = fn ->
-      result = execute(command, workspace, config)
-      send(parent, {:owner_command_result, session.id, message_id, command, result})
-    end
+    case SourceTask.start(state, fn _owner -> execute(command, workspace, config) end) do
+      {:ok, task} ->
+        tasks = Map.put(state.owner_command_tasks, task.ref, {session.id, message_id, command})
+        {:ok, %{state | owner_command_tasks: tasks}}
 
-    case Task.Supervisor.start_child(state.task_supervisor, task) do
-      {:ok, _pid} -> :ok
-      {:error, _reason} -> {:error, :command_dispatch_failed}
+      {:error, _reason} ->
+        {:error, :command_dispatch_failed}
     end
   end
 

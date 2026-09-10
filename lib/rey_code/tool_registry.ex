@@ -10,7 +10,7 @@ defmodule ReyCode.ToolRegistry do
   belong to the adapter implementation.
   """
 
-  alias ReyCode.Security.{ApprovalRules, Workspace}
+  alias ReyCode.Security.{ApprovalRules, VerifiedChangeBoundary, Workspace}
 
   alias ReyCode.Tool.{
     BackgroundProcess,
@@ -43,7 +43,7 @@ defmodule ReyCode.ToolRegistry do
 
   @ask_tools MapSet.new(["bash", "write"])
 
-  @type decision :: {:ok, Result.t()} | {:ask, Request.t()} | {:deny, atom()}
+  @type decision :: {:ok, Result.t()} | {:ask, Request.t()} | {:deny, term()}
 
   @doc """
   Evaluates a tool request against the trust boundary.
@@ -56,18 +56,38 @@ defmodule ReyCode.ToolRegistry do
   """
   @spec dispatch(Request.t(), ReyCode.RuntimeConfig.t()) :: decision()
   def dispatch(%Request{} = request, policy) do
-    request = with_policy_roots(request, policy)
+    case VerifiedChangeBoundary.validate_request(request) do
+      {:ok, request} ->
+        request = with_policy_roots(request, policy)
 
-    case authorization(request, request.workspace) do
-      :allow -> {:ok, execute(request, policy)}
-      :ask -> {:ask, request}
-      :denied -> {:deny, :unknown_tool}
+        case authorization(request, request.workspace) do
+          :allow -> {:ok, execute(request, policy)}
+          :ask -> {:ask, request}
+          :denied -> {:deny, :unknown_tool}
+        end
+
+      {:error, reason} ->
+        {:deny, reason}
     end
   end
 
   @doc "Executes a previously approved (or allow-listed) tool request under frozen policy."
   @spec execute(Request.t(), ReyCode.RuntimeConfig.t()) :: Result.t()
   def execute(%Request{} = request, policy) do
+    result =
+      case VerifiedChangeBoundary.validate_request(request) do
+        {:ok, request} -> execute_validated(request, policy)
+        {:error, reason} -> Result.error(reason)
+      end
+
+    # Scoped failures must remain encodable in the durable ToolRun event even
+    # when an adapter returns a structured filesystem/argument error.
+    if request.verified_workspace != nil and result.ok == false,
+      do: %{result | error: inspect(result.error)},
+      else: result
+  end
+
+  defp execute_validated(request, policy) do
     request = with_policy_roots(request, policy)
     name = to_string(request.tool)
 
@@ -110,6 +130,15 @@ defmodule ReyCode.ToolRegistry do
   def requires_approval?(tool), do: MapSet.member?(@ask_tools, to_string(tool))
   @doc "Returns the fail-closed authorization for a tool call in one Workspace."
   @spec authorization(Request.t() | map(), String.t()) :: :allow | :ask | :denied
+  def authorization(%Request{verified_workspace: root} = request, _workspace)
+      when not is_nil(root) do
+    case VerifiedChangeBoundary.validate_request(request) do
+      {:ok, %{tool: "write"}} -> :ask
+      {:ok, _request} -> :allow
+      {:error, _reason} -> :denied
+    end
+  end
+
   def authorization(%{tool: tool} = call, workspace) do
     name = to_string(tool)
 

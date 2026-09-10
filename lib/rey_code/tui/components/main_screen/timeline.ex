@@ -5,10 +5,45 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   import Breeze.Blocks
 
   alias ReyCode.Failure
+  alias ReyCode.Orchestration.StrategicReview
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Activity, MermaidASCII}
 
   @max_visible_notes 8
+
+  defmodule Disclosure do
+    @moduledoc false
+    @behaviour Breeze.Implicit
+
+    @impl true
+    def init(_children, attrs, _previous),
+      do:
+        {:ok,
+         %{
+           message_id: Map.fetch!(attrs, :message_id),
+           timeline_id: Map.fetch!(attrs, :timeline_id)
+         }}
+
+    @impl true
+    def handle_event(_, %{"key" => key}, state) when key in ["Enter", " "],
+      do: {{:change, %{message_id: state.message_id}}, state}
+
+    def handle_event(_, %{"mouse" => %{"button" => "left", "action" => "press"}}, state),
+      do: {{:change, %{message_id: state.message_id}}, state}
+
+    def handle_event(_, %{"key" => key}, state)
+        when key in ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", "j", "k"],
+        do: {{:delegate, state.timeline_id}, state}
+
+    def handle_event(_, %{"mouse" => %{"button" => button}}, state)
+        when button in ["wheel_up", "wheel_down"],
+        do: {{:delegate, state.timeline_id}, state}
+
+    def handle_event(_, _, state), do: {:noreply, state}
+
+    @impl true
+    def handle_modifiers(_, _, _), do: []
+  end
 
   attr :messages, :list, required: true
   attr :timeline_id, :string, required: true
@@ -16,50 +51,74 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   attr :activity_frame, :string, required: true
 
   def timeline(assigns) do
+    # Keep vertical padding in the content so Breeze includes it in scroll bounds.
     ~H"""
     <.scroll
       id={@timeline_id}
       scroll-autoscroll="bottom"
-      class="h-full w-full border-none overflow-scroll mute-scrollbar-40 px-2 py-1"
+      class="h-full w-full border-none overflow-scroll mute-scrollbar-40 px-2"
     >
-      <box :if={@messages == []} class="pt-4 w-full">
-        <box class="font-bold text-primary">Ready</box>
-        <box class="pt-1 text-muted">Message the Assistant or delegate focused work with /task.</box>
-      </box>
-      <box :for={item <- @messages} class="w-full">
-        <box :if={item.kind == :context_boundary} class="w-full py-1 text-warning">
-          Context compacted · /context to inspect
-          <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
+      <box class="w-full py-1">
+        <box :if={@messages == []} class="pt-4 w-full">
+          <box class="font-bold text-primary">Ready</box>
+          <box class="pt-1 text-muted">
+            Message the Assistant or delegate focused work with /task.
+          </box>
         </box>
-        <box :if={item.kind == :message} class={message_class(item)}>
-          <box class="inline w-full overflow-hidden">
-            <box class={author_name_class(item)}>{author_label(item)}</box>
-            <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
-            <box class={message_status_class(item)}>{message_status_label(item)}</box>
+        <box :for={item <- @messages} class="w-full">
+          <box :if={item.kind == :context_boundary} class="w-full py-1 text-warning">
+            Context compacted · /context to inspect
+            <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
           </box>
-          <box :if={note_overflow(item) > 0} class="pl-2 w-full text-muted">
-            +{note_overflow(item)} earlier thoughts
-          </box>
-          <box :for={row <- visible_execution_rows(item, @activity_frame)} class="w-full">
-            <box class={row.class}>{row.text}</box>
-            <box :for={line <- row.diff_lines} class={diff_line_class(line)}>{line}</box>
-            <box :if={row.diff_truncated?} class="pl-4 w-full text-muted">
-              … Diff preview truncated · /runs to inspect
+          <box :if={item.kind == :message} class={message_class(item)}>
+            <box class="inline w-full overflow-hidden">
+              <box class={author_name_class(item)}>{author_label(item)}</box>
+              <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
+              <box class={message_status_class(item)}>{message_status_label(item)}</box>
             </box>
-          </box>
-          <box :if={item.body != ""} class={body_section_class(item)}>
             <box
-              :for={line <- render_message(item, @message_width)}
-              class="pl-2 w-full overflow-hidden"
+              :if={collapsible?(item)}
+              id={"execution-details-#{item.id}"}
+              implicit={Disclosure}
+              focusable
+              message_id={item.id}
+              timeline_id={@timeline_id}
+              br-change="execution_details_toggle"
+              class="pl-2 w-full text-muted focus:text-primary"
             >
-              <box>{line}</box>
+              {Enum.count(item.execution_rows, &(&1.kind == :tool))} tool actions · {if details_visible?(item) do
+                "Hide details"
+              else
+                "Show details"
+              end}
             </box>
-          </box>
-          <box :if={show_placeholder?(item)} class="pl-2 w-full text-muted">
-            {message_placeholder(item, @activity_frame)}
-          </box>
-          <box :if={item.error} class="pl-2 w-full overflow-hidden text-error">
-            Error · {error_summary(item.error, @message_width)}
+            <box
+              :if={details_visible?(item) and note_overflow(item) > 0}
+              class="pl-2 w-full text-muted"
+            >
+              +{note_overflow(item)} earlier thoughts
+            </box>
+            <box :for={row <- visible_execution_rows(item, @activity_frame)} class="w-full">
+              <box class={row.class}>{row.text}</box>
+              <box :for={line <- row.diff_lines} class={diff_line_class(line)}>{line}</box>
+              <box :if={row.diff_truncated?} class="pl-4 w-full text-muted">
+                … Diff preview truncated · /runs to inspect
+              </box>
+            </box>
+            <box :if={item.body != ""} class={body_section_class(item)}>
+              <box
+                :for={line <- render_message(item, @message_width)}
+                class="pl-2 w-full overflow-hidden"
+              >
+                <box>{line}</box>
+              </box>
+            </box>
+            <box :if={show_placeholder?(item)} class="pl-2 w-full text-muted">
+              {message_placeholder(item, @activity_frame)}
+            </box>
+            <box :if={item.error} class="pl-2 w-full overflow-hidden text-error">
+              Error · {error_summary(item.error, @message_width)}
+            </box>
           </box>
         </box>
       </box>
@@ -74,11 +133,24 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   end
 
   defp render_message(message, width) do
-    message.body
+    message
+    |> display_body()
     |> MermaidASCII.expand()
     |> Breeze.Markdown.render(width)
     |> split_lines()
   end
+
+  defp display_body(%{
+         role: :assistant,
+         status: :completed,
+         turn: %{status: :terminal, outcome: :completed, strategy_review: packet},
+         invocation: %{status: :completed},
+         body: body
+       })
+       when not is_nil(packet),
+       do: StrategicReview.render_output(body)
+
+  defp display_body(message), do: message.body
 
   defp message_placeholder(%{activity: nil, status: :queued}, _frame), do: "Waiting…"
   defp message_placeholder(%{activity: nil}, frame), do: frame <> " · Thinking"
@@ -127,7 +199,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp diff_line_class(_line), do: "pl-4 w-full text-muted"
 
   defp visible_execution_rows(item, frame) do
-    item.execution_rows
+    if(details_visible?(item), do: item.execution_rows, else: [])
     |> drop_hidden_notes(visible_note_overflow(item.execution_rows))
     |> Enum.map(fn
       %{kind: :note, text: text} ->
@@ -142,6 +214,19 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
         }
     end)
   end
+
+  defp collapsible?(item) do
+    item.status == :completed and is_nil(item.error) and item.execution_rows != [] and
+      not active_message?(item) and
+      Enum.all?(item.execution_rows, fn
+        %{kind: :note} -> true
+        %{state: :terminal, outcome: :completed} -> true
+        _row -> false
+      end)
+  end
+
+  defp details_visible?(item),
+    do: not collapsible?(item) or Map.get(item, :execution_details_expanded?, false)
 
   defp trace_note(marker, text, color) do
     %{

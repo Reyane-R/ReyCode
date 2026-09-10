@@ -8,7 +8,7 @@ defmodule ReyCode.OneShot do
   because this surface has no interactive authorization channel.
   """
 
-  alias ReyCode.Orchestration.{Engine, Validation}
+  alias ReyCode.Orchestration.{Engine, Projection, Validation}
 
   @projection_wait_ms 250
   @interaction_statuses [:waiting_tool_approval, :waiting_operator]
@@ -48,6 +48,85 @@ defmodule ReyCode.OneShot do
     end
   end
 
+  @doc "Creates a primary-only Session, copying only the newest source Workspace runtime."
+  @spec open(map(), GenServer.server()) :: {:ok, String.t()} | {:error, term()}
+  def open(options, engine \\ Engine) do
+    projection = Engine.snapshot(engine)
+    source_workspace = Map.fetch!(options, :source_workspace)
+    source_id = Projection.newest_session_id_for_workspace(projection, source_workspace)
+
+    with {:ok, session_id} <-
+           Engine.create_blank_session(session_title(options.prompt), options.workspace, engine),
+         :ok <- copy_source_runtime(projection, source_id, session_id, engine) do
+      {:ok, session_id}
+    end
+  end
+
+  @doc "Posts one bounded turn in an existing Session; interaction or timeout cancels the turn."
+  @spec run_turn(String.t(), String.t(), pos_integer(), GenServer.server()) ::
+          {:ok, report()} | {:error, report()}
+  def run_turn(session_id, prompt, timeout_ms, engine \\ Engine) do
+    run_turn(session_id, prompt, timeout_ms, engine, :headless)
+  end
+
+  @doc "Runs a bounded Turn with an explicit interaction policy; interactive waits retain the deadline."
+  @spec run_turn(
+          String.t(),
+          String.t(),
+          non_neg_integer(),
+          GenServer.server(),
+          :headless | :interactive
+        ) ::
+          {:ok, report()} | {:error, report()}
+  def run_turn(session_id, prompt, timeout_ms, engine, interaction) do
+    _projection = Engine.subscribe(engine)
+
+    with {:ok, prompt} <- Validation.message(prompt),
+         true <- is_integer(timeout_ms) and timeout_ms > 0,
+         {:ok, turn_id} <- Engine.post_message(session_id, prompt, :direct, engine) do
+      await_turn(engine, session_id, turn_id, timeout_ms, interaction)
+    else
+      false -> error_report(:invalid_timeout, session_id, nil)
+      {:error, reason} -> error_report(reason, session_id, nil)
+    end
+  end
+
+  @doc """
+  Runs one bounded report-only verified-change stage Turn addressed to a task
+  participant.
+
+  Mirrors run_turn/5 plus the task addressing required by the coordinator-owned
+  stage seam; the verified-change boundary removes every tool from the
+  resulting Invocation regardless of this module.
+  """
+  @spec run_stage(
+          String.t(),
+          String.t(),
+          String.t(),
+          pos_integer(),
+          GenServer.server(),
+          :headless | :interactive
+        ) ::
+          {:ok, report()} | {:error, report()}
+  def run_stage(session_id, participant_id, prompt, timeout_ms, engine, interaction) do
+    _projection = Engine.subscribe(engine)
+
+    with {:ok, prompt} <- Validation.message(prompt),
+         true <- is_integer(timeout_ms) and timeout_ms > 0,
+         {:ok, turn_id} <-
+           Engine.post_verified_stage_turn(session_id, participant_id, prompt, engine) do
+      await_turn(engine, session_id, turn_id, timeout_ms, interaction)
+    else
+      false -> error_report(:invalid_timeout, session_id, nil)
+      {:error, reason} -> error_report(reason, session_id, nil)
+    end
+  end
+
+  defp copy_source_runtime(_projection, nil, _session_id, _engine), do: :ok
+
+  defp copy_source_runtime(projection, source_id, session_id, engine),
+    do: copy_primary_runtime(Map.fetch!(projection.sessions, source_id), session_id, engine)
+
   defp latest_session(%{session_order: order, sessions: sessions}) do
     order |> List.last() |> then(&Map.fetch!(sessions, &1))
   end
@@ -82,23 +161,42 @@ defmodule ReyCode.OneShot do
 
   defp maybe_configure_runtime(_session_id, %{provider: nil}, _target, _engine), do: :ok
 
+  defp maybe_configure_runtime(
+         _session_id,
+         %{provider: provider, model: model},
+         %{provider: provider, model: model},
+         _engine
+       ),
+       do: :ok
+
   defp maybe_configure_runtime(session_id, source, target, engine) do
     Engine.configure_participants(session_id, target.id, source.provider, source.model, engine)
   end
 
-  defp await_turn(engine, session_id, turn_id, timeout_ms) do
+  defp await_turn(engine, session_id, turn_id, timeout_ms, interaction \\ :headless) do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
-    await_projection(engine, Engine.snapshot(engine), session_id, turn_id, deadline_ms)
+
+    await_projection(
+      engine,
+      Engine.snapshot(engine),
+      session_id,
+      turn_id,
+      deadline_ms,
+      interaction
+    )
   end
 
-  defp await_projection(engine, projection, session_id, turn_id, deadline_ms) do
+  defp await_projection(engine, projection, session_id, turn_id, deadline_ms, interaction) do
     turn = projection.turns[turn_id]
 
     cond do
       turn.status == :terminal ->
         terminal_report(projection, session_id, turn)
 
-      interaction_required?(projection, turn) ->
+      interaction == :headless and interaction_required?(projection, turn) ->
+        _result =
+          Engine.cancel_turn(turn_id, "Headless run requires operator interaction", engine)
+
         error_report(:operator_interaction_required, session_id, turn_id)
 
       System.monotonic_time(:millisecond) >= deadline_ms ->
@@ -110,10 +208,17 @@ defmodule ReyCode.OneShot do
 
         receive do
           {:projection_snapshot, next} when next.sequence > projection.sequence ->
-            await_projection(engine, next, session_id, turn_id, deadline_ms)
+            await_projection(engine, next, session_id, turn_id, deadline_ms, interaction)
         after
           min(@projection_wait_ms, remaining_ms) ->
-            await_projection(engine, Engine.snapshot(engine), session_id, turn_id, deadline_ms)
+            await_projection(
+              engine,
+              Engine.snapshot(engine),
+              session_id,
+              turn_id,
+              deadline_ms,
+              interaction
+            )
         end
     end
   end

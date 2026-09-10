@@ -27,7 +27,7 @@ defmodule ReyCode.TUI.Advisor do
          )}
 
       true ->
-        delegate(term, advisor, brief || @default_brief, Map.get(term.assigns, :advisor_delegate))
+        review(term, advisor, brief)
     end
   end
 
@@ -42,8 +42,25 @@ defmodule ReyCode.TUI.Advisor do
         &(String.downcase(&1.name || "") == "advisor" and &1.kind == :task)
       )
 
-  defp delegate(term, advisor, brief, nil),
-    do: delegate(term, advisor, brief, &Engine.delegate_task/4)
+  defp review(term, advisor, brief) do
+    case String.split(brief || "", ~r/\s+/, parts: 2, trim: true) do
+      ["strategy" | focus] ->
+        delegate(
+          term,
+          advisor,
+          List.first(focus),
+          Map.get(term.assigns, :advisor_strategy) || (&Engine.advise_strategy/4)
+        )
+
+      _ordinary ->
+        delegate(
+          term,
+          advisor,
+          brief || @default_brief,
+          Map.get(term.assigns, :advisor_delegate) || (&Engine.delegate_task/4)
+        )
+    end
+  end
 
   defp delegate(term, advisor, brief, delegate_fun) do
     case delegate_fun.(

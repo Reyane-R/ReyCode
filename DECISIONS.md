@@ -20,6 +20,108 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D41 - Strategic reviews freeze evidence and have no tools (Policy - 2026-09-10)
+
+`/advise strategy` reuses ordinary delegation and transcript persistence, but
+the Turn owns a bounded frozen StrategicReview packet. Provider requests use
+only that packet and their own continuation, without live Session summaries,
+project instructions, capability hints, or Participant perspective. Retry and
+recovery reuse the packet. A new review is the explicit refresh operation.
+
+This trades live investigation for reproducible scope and enforced report-only
+execution. Tool advertisements are empty, and claims, approvals, and starts
+reject all tools, including orchestration tools. A report cannot mutate memory,
+launch an experiment, or change a release decision. Citation validation checks
+membership and cross-Turn recurrence, not causal truth.
+
+ProjectMemory has a separate store; its captured entries are frozen alongside
+the orchestration evidence without claiming a shared transaction or cutoff.
+Retained previews replace artifact reads. Selection uses existing task input
+ordering and a finite scan ceiling rather than adding a historical query store
+or background index. Coverage disclosures distinguish this bounded review from
+a complete audit. Automatic friction capture and recurring notifications are
+deferred until explicit reviews demonstrate useful strategic feedback.
+
+### D40 - Multi-model verified workflows use report-only cheap stages (Policy - 2026-09-08)
+
+A verified change may freeze optional Testing and Release stage runtimes
+(provider/model pairs) in its durable record before baseline execution. Main
+remains the Primary Participant and performs all implementation and repair.
+The cheap Testing stage analyzes immutable failed-check evidence and reports to
+Main; the cheap Release stage drafts commit/PR metadata after checks pass.
+Stage outcomes are advisory records bound to their durable turn; they never
+change check evidence, repair admission, or readiness.
+
+Stage execution is coordinator-owned, not provider-initiated delegation: the
+verified boundary already forbids `spawn_task`, and the new Engine stage
+command admits only the registered worker during the `analyzing`/`releasing`
+phases. Stage Invocations get zero tools — enforcement reuses the existing
+phase policy at advertisement, claim, start, and dispatch, so approval cannot
+override it. A failed or timed-out stage records `outcome: "unavailable"` and
+the workflow continues from authoritative evidence; repair still triggers on
+failed checks regardless of any provider-reported verdict.
+
+This trades a richer delegation surface for a small frozen contract: no
+automatic model substitution (unresolvable stage runtimes fail closed at
+start), one report invocation per attempt, bounded stage responses (16 KiB),
+and no publication authority. Git commit/push/PR operations remain future work
+behind a separate owner-authorized lifecycle; Release only drafts metadata.
+
+### D39 - Terminal verification owns execution beyond the view (Policy - 2026-09-08)
+
+Interactive verification is a supervised execution owner, not a TUI wrapper
+around the headless runner. A fresh Session and preparing receipt persist
+atomically before startup returns; the commit resolves once after bounded Git
+inspection outside Engine callbacks. The initiating Session supplies the Primary
+profile. Navigation detaches presentation, not execution. Approval/question
+waits retain the existing Invocation and consume the bounded total deadline.
+
+Stopping a BEAM coordinator does not prove its OS subprocess stopped. Source
+operations therefore hold restart-visible leases while they drain through
+bounded execution and cleanup. Application admission checks those leases in
+addition to durable and live work. No uncertain external operation is restarted
+automatically. This trades immediate cancellation completion for truthful,
+fail-closed handling of subprocess lifetime.
+
+Apply/Discard is a separate append-only VerifiedChangeResolution bound to the
+retained patch. An intent precedes mutation; interruption requires explicit
+snapshot reconciliation. Apply must not regenerate a mutable candidate diff.
+The initial barrier is deliberately global within one Engine because configured
+tool roots can cross Workspace boundaries. Independent background processes and
+external writers remain outside this barrier; there is no OS-sandbox claim.
+
+This extends D38's initial headless-only presentation choice. Neither Discard
+nor application deletes the retained worktree implicitly. Revision requests
+start from the current clean source with the same profile/checks, preserve old
+evidence, and disclose that the previous isolated patch is not reused.
+
+### D38 - Verified changes retain evidence without automatic application (Policy - 2026-09-07)
+
+Verified changes are an opt-in headless workflow, not a new meaning for ordinary
+Turn completion. A single Primary Participant works against a clean committed
+source in a detached worktree. The Owner freezes explicit check commands;
+ReyCode executes them before and after implementation and bounded repair.
+Baseline nonzero exits remain evidence; uncertainty in execution blocks.
+
+Verification records live in the existing append-only event/projection path.
+The final patch is retained with a digest of its starting commit and exact
+bytes, and successful checks must identify that digest. A terminal `ready`
+record is historical evidence of review eligibility, never Apply authority.
+Worktree cleanup cannot delete the only copy of that evidence.
+
+The existing merge-review path requires a delegated parent/child pair. Rather
+than fabricate that relationship or implicitly apply changes, this first mode
+returns a review package and retains its worktree. An integrated Apply surface
+must consume the retained patch and revalidate the target; it must not recreate
+the patch from mutable worktree contents. Interrupted journals block before
+recovery can resume any tool. There is no automatic coordinator resume.
+
+Worktree isolation is not sandboxing. Only Owner-supplied checks execute host
+commands; provider tools are restricted at claim and execution, regardless of
+workspace approval rules. This deliberately limits autonomous file creation
+and integration in the initial headless surface instead of granting broad
+execution authority merely to reduce prompts.
+
 ### D37 — Model APIs are the only live provider execution path (Policy — 2026-09-04)
 
 The Owner explicitly chose a standalone coding tool. ReyCode therefore removes

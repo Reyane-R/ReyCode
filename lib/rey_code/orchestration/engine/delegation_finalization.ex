@@ -10,7 +10,7 @@ defmodule ReyCode.Orchestration.Engine.DelegationFinalization do
 
   alias ReyCode.Failure
 
-  alias ReyCode.Orchestration.{Delegation, DelegationWorktree, EventEntries}
+  alias ReyCode.Orchestration.{Delegation, DelegationWorktree, EventEntries, StrategicReview}
 
   alias ReyCode.Orchestration.Engine.{Admission, Lifecycle, Persistence}
   alias ReyCode.Orchestration.Workflow.Dispatcher, as: WorkflowDispatcher
@@ -62,6 +62,7 @@ defmodule ReyCode.Orchestration.Engine.DelegationFinalization do
     turn = state.projection.turns[invocation.turn_id]
     message = state.projection.messages[invocation.message_id]
     outcome = detached_outcome(turn, invocation, message, outcome)
+    outcome = strategy_outcome(turn, message, outcome)
 
     opts = [
       human_release_review?:
@@ -77,6 +78,23 @@ defmodule ReyCode.Orchestration.Engine.DelegationFinalization do
 
     resume_parent_delegation(next, invocation, outcome)
   end
+
+  defp strategy_outcome(%{strategy_review: packet}, message, {:completed, _metadata} = outcome)
+       when not is_nil(packet) do
+    case StrategicReview.validate_output(packet, message.body) do
+      {:ok, _text} ->
+        outcome
+
+      {:error, reason} ->
+        {:failed,
+         Failure.new(
+           :invalid_strategic_output,
+           "Strategic review output rejected: #{inspect(reason)}"
+         )}
+    end
+  end
+
+  defp strategy_outcome(_turn, _message, outcome), do: outcome
 
   defp maybe_request_merge(state, child, {:completed, _metadata} = outcome, prepend) do
     isolation = child.execution_context.isolation

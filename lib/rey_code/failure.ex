@@ -4,7 +4,7 @@ defmodule ReyCode.Failure do
   @known_categories ~w(
     authentication_error authentication_failed cancelled command_failed executable_changed
     external_failure incomplete_tool_call internal interrupted invalid_executable invalid_runtime
-    invalid_squad_output invalid_workspace launch_failed missing_credentials output_too_large
+    invalid_squad_output invalid_strategic_output invalid_workspace launch_failed missing_credentials output_too_large
     prompt_too_large protocol_error provider_error provider_unavailable rate_limit rate_limited
     request_cancelled request_failed response_too_large server_error simulated_after_frame
     simulated_permanent simulated_retryable simulated_timeout timeout token_budget_exceeded

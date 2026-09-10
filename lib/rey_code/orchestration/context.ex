@@ -12,6 +12,9 @@ defmodule ReyCode.Orchestration.Context do
   alias ReyCode.Provider.{Message, ToolCall}
 
   @spec messages(Session.t(), Turn.t(), Invocation.t(), Projection.t()) :: [Message.t()]
+  def messages(_session, %Turn{strategy_review: packet}, invocation, _projection)
+      when not is_nil(packet), do: round_messages(invocation)
+
   def messages(session, turn, invocation, projection) do
     session_messages(session, turn, invocation, projection) ++
       round_messages(invocation) ++

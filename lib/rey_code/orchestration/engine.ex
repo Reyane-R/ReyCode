@@ -4,6 +4,7 @@ defmodule ReyCode.Orchestration.Engine do
   use GenServer
 
   alias ReyCode.EventStore
+  alias ReyCode.Memory.Store, as: MemoryStore
 
   alias ReyCode.Orchestration.Projector
 
@@ -16,11 +17,71 @@ defmodule ReyCode.Orchestration.Engine do
     OwnerCommand,
     Persistence,
     Sessions,
-    Turns
+    SourceTask,
+    Turns,
+    VerifiedChangeResolution
   }
 
   alias ReyCode.Provider.Catalog
   alias ReyCode.RuntimeConfig
+  alias ReyCode.VerifiedChange.Interactive
+
+  @doc false
+  @spec start_source_operation(tuple(), (-> term()), reference(), GenServer.server()) ::
+          :ok | {:error, term()}
+  def start_source_operation(scope_id, operation, request_ref, server \\ __MODULE__),
+    do:
+      GenServer.call(server, {:start_source_operation, scope_id, operation, request_ref}, 10_000)
+
+  @doc """
+  Durably requests Apply/Discard of the exact retained patch and promptly returns
+  its resolution ID. A five-second call exit is indeterminate; inspect the
+  projection rather than retrying. Requested/indeterminate decisions globally
+  block new Engine-managed source work until durably settled.
+  """
+  @spec resolve_verified_change(term(), term(), term(), term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, term()}
+  def resolve_verified_change(session_id, change_id, patch_hash, decision, server \\ __MODULE__),
+    do:
+      GenServer.call(
+        server,
+        {:resolve_verified_change, session_id, change_id, patch_hash, decision},
+        5_000
+      )
+
+  @doc "Explicit read-only reconciliation of an indeterminate retained-patch resolution."
+  @spec reconcile_verified_change(term(), term(), term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, term()}
+  def reconcile_verified_change(session_id, change_id, patch_hash, server \\ __MODULE__),
+    do:
+      GenServer.call(
+        server,
+        {:reconcile_verified_change, session_id, change_id, patch_hash},
+        5_000
+      )
+
+  @doc """
+  Starts supervised interactive verification and returns its durable Session ID.
+
+  Only an empty directory is prepared by the caller; no Git or check command runs
+  in this call or Engine callbacks. The preparing receipt commits before reply.
+  A five-second call exit is indeterminate: inspect Sessions, never blindly retry.
+  The total deadline includes preparation, approval, and OperatorQuestion waits.
+  """
+  @spec start_verified_change(term(), map(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, term()}
+  def start_verified_change(source_session_id, options, server \\ __MODULE__),
+    do: Interactive.start(source_session_id, options, server)
+
+  @doc "Durably blocks a verified change before requesting owned execution shutdown, even between Turns."
+  @spec cancel_verified_change(term(), GenServer.server()) :: :ok | {:error, term()}
+  def cancel_verified_change(session_id, server \\ __MODULE__),
+    do: GenServer.call(server, {:cancel_verified_change, session_id})
+
+  @doc "Returns transient execution ownership, separate from the durable verification phase."
+  @spec verified_change_status(term(), GenServer.server()) :: :running | :stopping | :stopped
+  def verified_change_status(session_id, server \\ __MODULE__),
+    do: GenServer.call(server, {:verified_change_status, session_id})
 
   @doc "Starts an orchestration engine with the configured runtime dependencies and limits."
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -32,6 +93,37 @@ defmodule ReyCode.Orchestration.Engine do
   @doc "Returns the engine's current orchestration projection."
   @spec snapshot(GenServer.server()) :: Projector.state()
   def snapshot(server \\ __MODULE__), do: GenServer.call(server, :snapshot)
+
+  @doc "Returns the configured shell check policy without journaling; exits after a five-second timeout."
+  @spec check_policy(GenServer.server()) :: RuntimeConfig.Tools.Bash.t()
+  def check_policy(server \\ __MODULE__), do: GenServer.call(server, :check_policy, 5_000)
+
+  @doc """
+  Durably journals one verified-change phase before the caller executes it.
+
+  Returns validation errors without appending. Uses the normal five-second
+  Engine call timeout; an exit is indeterminate and must not authorize external
+  execution or blind retry. Storage uncertainty fail-stops through Persistence.
+  Query the restored record to explain interruption; nonterminal work is not
+  automatically resumed by this API.
+  """
+  @spec record_verified_change(term(), term(), GenServer.server()) :: :ok | {:error, term()}
+  def record_verified_change(session_id, record, server \\ __MODULE__) do
+    GenServer.call(server, {:record_verified_change, session_id, record})
+  end
+
+  @doc """
+  Queues one report-only verified-change stage turn.
+
+  Authorized only for the coordinator's registered worker and only while the
+  Session's verified change is in the analyzing or releasing phase; the
+  boundary removes every tool from the resulting Invocation.
+  """
+  @spec post_verified_stage_turn(term(), term(), term(), GenServer.server()) ::
+          {:ok, term()} | {:error, term()}
+  def post_verified_stage_turn(session_id, participant_id, body, server \\ __MODULE__) do
+    GenServer.call(server, {:post_verified_stage_turn, session_id, participant_id, body})
+  end
 
   @doc """
   Subscribes the caller to projection broadcasts and returns the baseline.
@@ -134,6 +226,27 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:delegate_task, session_id, participant_id, task})
   end
 
+  @doc """
+  Queues a frozen, zero-tool strategic review addressed to one task participant.
+
+  Memory is a separate bounded capture outside the Engine, not an atomic snapshot
+  with session events. Capture failures return errors without queuing work.
+  """
+  @spec advise_strategy(term(), term(), term(), GenServer.server()) ::
+          {:ok, String.t()} | {:error, term()}
+  def advise_strategy(session_id, participant_id, focus, server \\ __MODULE__) do
+    with {:ok, workspace} <- GenServer.call(server, {:strategy_workspace, session_id}),
+         {:ok, entries} <- strategy_memories(workspace) do
+      GenServer.call(server, {:advise_strategy, session_id, participant_id, focus, entries})
+    end
+  end
+
+  defp strategy_memories(workspace) do
+    MemoryStore.list(workspace, [], 100)
+  catch
+    :exit, _reason -> {:error, :strategy_memory_unavailable}
+  end
+
   @doc "Records one OperatorQuestion answer selection."
   @spec answer_question(String.t(), String.t(), term(), GenServer.server()) ::
           :ok | {:error, atom()}
@@ -230,6 +343,10 @@ defmodule ReyCode.Orchestration.Engine do
       task_supervisor: Keyword.get(opts, :task_supervisor, ReyCode.ProviderTaskSupervisor),
       event_registry: Keyword.get(opts, :event_registry, ReyCode.EventRegistry),
       agent_monitors: %{},
+      verified_changes: %{},
+      verified_change_resolution_tasks: %{},
+      owner_command_tasks: %{},
+      source_operation_tasks: %{},
       execution_queue: [],
       queued_execution_ids: MapSet.new(),
       active_executions: %{},
@@ -260,11 +377,91 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   @impl true
-  def handle_continue(:recover, state), do: {:noreply, Execution.recover(state)}
+  def handle_continue(:recover, state) do
+    state = VerifiedChangeResolution.recover(state)
+
+    state =
+      if VerifiedChangeResolution.locked?(state.projection),
+        do: state,
+        else: Execution.recover(state)
+
+    {:noreply, state}
+  end
 
   @impl true
   def handle_call(:snapshot, _from, state), do: {:reply, state.projection, state}
+
+  def handle_call(:check_policy, _from, state), do: {:reply, state.config.tools.bash, state}
   def handle_call(:event_registry, _from, state), do: {:reply, state.event_registry, state}
+
+  def handle_call(
+        {:start_source_operation, scope_id, operation, request_ref},
+        {caller, _tag},
+        state
+      ),
+      do: SourceTask.admit(state, scope_id, operation, request_ref, caller)
+
+  def handle_call(
+        {:resolve_verified_change, session_id, change_id, hash, decision},
+        _from,
+        state
+      ),
+      do: VerifiedChangeResolution.resolve(state, session_id, change_id, hash, decision)
+
+  def handle_call({:reconcile_verified_change, session_id, change_id, hash}, _from, state),
+    do: VerifiedChangeResolution.reconcile(state, session_id, change_id, hash)
+
+  def handle_call(
+        {:start_verified_change, source_id, options, directory, started_ms},
+        _from,
+        state
+      ),
+      do:
+        with_work_admission(state, fn ->
+          case SourceTask.admit_verification(state) do
+            :ok -> Interactive.admit(state, source_id, options, directory, started_ms)
+            {:error, reason} -> {:reply, {:error, reason}, state}
+          end
+        end)
+
+  def handle_call({:cancel_verified_change, session_id}, _from, state),
+    do: Interactive.cancel(state, session_id)
+
+  def handle_call({:verified_change_status, session_id}, _from, state) do
+    status =
+      if Map.has_key?(state.verified_changes, session_id) do
+        if state.projection.sessions[session_id].verified_change.phase in ["ready", "blocked"],
+          do: :stopping,
+          else: :running
+      else
+        if SourceTask.verification_busy?(state, session_id), do: :stopping, else: :stopped
+      end
+
+    {:reply, status, state}
+  end
+
+  def handle_call({:verified_change_worker, session_id, pid}, {caller, _tag}, state),
+    do: Interactive.register_worker(state, session_id, pid, caller)
+
+  def handle_call({:record_verified_change, session_id, record}, {caller, _tag}, state) do
+    with_work_admission(state, fn ->
+      if Interactive.authorized?(state, session_id, caller),
+        do: Sessions.record_verified_change(state, session_id, record),
+        else: {:reply, {:error, :verified_change_not_owner}, state}
+    end)
+  end
+
+  def handle_call(
+        {:post_verified_stage_turn, session_id, participant_id, body},
+        {caller, _tag},
+        state
+      ) do
+    with_work_admission(state, fn ->
+      if Interactive.authorized?(state, session_id, caller),
+        do: Turns.post_verified_stage(state, session_id, participant_id, body),
+        else: {:reply, {:error, :verified_change_not_owner}, state}
+    end)
+  end
 
   def handle_call({:create_blank_session, raw_title, workspace}, _from, state),
     do: Sessions.create(state, raw_title, workspace)
@@ -278,14 +475,24 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:fork_session, source_session_id, through_sequence}, _from, state),
     do: Sessions.fork_session(state, source_session_id, through_sequence)
 
-  def handle_call({:run_owner_command, session_id, command}, _from, state),
-    do: OwnerCommand.run(state, session_id, command)
+  def handle_call({:run_owner_command, session_id, command}, _from, state) do
+    case Map.get(state.projection.sessions, session_id) do
+      %{verified_change: record} when not is_nil(record) ->
+        {:reply, {:error, :verified_change_not_owner}, state}
+
+      _ ->
+        OwnerCommand.run(state, session_id, command)
+    end
+  end
 
   def handle_call({:add_task_participant, session_id, name, responsibility}, _from, state),
     do: Sessions.add_task_participant(state, session_id, name, responsibility)
 
-  def handle_call({:post_message, session_id, raw_body, mode}, _from, state),
-    do: Turns.post_message(state, session_id, raw_body, mode)
+  def handle_call({:post_message, session_id, raw_body, mode}, {caller, _tag}, state) do
+    if Interactive.authorized?(state, session_id, caller),
+      do: Turns.post_message(state, session_id, raw_body, mode),
+      else: {:reply, {:error, :verified_change_not_owner}, state}
+  end
 
   def handle_call({:steer_turn, turn_id, raw_body}, _from, state),
     do: Turns.steer(state, turn_id, raw_body)
@@ -298,8 +505,24 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:delegate_task, session_id, participant_id, task}, _from, state),
     do: Turns.delegate_task(state, session_id, participant_id, task)
 
+  def handle_call({:strategy_workspace, session_id}, _from, state) do
+    reply =
+      case state.projection.sessions[session_id] do
+        nil -> {:error, :session_not_found}
+        session -> {:ok, session.workspace}
+      end
+
+    {:reply, reply, state}
+  end
+
+  def handle_call({:advise_strategy, session_id, participant_id, focus, entries}, _from, state),
+    do: Turns.advise_strategy(state, session_id, participant_id, focus, entries)
+
   def handle_call({:answer_question, invocation_id, question_id, option_id}, _from, state),
-    do: Loop.answer_question(state, invocation_id, question_id, option_id)
+    do:
+      with_work_admission(state, fn ->
+        Loop.answer_question(state, invocation_id, question_id, option_id)
+      end)
 
   def handle_call(
         {:configure_participants, session_id, participant_ids, provider, model},
@@ -312,10 +535,16 @@ defmodule ReyCode.Orchestration.Engine do
     do: Sessions.configure_participant_tier(state, session_id, participant_id, tier)
 
   def handle_call({:resolve_tool_run, invocation_id, run_id, raw_decision}, _from, state),
-    do: Loop.resolve_tool_run(state, invocation_id, run_id, raw_decision)
+    do:
+      with_work_admission(state, fn ->
+        Loop.resolve_tool_run(state, invocation_id, run_id, raw_decision)
+      end)
 
   def handle_call({:resolve_merge, child_invocation_id, decision}, _from, state),
-    do: DelegationFinalization.resolve_merge(state, child_invocation_id, decision)
+    do:
+      with_work_admission(state, fn ->
+        DelegationFinalization.resolve_merge(state, child_invocation_id, decision)
+      end)
 
   def handle_call({:configure_squad_roles, session_id, role_ids, provider, model}, _from, state),
     do: Sessions.configure_squad_roles(state, session_id, role_ids, provider, model)
@@ -374,13 +603,42 @@ defmodule ReyCode.Orchestration.Engine do
           raw_reasons
         )
 
-  def handle_info({:owner_command_result, session_id, message_id, command, result}, state),
-    do: OwnerCommand.finish(state, session_id, message_id, command, result)
-
   @impl true
+  def handle_info({ref, result}, state) when is_map_key(state.source_operation_tasks, ref),
+    do: SourceTask.finish(state, ref, result)
+
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, state)
+      when is_map_key(state.source_operation_tasks, ref),
+      do: SourceTask.down(state, ref)
+
+  def handle_info({ref, result}, state)
+      when is_map_key(state.verified_change_resolution_tasks, ref),
+      do: VerifiedChangeResolution.finish(state, ref, result)
+
+  def handle_info({ref, result}, state) when is_map_key(state.owner_command_tasks, ref),
+    do: OwnerCommand.finish_task(state, ref, result)
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state)
+      when is_map_key(state.verified_change_resolution_tasks, ref),
+      do: VerifiedChangeResolution.down(state, ref, reason)
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state)
+      when is_map_key(state.owner_command_tasks, ref),
+      do: OwnerCommand.down(state, ref, reason)
+
   def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
-    {:noreply, Execution.apply_worker_exit(state, ref, reason)}
+    case Interactive.down(state, ref) do
+      {:ok, next} -> {:noreply, next}
+      :unowned -> {:noreply, Execution.apply_worker_exit(state, ref, reason)}
+    end
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp with_work_admission(state, operation) do
+    case VerifiedChangeResolution.admit_work(state) do
+      :ok -> operation.()
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 end

@@ -8,7 +8,9 @@ defmodule ReyCode.SessionExportTest do
     Participant,
     Projection,
     Session,
-    ToolRun
+    ToolRun,
+    VerifiedChange,
+    VerifiedChangeResolution
   }
 
   alias ReyCode.SessionExport
@@ -125,5 +127,35 @@ defmodule ReyCode.SessionExportTest do
     assert {:ok, html} = SessionExport.render(projection, session.id, :html, decisions)
     assert html =~ "Decisions &amp; assumptions"
     assert html =~ "args"
+  end
+
+  test "retained verification exports include separate owner application outcome" do
+    change = %VerifiedChange{id: "change", phase: "ready", patch_hash: "digest", patch: "patch"}
+
+    resolution = %VerifiedChangeResolution{
+      id: "resolution",
+      change_id: change.id,
+      patch_hash: change.patch_hash,
+      decision: :apply,
+      status: :applied
+    }
+
+    session = %Session{
+      id: "verified-session",
+      title: "Verified",
+      workspace: "/workspace",
+      verified_change: change,
+      verified_change_resolution: resolution
+    }
+
+    projection = %Projection{sessions: %{session.id => session}}
+
+    for format <- [:markdown, :html] do
+      assert {:ok, output} = SessionExport.render(projection, session.id, format)
+      assert output =~ "owner_resolution"
+      assert output =~ "ready"
+      assert output =~ "applied"
+      assert output =~ "digest"
+    end
   end
 end

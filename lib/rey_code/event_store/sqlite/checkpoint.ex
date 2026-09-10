@@ -11,6 +11,7 @@ defmodule ReyCode.EventStore.SQLite.Checkpoint do
   """
 
   alias ReyCode.Hashing
+  alias ReyCode.Orchestration.{Turn, VerifiedChange, VerifiedChangeResolution}
 
   @projection_version 3
   @legacy_projection_version 2
@@ -96,8 +97,87 @@ defmodule ReyCode.EventStore.SQLite.Checkpoint do
 
   defp valid_projection?(projection, sequence) do
     projection[:sequence] == sequence and
-      Enum.all?(@required_keys, &Map.has_key?(projection, &1))
+      Enum.all?(@required_keys, &Map.has_key?(projection, &1)) and
+      valid_session_records?(projection[:sessions]) and
+      valid_turn_records?(projection[:turns], projection[:sessions])
   end
+
+  defp valid_turn_records?(turns, sessions) when is_map(turns) do
+    Enum.all?(turns, fn
+      {_id, turn} when is_map(turn) ->
+        case Map.get(turn, :strategy_review) do
+          nil ->
+            true
+
+          _packet ->
+            turn = Turn.from_map(turn)
+            Turn.validate_strategy_review!(turn, Map.get(sessions, turn.session_id))
+            true
+        end
+
+      _entry ->
+        false
+    end)
+  rescue
+    ArgumentError -> false
+  end
+
+  defp valid_turn_records?(_turns, _sessions), do: false
+
+  defp valid_session_records?(sessions) when is_map(sessions) do
+    Enum.all?(sessions, fn
+      {_id, session} when is_map(session) ->
+        valid_verified_change?(Map.get(session, :verified_change)) and valid_resolution?(session)
+
+      _entry ->
+        false
+    end)
+  end
+
+  defp valid_session_records?(_sessions), do: false
+
+  defp valid_resolution?(session) do
+    valid_resolution?(
+      Map.get(session, :verified_change_resolution),
+      Map.get(session, :verified_change)
+    )
+  end
+
+  defp valid_resolution?(nil, _change), do: true
+
+  defp valid_resolution?(record, change) when is_map(record) do
+    fields = Map.keys(%VerifiedChangeResolution{}) -- [:__struct__]
+
+    with true <- Enum.sort(Map.keys(record)) == Enum.sort(fields),
+         true <- record[:decision] in [:apply, :discard],
+         true <- record[:status] in [:requested, :applied, :discarded, :failed, :indeterminate],
+         {:ok, resolution} <-
+           VerifiedChangeResolution.from_wire(VerifiedChangeResolution.to_wire(record)) do
+      VerifiedChangeResolution.bound?(resolution, VerifiedChange.from_map(change))
+    else
+      _ -> false
+    end
+  end
+
+  defp valid_resolution?(_record, _change), do: false
+
+  # Session checkpoints predating the journal omit this optional field.
+  defp valid_verified_change?(nil), do: true
+
+  defp valid_verified_change?(record) when is_map(record) do
+    map_size(record) == map_size(%VerifiedChange{}) - 1 and
+      Enum.all?(Map.keys(record), &is_atom/1) and
+      match?(
+        {:ok, _record},
+        VerifiedChange.from_wire(
+          Map.new(record, fn {key, value} ->
+            {Atom.to_string(key), value}
+          end)
+        )
+      )
+  end
+
+  defp valid_verified_change?(_record), do: false
 
   defp normalize_projection_keys(%{} = projection) do
     {legacy_sessions, projection} = Map.pop(projection, :rooms)

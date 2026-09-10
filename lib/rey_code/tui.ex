@@ -15,6 +15,7 @@ defmodule ReyCode.TUI do
 
   alias ReyCode.TUI.{
     Attention,
+    Cancellation,
     Completion,
     Keybindings,
     Mentions,
@@ -27,7 +28,9 @@ defmodule ReyCode.TUI do
     Settings,
     SlashPalette,
     State,
-    ToolInspector
+    ToolInspector,
+    ToolReview,
+    Verification
   }
 
   # Mentions is reached only at runtime, so an undefined-module warning would
@@ -72,6 +75,8 @@ defmodule ReyCode.TUI do
       ),
       action("app.theme.cycle", "Theme", ["^T"], &__MODULE__.cycle_theme/2),
       action("app.turn.retry", "Retry failed Turn", [], &__MODULE__.retry_latest/2),
+      action("app.verification.setup", "Verify a change", [], &__MODULE__.open_verification/2),
+      action("app.verification.review", "Review verified change", [], &__MODULE__.open_changes/2),
       action("app.quit", "Quit", ["^Q"], &__MODULE__.quit/2)
     ]
   end
@@ -105,10 +110,21 @@ defmodule ReyCode.TUI do
     do: {:noreply, focus(term, "prompt")}
 
   def switch_focus(_event, term) do
-    next =
-      if term.focused == "prompt",
-        do: State.timeline_id(term.assigns.selected_session_id),
-        else: "prompt"
+    timeline = State.timeline_id(term.assigns.selected_session_id)
+
+    targets =
+      case term.focusables do
+        [] ->
+          [timeline, "prompt"]
+
+        rendered ->
+          if timeline in rendered and "prompt" in rendered,
+            do: [timeline | Enum.reject(rendered, &(&1 in [timeline, "prompt"]))] ++ ["prompt"],
+            else: rendered
+      end
+
+    index = Enum.find_index(targets, &(&1 == term.focused))
+    next = Enum.at(targets, rem((index || -1) + 1, length(targets)))
 
     {:noreply, focus(term, next)}
   end
@@ -141,6 +157,16 @@ defmodule ReyCode.TUI do
     do: {:noreply, PromptHistory.open(term)}
 
   def open_prompt_history(_event, term), do: {:noreply, term}
+
+  def open_verification(_event, %{assigns: %{modal: nil}} = term),
+    do: {:noreply, Verification.open(term)}
+
+  def open_verification(_event, term), do: {:noreply, term}
+
+  def open_changes(_event, %{assigns: %{modal: nil}} = term),
+    do: {:noreply, Verification.review(term)}
+
+  def open_changes(_event, term), do: {:noreply, term}
   @doc "Recalls the previous one-line prompt without stealing multiline cursor movement."
   def recall_previous(_event, %{assigns: %{modal: nil}, focused: "prompt"} = term),
     do: PromptHistory.recall(term, :previous)
@@ -341,6 +367,36 @@ defmodule ReyCode.TUI do
   defp do_handle_event(:input, %{"key" => "Escape"}, term) do
     session = term.assigns.projection.sessions[term.assigns.selected_session_id]
 
+    if Cancellation.verified_active?(session) do
+      Cancellation.stop_verification(term)
+    else
+      cancel_active_turn(session, term)
+    end
+  end
+
+  defp do_handle_event("verification_setup", _payload, term), do: open_verification(nil, term)
+
+  defp do_handle_event(
+         "execution_details_toggle",
+         %{message_id: message_id},
+         %{assigns: %{modal: nil}} = term
+       ),
+       do: {:noreply, State.toggle_execution_details(term, message_id)}
+
+  defp do_handle_event("verification_review", _payload, term), do: open_changes(nil, term)
+
+  defp do_handle_event("verification_cancel", _payload, term),
+    do: {:noreply, Cancellation.open(term)}
+
+  defp do_handle_event("verification_tools", _payload, term),
+    do: {:noreply, ToolReview.open(term)}
+
+  defp do_handle_event("verification_question", _payload, term),
+    do: open_operator_question(nil, term)
+
+  defp do_handle_event(_, _, term), do: {:noreply, term}
+
+  defp cancel_active_turn(session, term) do
     if session && session.active_turn_id do
       case Engine.cancel_turn(session.active_turn_id, "Cancelled by user", term.assigns.engine) do
         :ok -> {:noreply, assign(term, notice: Notice.new(:info, "Task cancelled"))}
@@ -350,8 +406,6 @@ defmodule ReyCode.TUI do
       {:noreply, term}
     end
   end
-
-  defp do_handle_event(_, _, term), do: {:noreply, term}
 
   defp prompt_changed(%{assigns: %{modal: modal}} = term, value, cursor) do
     cond do
@@ -376,7 +430,11 @@ defmodule ReyCode.TUI do
 
   def handle_info({:projection_snapshot, projection}, term) do
     ReyCode.Herdr.report_projection(projection)
-    :ok = Attention.notify(term.assigns.projection, projection)
+
+    if projection.sequence > term.assigns.projection.sequence do
+      :ok = Attention.notify(term.assigns.projection, projection)
+    end
+
     {:noreply, State.projection_updated(term, projection)}
   end
 

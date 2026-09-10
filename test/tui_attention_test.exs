@@ -3,6 +3,42 @@ defmodule ReyCode.TUI.AttentionTest do
 
   alias ReyCode.TUI.Attention
 
+  test "verification review and indeterminate reconciliation each signal once without focus changes" do
+    empty = %{sessions: %{}, invocations: %{}}
+
+    session = %ReyCode.Orchestration.Session{
+      verified_change: %ReyCode.Orchestration.VerifiedChange{id: "change", phase: "ready"}
+    }
+
+    ready = %{empty | sessions: %{"session" => session}}
+
+    assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+             Attention.notify(empty, ready, fn -> true end)
+           end) == "\a"
+
+    assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+             Attention.notify(ready, ready, fn -> true end)
+           end) == ""
+
+    resolution = %ReyCode.Orchestration.VerifiedChangeResolution{
+      id: "resolution",
+      status: :indeterminate
+    }
+
+    uncertain = %{
+      ready
+      | sessions: %{"session" => %{session | verified_change_resolution: resolution}}
+    }
+
+    assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+             Attention.notify(ready, uncertain, fn -> true end)
+           end) == "\a"
+
+    assert ExUnit.CaptureIO.capture_io(:stderr, fn ->
+             Attention.notify(uncertain, uncertain, fn -> true end)
+           end) == ""
+  end
+
   test "detects each newly pending approval once" do
     empty = %{invocations: %{}}
     waiting = projection("run-1", :waiting_tool_approval)

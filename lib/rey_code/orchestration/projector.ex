@@ -29,6 +29,8 @@ defmodule ReyCode.Orchestration.Projector do
     ToolAsk,
     ToolRun,
     Turn,
+    VerifiedChange,
+    VerifiedChangeResolution,
     WorkPlan
   }
 
@@ -76,6 +78,27 @@ defmodule ReyCode.Orchestration.Projector do
         sessions: Map.put(state.sessions, session.id, session),
         session_order: state.session_order ++ [session.id]
     }
+  end
+
+  def apply(%Event{type: :verified_change_resolution_recorded, data: data} = event, state) do
+    {:ok, record} = VerifiedChangeResolution.from_wire(data["record"])
+
+    update_session(state, data["room_id"], fn session ->
+      true = VerifiedChangeResolution.bound?(record, session.verified_change)
+      :ok = VerifiedChangeResolution.transition(session.verified_change_resolution, record)
+      %{session | verified_change_resolution: record}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :verified_change_recorded, data: data} = event, state) do
+    {:ok, record} = VerifiedChange.from_wire(data["record"])
+
+    update_session(state, data["room_id"], fn session ->
+      :ok = VerifiedChange.transition(session.verified_change, record)
+      %{session | verified_change: record}
+    end)
+    |> put_sequence(event.sequence)
   end
 
   def apply(%Event{type: :session_forked, data: data} = event, state) do
@@ -194,6 +217,7 @@ defmodule ReyCode.Orchestration.Projector do
       participant_id: data["participant_id"],
       source_invocation_id: data["source_invocation_id"],
       retry_of_turn_id: data["retry_of_turn_id"],
+      strategy_review: Turn.strategy_review(data["strategy_review"]),
       task: data["task"],
       detached?: data["detached"] == true,
       status: :queued,
@@ -204,6 +228,7 @@ defmodule ReyCode.Orchestration.Projector do
       created_at: event.recorded_at
     }
 
+    turn = Turn.validate_strategy_review!(turn, state.sessions[turn.session_id])
     state = Map.update!(state, :turns, &Map.put(&1, turn.id, turn))
 
     if turn.detached? do

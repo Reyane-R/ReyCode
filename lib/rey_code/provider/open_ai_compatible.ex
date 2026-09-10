@@ -279,15 +279,21 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp build_body(request, profile, shape) do
-    request_body(profile, request.participant.model, chat_messages(request), shape)
+    request_body(profile, request, shape)
   end
 
   # Capability flags control which optional features appear on the wire; a
   # pinned strict-server profile omits them from the first attempt.
-  defp request_body(profile, model, messages, shape) do
+  defp request_body(profile, request, shape) do
+    names = request.tool_names || ToolRegistry.wire_tool_names()
+
     body =
-      %{"model" => model, "stream" => true, "messages" => messages}
-      |> maybe_put("tools", tool_definitions(), shape.tools?)
+      %{
+        "model" => request.participant.model,
+        "stream" => true,
+        "messages" => chat_messages(request)
+      }
+      |> maybe_put("tools", tool_definitions(names), shape.tools? and names != [])
       |> maybe_put("stream_options", %{"include_usage" => true}, shape.stream_options?)
       |> Jason.encode!()
 
@@ -307,18 +313,21 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp maybe_put(map, key, value, true), do: Map.put(map, key, value)
 
   defp chat_messages(request) do
-    system =
-      [
-        request.system_prompt,
-        Capabilities.prompt_hint(),
-        "You are responding as #{request.participant.name} with the perspective: #{request.participant.perspective}.",
-        "Respond to the latest user request."
-      ]
-      |> Enum.reject(&blank?/1)
-      |> Enum.join("\n\n")
-
-    [%{"role" => "system", "content" => system}] ++
+    [%{"role" => "system", "content" => system_prompt(request)}] ++
       Enum.map(request.messages, &wire_message/1)
+  end
+
+  defp system_prompt(%Request{system_prompt_mode: :frozen, system_prompt: prompt}), do: prompt
+
+  defp system_prompt(%Request{system_prompt_mode: :augmented} = request) do
+    [
+      request.system_prompt,
+      Capabilities.prompt_hint(),
+      "You are responding as #{request.participant.name} with the perspective: #{request.participant.perspective}.",
+      "Respond to the latest user request."
+    ]
+    |> Enum.reject(&blank?/1)
+    |> Enum.join("\n\n")
   end
 
   defp wire_message(%{role: :user, content: content}),
@@ -351,8 +360,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
     }
   end
 
-  defp tool_definitions do
-    Enum.map(ToolRegistry.wire_tool_names(), fn name ->
+  defp tool_definitions(names) do
+    Enum.map(names, fn name ->
       %{
         "type" => "function",
         "function" => %{

@@ -17,6 +17,11 @@ defmodule ReyCode.Capabilities do
     },
     %{command: "/artifacts", description: "Inspect spooled ToolRun outputs", action: :artifacts},
     %{command: "/cancel", description: "Cancel the current task", action: :cancel},
+    %{
+      command: "/changes",
+      description: "Review retained verification evidence and resolve a patch",
+      action: :verified_changes
+    },
     %{command: "/connect", description: "Configure providers", action: :settings},
     %{
       command: "/context",
@@ -87,6 +92,12 @@ defmodule ReyCode.Capabilities do
     %{command: "/tier", description: "Configure Participant model tiers", action: :model_tiers},
     %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
     %{command: "/tree", description: "Navigate the SessionFork tree", action: :session_tree},
+    %{
+      command: "/verify",
+      description: "Set a goal and explicitly authorize host checks",
+      action: :verify,
+      argument: :text
+    },
     %{
       command: "/workspace",
       description: "Show the workspace path",

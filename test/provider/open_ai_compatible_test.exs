@@ -5,6 +5,15 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
   alias ReyCode.OpenAICompatible.FakeTransport
 
+  alias ReyCode.Orchestration.{
+    Invocation,
+    InvocationRequest,
+    Projection,
+    Session,
+    StrategicReview,
+    Turn
+  }
+
   alias ReyCode.Provider.{
     Frame,
     Message,
@@ -143,6 +152,69 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
   end
 
   describe "stream/3" do
+    test "strategy HTTP requests submit the exact frozen system without capabilities or perspective" do
+      session = %Session{id: "room-1", workspace: System.tmp_dir!()}
+      {:ok, packet} = StrategicReview.capture(%Projection{}, session, [], "Review direction")
+      turn = %Turn{id: "turn-1", session_id: session.id, mode: :delegate, strategy_review: packet}
+
+      invocation = %Invocation{
+        id: "inv-1",
+        turn_id: turn.id,
+        session_id: session.id,
+        participant: request().participant,
+        system_prompt: "Must not appear"
+      }
+
+      projection = %Projection{sessions: %{session.id => session}, turns: %{turn.id => turn}}
+
+      scoped =
+        InvocationRequest.build(invocation, projection, %{agent_delay_ms: 0, simulator_opts: []})
+
+      assert scoped.system_prompt_mode == :frozen
+
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"content":"done"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      assert {:ok, _response} = OpenAICompatible.stream(runtime(), scoped, fn _frame -> :ok end)
+      body = Jason.decode!(FakeTransport.last_request().body)
+
+      assert body["messages"] == [
+               %{"role" => "system", "content" => StrategicReview.prompt(packet)}
+             ]
+
+      refute Map.has_key?(body, "tools")
+
+      assert {:ok, _response} =
+               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+      [system | _messages] = Jason.decode!(FakeTransport.last_request().body)["messages"]
+      assert system["content"] =~ request().participant.perspective
+      assert system["content"] =~ ReyCode.Capabilities.prompt_hint()
+    end
+
+    test "advertises only the persisted request tool list, with an empty list disabling tools" do
+      names = ~w(read edit write grep glob list ask_operator update_plan)
+
+      for allowed <- [names, []] do
+        FakeTransport.set_stream([
+          ~s(data: {"choices":[{"delta":{"content":"done"}}]}\n\n),
+          "data: [DONE]\n\n"
+        ])
+
+        scoped = %{request() | tool_names: allowed}
+        assert {:ok, _response} = OpenAICompatible.stream(runtime(), scoped, fn _frame -> :ok end)
+        body = Jason.decode!(FakeTransport.last_request().body)
+
+        if allowed == [] do
+          refute Map.has_key?(body, "tools")
+        else
+          assert Enum.map(body["tools"], & &1["function"]["name"]) == names
+        end
+      end
+    end
+
     test "emits text deltas parsed from the SSE response" do
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"content":"Hello "}}]}\n\n),

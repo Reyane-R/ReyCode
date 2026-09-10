@@ -33,6 +33,7 @@ defmodule ReyCode.TUI.SlashPalette do
     Settings,
     ToolInspector,
     ToolReview,
+    Verification,
     WorkCommand,
     WorkPlan,
     Workspace
@@ -41,6 +42,7 @@ defmodule ReyCode.TUI.SlashPalette do
   @commands Capabilities.commands()
   @commands_by_name Map.new(@commands, &{&1.command, &1})
   @default_command_names [
+    "/verify",
     "/task",
     "/agent",
     "/agents",
@@ -332,8 +334,16 @@ defmodule ReyCode.TUI.SlashPalette do
         {:noreply, accept_file_candidate(term, context, candidate)}
 
       nil ->
-        {:noreply,
-         term |> clear_draft() |> close(Notice.new(:warning, "Unknown command: #{slash.query}"))}
+        case Completion.parse(context) do
+          {:ok, parsed} ->
+            run_parsed(term, parsed)
+
+          {:error, _reason} ->
+            {:noreply,
+             term
+             |> clear_draft()
+             |> close(Notice.new(:warning, "Unknown command: #{slash.query}"))}
+        end
 
       %{kind: :command, suffix: suffix} = candidate when suffix != "" ->
         if slash.query == candidate.insertion,
@@ -371,6 +381,16 @@ defmodule ReyCode.TUI.SlashPalette do
     if Completion.file_mention_complete?(context), do: close(term), else: term
   end
 
+  defp run_parsed(term, %{action: action, argument: argument})
+       when action in [:verify, :verified_changes] do
+    term = if term.assigns.slash, do: cancel(term), else: term
+
+    term =
+      if action == :verify, do: Verification.open(term, argument), else: Verification.review(term)
+
+    {:noreply, term}
+  end
+
   defp run_parsed(term, %{command: command} = parsed)
        when command in ["/export", "/fork", "/rewind"] do
     term |> clear_draft() |> SessionCommand.run(command, parsed.argument)
@@ -382,8 +402,14 @@ defmodule ReyCode.TUI.SlashPalette do
   end
 
   defp run_parsed(term, parsed) do
+    draft =
+      case term.assigns.slash do
+        %{restore_draft: draft} when is_binary(draft) -> draft
+        _ -> ""
+      end
+
     term
-    |> clear_draft()
+    |> State.assign_draft(draft)
     |> run_action(parsed.action, parsed.argument)
   end
 
@@ -482,7 +508,15 @@ defmodule ReyCode.TUI.SlashPalette do
         []
 
       session ->
-        active_command_names(session) ++
+        maybe_command(not is_nil(session.verified_change), "/changes") ++
+          maybe_command(
+            match?(
+              %{phase: phase} when phase not in ["ready", "blocked"],
+              session.verified_change
+            ),
+            "/cancel"
+          ) ++
+          active_command_names(session) ++
           maybe_command(queued_follow_up?(projection, session), "/dequeue") ++
           maybe_command(Projection.delegated_invocations(projection, session_id) != [], "/hub") ++
           maybe_command(

@@ -12,12 +12,14 @@ defmodule ReyCode.AgentLoop do
 
   alias ReyCode.{Agent, ArtifactStore, Failure}
   alias ReyCode.Orchestration.Engine.Client
+  alias ReyCode.Orchestration.Engine.SourceTask
   alias ReyCode.Provider.Catalog
   alias ReyCode.Provider.Response
   alias ReyCode.Tool.{Request, Result}
   alias ReyCode.ToolRegistry
 
   @max_rounds 16
+  @max_tool_wait_ms 3_610_000
 
   @spec run(Agent.state()) :: Agent.step()
   def run(state) do
@@ -137,18 +139,40 @@ defmodule ReyCode.AgentLoop do
   @doc "Executes one ready tool run and records its terminal outcome."
   @spec execute_tool_run(Agent.state(), map()) :: :ok
   def execute_tool_run(state, run) do
-    :ok = Client.tool_run_started(state.engine, state.invocation_id, run.id)
+    case Client.tool_run_started(state.engine, state.invocation_id, run.id) do
+      :ok -> execute_started_tool_run(state, run, ordinary_tool_request(run))
+      {:ok, %Request{} = request} -> execute_started_tool_run(state, run, request)
+      {:error, {:verified_change_denied, _reason}} -> :ok
+      {:error, :strategy_review_tools_forbidden} -> :ok
+      rejected -> raise MatchError, term: rejected
+    end
+  end
 
-    tool_request =
-      Request.new(
-        tool: run.tool,
-        arguments: run.arguments,
-        workspace: run.workspace,
-        roots: run.workspace_roots,
-        request_id: run.id
-      )
+  defp ordinary_tool_request(run) do
+    Request.new(
+      tool: run.tool,
+      arguments: run.arguments,
+      workspace: run.workspace,
+      roots: run.workspace_roots,
+      request_id: run.id
+    )
+  end
 
-    result = ToolRegistry.execute(tool_request, state.config)
+  defp execute_started_tool_run(state, run, tool_request) do
+    config = state.config
+    # Adapters retain their own (usually much shorter) deadlines. The caller's
+    # one-hour envelope never kills a lease while subprocess cleanup is running.
+    result =
+      case SourceTask.run(
+             state.engine,
+             {:invocation, state.invocation_id},
+             fn -> ToolRegistry.execute(tool_request, config) end,
+             @max_tool_wait_ms
+           ) do
+        {:ok, result} -> result
+        {:error, reason} -> Result.error(reason)
+      end
+
     result = ArtifactStore.spool(result, state.config.artifacts, state.invocation_id, run.id)
     record_tool_result(state, run, Result.to_wire(result))
   end

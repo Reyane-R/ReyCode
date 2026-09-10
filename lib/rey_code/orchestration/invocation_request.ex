@@ -2,8 +2,18 @@ defmodule ReyCode.Orchestration.InvocationRequest do
   @moduledoc "Builds the provider request for one durable invocation round."
 
   alias ReyCode.Orchestration.Context
-  alias ReyCode.Orchestration.{Invocation, ModelTier, Projection, Steering}
+
+  alias ReyCode.Orchestration.{
+    Invocation,
+    ModelTier,
+    Projection,
+    Steering,
+    StrategicReview,
+    VerifiedChangeContext
+  }
+
   alias ReyCode.Provider.Request
+  alias ReyCode.Security.VerifiedChangeBoundary
 
   @type request_policy :: %{
           required(:agent_delay_ms) => non_neg_integer() | nil,
@@ -21,9 +31,20 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       session_id: session.id,
       mode: turn.mode,
       participant: invocation.participant,
-      system_prompt: system_prompt(invocation),
+      system_prompt_mode: if(turn.strategy_review, do: :frozen, else: :augmented),
+      system_prompt:
+        if(turn.strategy_review,
+          do: StrategicReview.prompt(turn.strategy_review),
+          else: system_prompt(invocation, session.verified_change)
+        ),
       messages: Context.messages(session, turn, invocation, projection),
-      workspace: invocation.execution_context.workspace || session.workspace,
+      tool_names:
+        if(turn.strategy_review, do: [], else: VerifiedChangeBoundary.tool_names(session)),
+      workspace:
+        if(session.verified_change,
+          do: session.verified_change.workspace,
+          else: invocation.execution_context.workspace || session.workspace
+        ),
       resume_from: invocation.last_frame_sequence,
       round_index: length(invocation.rounds),
       attempt: invocation.attempt,
@@ -39,6 +60,14 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       dependencies: invocation.dependencies,
       steering: Enum.map(invocation.pending_steering, &Steering.to_wire/1)
     }
+  end
+
+  defp system_prompt(invocation, nil), do: system_prompt(invocation)
+
+  defp system_prompt(invocation, record) do
+    [system_prompt(invocation), VerifiedChangeContext.prompt(record)]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join("\n\n")
   end
 
   defp system_prompt(%Invocation{project_instructions: nil} = invocation),

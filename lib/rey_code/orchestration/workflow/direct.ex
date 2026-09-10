@@ -2,9 +2,22 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
   @moduledoc "Plans one invocation for ordinary conversation or explicit delegation."
   use ReyCode.Orchestration.Workflow
 
-  alias ReyCode.Orchestration.{Workflow, WorkingContract}
+  alias ReyCode.Orchestration.{StrategicReview, Workflow, WorkingContract}
 
   @impl true
+  def plan(session, %{strategy_review: packet} = turn, _projection) when not is_nil(packet) do
+    participant = participant!(session, turn.participant_id)
+
+    [
+      %{
+        participant_id: participant.id,
+        phase_index: 0,
+        label: "strategic review",
+        system_prompt: StrategicReview.prompt(packet)
+      }
+    ]
+  end
+
   def plan(session, turn, _projection) do
     participant = participant!(session, turn.participant_id)
     delegated? = not is_nil(turn.participant_id)

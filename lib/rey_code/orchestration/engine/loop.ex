@@ -27,7 +27,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   }
 
   alias ReyCode.Provider.Response
-  alias ReyCode.Security.Workspace
+  alias ReyCode.Security.{VerifiedChangeBoundary, Workspace}
   alias ReyCode.ToolRegistry
 
   @delegation_tool Delegation.tool_name()
@@ -196,6 +196,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
     with {:ok, review, decision} <-
            Validation.tool_run_resolution(invocation, run_id, raw_decision),
+         :ok <- if(decision == :approve, do: strategy_tools(state, invocation), else: :ok),
          {:ok, run} <- resumable_run(invocation, review) do
       {:reply, :ok, resolve_tool_decision(state, invocation, run, decision)}
     else
@@ -209,8 +210,19 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   def tool_run_started(state, invocation_id, run_id) do
     with {:ok, invocation} <- fetch_invocation(state, invocation_id),
          {:ok, run} <- ToolRuns.fetch_for_transition(invocation, run_id, :ready) do
-      entry = EventEntries.tool_run_started(invocation, run)
-      {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
+      session = state.projection.sessions[invocation.session_id]
+
+      case start_request(state, invocation, session, run) do
+        {:error, reason} ->
+          {:reply, {:ok, {:denied, _run}}, next} =
+            reject_existing_run(state, invocation, run, reason)
+
+          {:reply, {:error, start_denial(reason)}, next}
+
+        reply ->
+          entry = EventEntries.tool_run_started(invocation, run)
+          {:reply, reply, Persistence.append_and_apply!(state, [entry])}
+      end
     else
       {:error, reason} -> {:reply, {:error, reason}, state}
     end
@@ -295,10 +307,24 @@ defmodule ReyCode.Orchestration.Engine.Loop do
         {:reply, {:ok, :none}, state}
 
       {:new, call} ->
-        claim_new_run(state, invocation, call)
+        case authorize_call(state, invocation, call) do
+          :ok ->
+            claim_new_run(state, invocation, call)
+
+          {:error, reason} ->
+            reject_delegation(
+              state,
+              invocation,
+              orchestration_run(state, invocation, call),
+              reason
+            )
+        end
 
       {:existing, action, run} ->
-        {:reply, {:ok, {action, run}}, state}
+        case authorize_call(state, invocation, run) do
+          :ok -> {:reply, {:ok, {action, run}}, state}
+          {:error, reason} -> reject_existing_run(state, invocation, run, reason)
+        end
     end
   end
 
@@ -332,7 +358,13 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       workspace_roots: workspace_roots
     }
 
-    authorization = tool_authorization(call, workspace)
+    session = state.projection.sessions[invocation.session_id]
+
+    authorization =
+      if session.verified_change != nil and call.tool == "write",
+        do: :ask,
+        else: tool_authorization(call, workspace)
+
     run = %{run | authorization: authorization}
     entries = tool_run_request_entries(invocation, run, authorization)
     next = Persistence.append_and_apply!(state, entries)
@@ -848,6 +880,17 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp invocation_workspace(state, invocation) do
+    session = state.projection.sessions[invocation.session_id]
+
+    if session.verified_change == nil do
+      ordinary_invocation_workspace(state, invocation)
+    else
+      workspace = session.verified_change.workspace
+      {workspace, [workspace]}
+    end
+  end
+
+  defp ordinary_invocation_workspace(state, invocation) do
     context = invocation.execution_context
     workspace = context.workspace || state.projection.sessions[invocation.session_id].workspace
 
@@ -857,6 +900,51 @@ defmodule ReyCode.Orchestration.Engine.Loop do
         else: context.workspace_roots
 
     {workspace, roots}
+  end
+
+  defp authorize_call(state, invocation, call) do
+    with :ok <- strategy_tools(state, invocation) do
+      VerifiedChangeBoundary.authorize(state.projection.sessions[invocation.session_id], call)
+    end
+  end
+
+  defp start_request(state, invocation, session, run) do
+    with :ok <- strategy_tools(state, invocation) do
+      VerifiedChangeBoundary.start_request(session, run)
+    end
+  end
+
+  defp start_denial(:strategy_review_tools_forbidden), do: :strategy_review_tools_forbidden
+  defp start_denial(reason), do: {:verified_change_denied, reason}
+
+  defp strategy_tools(state, invocation) do
+    case Map.fetch!(state.projection.turns, invocation.turn_id) do
+      %Turn{strategy_review: nil} -> :ok
+      %Turn{} -> {:error, :strategy_review_tools_forbidden}
+    end
+  end
+
+  defp reject_existing_run(state, invocation, run, reason) do
+    entry =
+      EventEntries.tool_run_failed(invocation, run, %{
+        "ok" => false,
+        "error" => if(is_atom(reason), do: Atom.to_string(reason), else: inspect(reason))
+      })
+
+    next =
+      if run.status == :awaiting_approval do
+        DelegationFinalization.finalize_invocation(
+          state,
+          invocation.id,
+          {:failed, tool_denied_error()},
+          [EventEntries.tool_run_approval_resolved(invocation, run, :deny), entry]
+        )
+      else
+        Persistence.append_and_apply!(state, [entry])
+      end
+
+    denied = next.projection.invocations[invocation.id].tool_runs[run.id]
+    {:reply, {:ok, {:denied, denied}}, next}
   end
 
   defp fetch_invocation(state, invocation_id) do

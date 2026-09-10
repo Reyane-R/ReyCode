@@ -89,6 +89,52 @@ Design intent: every cycle either advances, consumes rework budget, or terminate
 
 The total Projection has no retention bound. Before long-lived multi-user operation, choose one of archival, pagination/windowed projection, or explicit memory/database capacity limits.
 
+## Interactive verification
+
+| Resource | Envelope |
+|---|---:|
+| Interactive coordinators | 2 global, 2 per source Workspace, 1 per initiating Session |
+| Registered source-operation leases | 64 |
+| Concurrent patch resolutions | 4, also constrained by the source barrier |
+| Concurrent owner commands | 32 |
+| Check capture | 1 MiB per stdout/stderr stream |
+| Durable check preview | 16 KiB per check, 8 checks per baseline/final batch |
+| Retained binary patch | 2 MiB |
+| Source snapshot | 10,000 files / 128 MiB file bytes |
+| Resolution operation | 60 seconds, individual Git commands at most 10 seconds |
+| Expanded completed ledgers | 128 transient message IDs, reset on Session selection |
+| Patch inspector visible rows | At most 24, reduced for terminal height |
+
+Design sketch: provider networking is unchanged; local inspection adds no network
+requests. Each journal update is one bounded SQLite event transaction; retained
+patch evidence can add up to 2 MiB per update, so repeated verification is bounded
+by eight checks and three repairs, not a constant-size log. CPU and temporary
+Git object work scale with at most 128 MiB of candidate input per snapshot.
+Inspector wrapping scans at most the 2 MiB patch per render/navigation; visible
+rows are bounded separately. These are bounds, not measured latency claims.
+Terminal tests cover streaming scroll preservation and 60x20 control visibility;
+real PTY smoke exercises setup, approval, review, application, and resize.
+
+## Strategic review envelope
+
+An explicit review examines at most 10,000 projected Turns and 100 supplied
+memory records; larger selection inputs return a tagged error. It retains up
+to eight Turns, two Invocations per Turn, two terminal ToolRuns per Invocation
+(at most 32 tool references examined per Invocation), and twenty memories.
+The encoded packet is at most 65,536 bytes. Excerpts start at 1,024 bytes
+(512 for tool previews); deterministic budget reduction discloses clipping and
+omissions. Reports are at most 32,768 bytes with three findings.
+
+Networking adds one ordinary bounded provider Invocation, with existing round,
+token, and timeout limits. No source/artifact filesystem reads or extra model
+calls collect evidence. Storage adds a bounded packet to the queued Turn and
+existing Invocation prompt events; repeated reviews still accumulate durable
+history under the store's existing retention policy. Memory and CPU for capture
+scale with the explicit scan ceiling, selected previews, and bounded encoding
+passes, not tool output or artifact file size. These are envelopes, not latency
+measurements. Tests exercise clipping, encoded size, rejection at scan bounds,
+frozen retries, and real Breeze report rendering at 40 and 120 columns.
+
 ## Performance sketch template
 
 For a data-plane change record:

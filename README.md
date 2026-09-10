@@ -174,8 +174,153 @@ mix rey_code.run --workspace "$PWD" "Review this Workspace"
 
 One-shot mode creates a fresh durable Session, reuses the latest Primary
 Assistant runtime assignment, and prints only the response (or a JSON report).
-It exits nonzero instead of waiting when a tool approval or OperatorQuestion
-needs an interactive owner. `--timeout-ms` defaults to 600000.
+It cancels the Turn and exits nonzero instead of waiting when a tool approval
+or OperatorQuestion needs an interactive owner. `--timeout-ms` defaults to 600000.### Verified changes (opt-in)
+
+Use a clean Git repository root with a configured Primary Assistant profile to
+request one isolated change with harness-owned checks:
+
+**In the terminal UI**, run `/verify` or `/verify <goal>`. Enter the goal and
+one check command per line. Tab moves from Goal to Checks to **Authorize checks
+and start**; only selecting that action starts execution. The setup screen
+discloses host execution and the default limits: ten minutes total, two minutes
+per check (also subject to Bash policy), and one repair. The new Session copies
+the Primary Assistant from the Session that initiated it.
+
+You can leave the screen or navigate to another Session without cancelling the
+work. The header shows the current phase, baseline/current check counts, repair
+usage, and whether an answer or approval is needed. `/tools` and `/answer` resume
+the same waiting work after your decision; they do not start a fresh attempt.
+The total deadline includes decision waits. `/cancel` stops the entire verified
+change, including checks running without an active conversation Turn. Already
+executing host operations drain under their bounded timeouts and cleanup before
+ReyCode releases the execution barrier; a blocked result alone is not evidence
+that host work has stopped.
+
+**For non-interactive use**, the CLI remains available:
+
+```sh
+reycode run --verified \
+  --check "mix test test/session_recovery_test.exs" \
+  --check "mix check" \
+  --max-repair-count 1 \
+  --json \
+  "Fix session recovery and preserve existing history"
+
+# Source checkout equivalent:
+mix rey_code.run --verified --check "mix check" "Fix the reported bug"
+```
+
+The named checks must be valid for your repository. ReyCode freezes the goal,
+ordered commands, starting commit, and limits; runs a baseline in a detached
+worktree; then runs the Primary Assistant and the same checks. Ordinary baseline
+failures remain context. Failed final checks admit only the configured number of
+repair Turns in the same Session. The complete contract is included outside
+compactable history in every model request. An oversized contract fails with an
+explicit context-budget error rather than losing its goal.
+
+### Multi-model workflow (opt-in)
+
+Verified changes can hand routine work to cheaper models. The optional
+`--testing-provider`/`--testing-model` and `--release-provider`/`--release-model`
+pairs freeze report-only stage runtimes before the run starts:
+
+```sh
+reycode run --verified \
+  --check "mix test test/session_recovery_test.exs" \
+  --max-repair-count 1 \
+  --testing-provider deepseek --testing-model deepseek-chat \
+  --release-provider ollama --release-model llama3 \
+  --json \
+  "Fix session recovery and preserve existing history"
+```
+
+- **Main** (the Primary Assistant) implements and performs every repair.
+- **Testing** sees the immutable failed-check evidence after a failed final
+  check and returns a bounded advisory report that Main's repair prompt
+  includes. If the stage fails or times out, the report records
+  `outcome: unavailable` and repair proceeds on the raw check evidence.
+- **Release** drafts commit subject/body and PR title/body after checks pass.
+  The draft is stored in the retained evidence (`metadata`); readiness never
+  depends on it, and nothing is committed or pushed automatically.
+
+Stage workers run with zero tools: they cannot edit files, run commands, or
+delegate. Failed checks are decided by exit codes alone — a stage can never
+turn a failure into a pass. Unresolvable stage providers fail the change
+closed before any check runs. Every stage report is retained with its Turn ID
+in the JSON report and Session exports.
+
+**`--check` authorizes host shell execution**, including repository scripts and
+any side effects they perform. A worktree is edit isolation, not an OS sandbox.
+The Bash environment allowlist is honored and its values are frozen for the
+run, not persisted as configuration. Do not place credentials in prompts,
+commands, or check output. The assistant itself cannot run shell, Git, network,
+debugger, LSP, background-process, memory, or delegation tools in this mode.
+Its file tools are confined to the isolated worktree. Git metadata, ignore and
+attribute rules, ignored untracked files, and hardlinked mutation targets are
+protected. Creating files with `write` still requires approval. Interactive
+verification waits for you; the headless command cancels and reports `blocked`
+when approval or an operator answer is needed. Neither surface automatically
+grants broader permission. Restart does not resume an interrupted coordinator.
+
+`ready` means every final command exited zero against the retained candidate
+snapshot, and the source was still at its clean starting revision. It does not
+mean the patch was applied, accepted, independently graded, or proved correct
+for every requirement. Check-induced candidate changes, source changes,
+timeouts, capture failures, exhausted repairs, and interrupted runs cannot
+produce `ready`. Restart records unfinished verified changes as `blocked`
+without replaying their tools.
+
+JSON output includes the full retained binary Git patch, its base-bound SHA-256
+digest, baseline/final results, and Session/worktree identifiers. Human output
+shows authoritative verification details separately from the assistant's
+response. Both success and failure retain the worktree for inspection; ReyCode
+never automatically applies it to the source. The durable patch and evidence
+also appear in Session Markdown/HTML exports:
+
+```sh
+mix rey_code.export --session SESSION_ID --output verification.md
+# After inspection and after all execution has stopped:
+git -C SOURCE_WORKSPACE worktree remove --force ISOLATED_WORKSPACE
+```
+
+Use the actual identifiers and paths from the report. Removing the worktree
+does not remove its retained evidence. Do not regenerate a patch from a
+subsequently modified worktree and assume the previous verification still applies.
+
+**Review in the terminal with `/changes`.** Keys `1`-`4` switch between Summary,
+Files, Patch, and Checks; arrows and PageUp/PageDown scroll, `n`/`p` move between
+files, and `]`/`[` move between hunks. No decision is selected when review opens.
+`a` selects Apply, `d` selects Discard, and Enter confirms the selection.
+Apply consumes the exact retained patch, not current worktree contents, and
+requires the source to remain at the original clean revision. Discard retains
+both evidence and the worktree; it does not delete files implicitly.
+
+`Applied` is a separate durable resolution, not a replacement for `Ready`.
+Checks describe the isolated candidate and are **not rerun after integration**.
+While application is pending or uncertain, ReyCode conservatively blocks new
+Turns and owner commands across Sessions because tool roots can overlap. Apply
+also waits for live, queued, approval-paused, and draining execution to finish.
+Independently authorized background processes and external writers are not
+sandboxed or transactionally locked by this barrier.
+
+Interrupted application becomes `Indeterminate`, never an automatic retry.
+Select `r` then Enter to reconcile: ReyCode compares the actual source snapshot
+with the retained patch and its starting revision. Unknown or partial state
+remains uncertain. To request another change, `e` opens a new editable goal and
+the same checks. Authorization starts a **fresh candidate from the current clean
+source**, with the same Primary profile; it does not reuse or mutate the old patch.
+
+Limits: 1-8 check commands of at most 4096 bytes each; 0-3 repairs (default 1);
+total timeout at most one hour (default 10 minutes); per-check timeout at most
+10 minutes (default 2 minutes, also capped by the configured Bash timeout).
+Command termination/reaping has the Bash adapter's additional bounded grace.
+Capture is capped at 1 MiB per stream; overflow blocks. Durable output previews
+are capped at 16 KiB and explicitly marked when shortened. The candidate is
+limited to 10,000 files, 128 MiB of file bytes, and a 2 MiB patch. Ignored files
+and empty directories are outside the Git snapshot; repositories using Git
+attributes or submodules are rejected by this initial implementation. Verified
+prompts are capped at 40,000 bytes, with a 70,000-byte encoded goal/commands cap.
 
 Startup opens a clean session home scoped to the canonical current directory.
 ReyCode reuses the newest Session from that Workspace as the source profile; if
@@ -208,6 +353,8 @@ content digest and exact source paths so restart behavior cannot drift.
 - `↑` / `↓`: recall prior Operator prompts while the draft is one line; multiline drafts retain cursor navigation
 - `/` or `Ctrl+P`: open a compact command palette; typing searches the full registry
 - `/help`: open the deterministic capability reference without invoking a provider
+- `/verify [goal]`: authorize and start an interactive isolated verified change
+- `/changes`: inspect retained patch/check evidence and resolve Apply/Discard
 - `/new` or `Ctrl+N`: start a clean Session
 - `/resume`: pick and reopen a previous Session
 - `/fork`: branch the current Session at its latest durable sequence
@@ -215,6 +362,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/tree` or `Ctrl+B`: navigate the durable SessionFork tree; `F` forks the selected node
 - `/export`: write a deterministic Markdown Session export inside `.reycode/exports`
 - `/advise [brief]`: run an explicit review through the configured Advisor Participant
+- `/advise strategy [focus]`: review recent Workspace work for evidence-backed strategic alternatives
 - `/hub`: inspect and control delegated child Invocations; press `M` on an `awaits merge` child to Apply or Discard its isolated patch
 - `/runs` or `Ctrl+O`: inspect durable ToolRun ownership, arguments, authorization, output, and errors
 - `/home`: return to the Session home
@@ -245,7 +393,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `@file` / `#file`: attach a file's content to the next message (workspace
   files only, 512 KB per file, 2 MB total). Typing `@` or `#` opens bounded
   recursive fuzzy file completion; paths containing spaces are quoted.
-- `Tab`: move between the prompt and current transcript
+- `Tab`: cycle through the transcript, visible action controls, and prompt
 - `Ctrl+A`: open the newest waiting OperatorQuestion
 - `Ctrl+B`: open Session Tree
 - `Ctrl+O`: open ToolRun Inspector
@@ -255,6 +403,10 @@ content digest and exact source paths so restart behavior cannot drift.
 - `j` / `k`: scroll the focused transcript
 - Mouse wheel: scroll the transcript under the pointer without changing the draft
 - `Ctrl+Q`: exit
+
+If your terminal consumes Ctrl+Q for software flow control, use `/quit` or run
+`stty -ixon` before launching ReyCode. This is a terminal setting, not a model
+or Session problem.
 
 Keybindings are named actions resolved at startup from the bounded JSON file
 shown by `/hotkeys`. Override its location with
@@ -294,7 +446,15 @@ to one recognizable row such as `⠹ · Reading · lib/foo.ex`,
 `Running · mix test`, or `Delegating · Luna`. The ledger keeps the eight newest
 reasoning lines visible and reports older entries as `+k earlier thoughts`.
 
-Completed `edit` and `write` ToolRuns render bounded exact before/after
+Successful completed execution collapses to a tool-action count and a **Show
+details** control. Clicking it, or pressing Enter/Space while it is focused,
+reveals the execution ledger; active and failed work remains visible. Scrolling
+away from the bottom suspends automatic following; End returns to the latest
+output. Expansion is transient and clears when selecting another Session.
+The composer grows with multiline drafts within a bounded height and labels
+submission as Send or Queue according to ordinary Session scheduling.
+
+Expanded `edit` and `write` ToolRuns render bounded exact before/after
 fragments directly below their activity row. The full ToolRun remains available
 through `/runs`; presentation-only diff metadata is never sent back to the
 provider. Mermaid `flowchart` and `sequenceDiagram` fences render as bounded
@@ -370,6 +530,37 @@ to switch panels. `T` toggles flat/tree lineage, `M` reviews a pending patch,
 and `C` cancels the selected child. `/advise` queues an explicit review through
 the Task Participant named `Advisor` and never enables background review
 implicitly.
+
+### Strategic review
+
+Create a Task Participant named `Advisor` with `/agent`, configure its model,
+then run `/advise strategy` or `/advise strategy form handling`. The reserved
+`strategy` subcommand reviews up to eight terminal task Turns across Sessions
+in the current exact Workspace, ordered by task input sequence rather than
+completion time. Failed and cancelled work can be evidence too. Ordinary
+`/advise` and other custom briefs retain their existing behavior.
+
+The review freezes task requests, selected Invocation reports and terminal
+ToolRun previews, plus up to twenty project-memory entries. Its 64 KiB packet
+discloses omitted and clipped content; external artifacts are not fetched.
+Memory is captured separately from conversation history, not as an atomic
+cross-store snapshot. Selection refuses stores exceeding 10,000 Turn records
+rather than silently scanning an arbitrary subset. Prior strategic reviews
+and identifiable verified report stages are excluded; historical unclassified
+advisory text may still appear in ordinary task history.
+
+Reports contain at most three findings with observations, causal hypotheses,
+concrete implementation alternatives, tradeoffs, small experiments, uncertainty,
+and packet-local citations. Recurrence requires evidence from two distinct
+Turns. Citation checks establish provenance, not correctness; insufficient
+evidence is a valid result.
+
+This mode enforces zero tools, including delegation and memory writes. It does
+not change files, launch experiments, or approve decisions. Successful reports
+render in the transcript; invalid reports remain failed output. Retry reuses
+the original packet, while a new command captures fresh evidence. Steering a
+frozen review is rejected: cancel it and submit another review instead. Run
+this command from an ordinary Session, not a verified-change Session.
 
 On macOS, event data is stored transactionally in
 `~/Library/Application Support/ReyCode/rey_code.sqlite3`. On first launch, a

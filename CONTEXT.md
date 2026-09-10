@@ -54,6 +54,26 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ContextSummary** — Bounded extractive conversation value recorded at a ContextBoundary.
 
+**VerifiedChange** — Opt-in, Session-owned change request with a frozen goal, ordered Owner-authorized check commands, repair limits, isolated candidate, and retained verification evidence; its identity refers to that one request rather than any individual implementation attempt.
+
+**VerificationCheck** — Recorded execution of one frozen check command against an identified candidate snapshot, including its output, exit code, and any execution uncertainty; a nonzero exit is a check failure, not evidence that execution was impossible.
+
+**VerificationBaseline** — Ordered checks executed against the starting candidate before implementation; ordinary failures remain context for the change rather than automatically blocking it.
+
+**VerifiedChange readiness** — Terminal review eligibility when every final check passed against the retained base-bound patch and the source was still at its clean starting revision; readiness is not acceptance, permission to apply, or proof of every requirement. A blocked change has no such eligibility. Nonterminal phases are preparing, baseline, implementing, verifying, analyzing, repairing, and releasing.
+
+**VerifiedWorkflow** — Frozen optional map on a VerifiedChange assigning report-only stage runtimes: `"testing"` and/or `"release"`, each a provider/model pair frozen before baseline execution. Main (the Primary Participant) always performs implementation and repair; a workflow never substitutes a runtime automatically.
+
+**VerifiedStageReport** — Bounded advisory outcome of one stage Invocation (`analysis` for Testing, `metadata` for Release): outcome (completed or unavailable), bounded response text, owning Turn ID, and nullable error. It never alters check evidence, repair admission, or readiness.
+
+**VerifiedStageTurn** — Coordinator-owned delegate Turn addressed to one report-only stage participant during the analyzing or releasing phase. It is posted only by the verified-change coordinator through the Engine stage command and runs with zero tools.
+
+**VerifiedChangeResolution** — Owner decision addressed to one VerifiedChange and its retained patch digest, with a separate application lifecycle: requested, applied, discarded, failed, or indeterminate; it does not alter the original verification evidence.
+
+**Reconciliation** — Explicit inspection of an indeterminate application against the retained candidate and its clean starting revision, without replaying the application; partial or unavailable state remains indeterminate.
+
+**Draining execution** — An already-started external operation still completing under its bounds after its coordinator or caller has stopped; terminal conversation or verification state alone does not establish that its side effects have ceased.
+
 ## Provider execution
 
 **Invocation** — One durable provider execution for a Participant or Squad Seat within a Turn.
@@ -109,6 +129,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 **ProjectMemory** — Append-only SQLite facts, lessons, decisions, and assumptions scoped to one Workspace. Decision and assumption values preserve rationale, alternatives, and concrete evidence; the Operator browses current and invalidated entries through `/decisions`. Implemented by `ReyCode.Memory.Store` (append-only store) and `ReyCode.Tool.Memory`, browsed through `ReyCode.TUI.Decisions` (`/decisions`).
 
 **Advisor** — Opt-in Task Participant used for explicit advisory review; its output is a Recommendation, not an authoritative Resolution.
+
+**StrategicReview** — Frozen, Workspace-scoped evidence packet owned by one advisory Turn, containing selected prior task evidence and a separately captured ProjectMemory snapshot. Its findings propose alternatives and experiments; they grant no execution or decision authority. A TurnRetry preserves the original packet.
 
 **AgentHub** — TUI projection and control surface for delegated child Invocations.
 
@@ -168,6 +190,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 - A Workspace contains zero or more Sessions.
 - A Session owns ordered Messages and Turns.
+- A Session owns at most one VerifiedChange; its implementation and bounded repair Turns share one Primary Participant, while its check evidence and terminal patch survive independently of the temporary worktree. Report-only stage Turns are addressed to workflow-created Task Participants and carry no authority over verification outcomes.
+- A VerifiedChange has at most one VerifiedChangeResolution; requesting revisions creates a new change rather than reopening terminal evidence. Waiting for tool approval or an OperatorQuestion is not terminal verification failure in an interactive run.
 - A Session has exactly one Primary Participant, zero or more Task Participants, and may have Squad Seats.
 - An ordinary Turn invokes only the Session's Primary Participant.
 - A Delegation invokes exactly one Task Participant.

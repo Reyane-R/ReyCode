@@ -1,6 +1,240 @@
 defmodule ReyCode.TUI.RenderComponentsTest do
   use ExUnit.Case, async: false
 
+  alias ReyCode.TUI.State
+
+  defmodule ActiveSessionView do
+    use Breeze.View
+    @impl true
+    def mount(opts, term) do
+      {:ok, term} = ReyCode.TUI.mount(opts, term)
+      {:ok, assign(term, home: false)}
+    end
+
+    @impl true
+    def render(assigns), do: ReyCode.TUI.render(assigns)
+    @impl true
+    def handle_event(event, payload, term), do: ReyCode.TUI.handle_event(event, payload, term)
+    @impl true
+    def handle_info(message, term), do: ReyCode.TUI.handle_info(message, term)
+  end
+
+  test "home verification action is mouse-operable while Tab keeps the prompt focus policy" do
+    session =
+      Breeze.Test.start!(ReyCode.TUI,
+        size: {80, 24},
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    type(session, "keep this draft")
+    id = Breeze.Test.metadata(session).assigns.selected_session_id
+    Breeze.Test.input(session, "Tab")
+    assert Breeze.Test.metadata(session).focused == "prompt"
+    mouse_action(session, "/verify  Verify an isolated change", "release")
+    assert Breeze.Test.metadata(session).assigns.modal == nil
+    mouse_action(session, "/verify  Verify an isolated change")
+    assert Breeze.Test.metadata(session).assigns.modal == :verification
+    assert Breeze.Test.metadata(session).focused == "verify-goal"
+    assert Breeze.Test.metadata(session).assigns.verification.goal == "keep this draft"
+    Breeze.Test.input(session, "Escape")
+    Breeze.Test.input(session, "Tab")
+    assert Breeze.Test.metadata(session).focused == "prompt"
+    assert Breeze.Test.metadata(session).assigns.drafts[id] == "keep this draft"
+  end
+
+  test "persistent verified summary does not steal focus and separates Ready from Applied" do
+    session =
+      Breeze.Test.start!(ActiveSessionView,
+        size: {60, 24},
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    Breeze.Test.render!(session)
+    type(session, "scratch")
+    metadata = Breeze.Test.metadata(session)
+    id = metadata.assigns.selected_session_id
+    projection = metadata.assigns.projection
+
+    change = %ReyCode.Orchestration.VerifiedChange{
+      id: "change-summary",
+      phase: "ready",
+      commands: ["true"],
+      baseline: [],
+      checks: [],
+      repair_count: 0,
+      max_repair_count: 1,
+      patch: "",
+      patch_hash: "hash",
+      prompt: "goal",
+      source_workspace: "/source",
+      workspace: "/candidate",
+      timeout_ms: 600_000,
+      check_timeout_ms: 120_000
+    }
+
+    message = %ReyCode.Orchestration.Message{
+      id: "history",
+      session_id: id,
+      role: :user,
+      status: :completed,
+      body: Enum.map_join(1..80, "\n\n", &"History line #{&1}"),
+      created_at: "2026-09-08T10:00:00Z",
+      created_sequence: projection.sequence
+    }
+
+    record = %{projection.sessions[id] | verified_change: change, message_order: [message.id]}
+
+    projection = %{
+      projection
+      | sequence: projection.sequence + 1,
+        sessions: Map.put(projection.sessions, id, record),
+        messages: Map.put(projection.messages, message.id, message)
+    }
+
+    Breeze.Test.info(session, {:projection_snapshot, projection})
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Ready | baseline"
+    assert screen =~ "repairs 0/1"
+    assert screen =~ "Source not applied by ReyCode"
+    assert Breeze.Test.metadata(session).focused == "prompt"
+    assert Breeze.Test.metadata(session).assigns.drafts[id] == "scratch"
+
+    Breeze.Test.input(session, "Tab")
+    timeline_id = State.timeline_id(id)
+    assert Breeze.Test.metadata(session).focused == timeline_id
+    Breeze.Test.input(session, "Home")
+    Breeze.Test.input(session, "PageDown")
+    before_panel = session |> Breeze.Test.render!() |> plain()
+    before_scroll = Map.fetch!(Breeze.Test.metadata(session).implicit_state, timeline_id)
+    Breeze.Test.event(session, "verification_review", %{})
+    Breeze.Test.input(session, "3")
+    Breeze.Test.input(session, "a")
+    Breeze.Test.input(session, "e")
+    Breeze.Test.render!(session)
+    Breeze.Test.input(session, "Escape")
+    assert Breeze.Test.metadata(session).assigns.verification.tab == :patch
+    assert Breeze.Test.metadata(session).assigns.verification.decision == nil
+    Breeze.Test.input(session, "Escape")
+    assert session |> Breeze.Test.render!() |> plain() == before_panel
+    assert Breeze.Test.metadata(session).focused == timeline_id
+    assert Map.fetch!(Breeze.Test.metadata(session).implicit_state, timeline_id) == before_scroll
+    mouse_action(session, "/changes Review")
+    assert Breeze.Test.render!(session) =~ "Verified change: Ready"
+    Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.verification.decision == nil
+    Breeze.Test.input(session, "Escape")
+    assert Breeze.Test.metadata(session).assigns.drafts[id] == "scratch"
+
+    resolution = %ReyCode.Orchestration.VerifiedChangeResolution{
+      status: :applied,
+      decision: :apply
+    }
+
+    record = %{record | verified_change_resolution: resolution}
+
+    projection = %{
+      projection
+      | sequence: projection.sequence + 1,
+        sessions: Map.put(projection.sessions, id, record)
+    }
+
+    Breeze.Test.info(session, {:projection_snapshot, projection})
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "Applied | baseline"
+    assert screen =~ "not rerun after integration"
+    refute screen =~ "Source not applied by ReyCode"
+
+    mouse_action(session, "/tools")
+    assert Breeze.Test.metadata(session).assigns.notice.message =~ "No tool request"
+    mouse_action(session, "/answer")
+    assert Breeze.Test.metadata(session).assigns.notice.message =~ "No Operator question"
+
+    record = %{
+      record
+      | verified_change: %{change | phase: "baseline"},
+        verified_change_resolution: nil
+    }
+
+    projection = %{
+      projection
+      | sequence: projection.sequence + 1,
+        sessions: Map.put(projection.sessions, id, record)
+    }
+
+    Breeze.Test.info(session, {:projection_snapshot, projection})
+    mouse_action(session, "/cancel Stop")
+    assert Breeze.Test.metadata(session).assigns.modal == :cancel
+    Breeze.Test.input(session, "Escape")
+    assert Breeze.Test.metadata(session).assigns.modal == nil
+    assert Breeze.Test.metadata(session).assigns.drafts[id] == "scratch"
+    Breeze.Test.input(session, "Tab")
+    assert Breeze.Test.metadata(session).focused == timeline_id
+
+    for target <- [
+          "verification-review",
+          "verification-cancel",
+          "verification-tools",
+          "verification-question",
+          "prompt"
+        ] do
+      Breeze.Test.input(session, "Tab")
+      assert Breeze.Test.metadata(session).focused == target
+    end
+  end
+
+  test "multiline composer survives palette panels and shows Queue for a pending FollowUp" do
+    session =
+      Breeze.Test.start!(ReyCode.TUI,
+        size: {80, 24},
+        theme: ReyCode.Theme.default(),
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    Breeze.Test.render!(session)
+    type(session, "first line")
+    Breeze.Test.input(session, %{"shiftKey" => true, "key" => "Enter"})
+    type(session, "second line")
+    assert Breeze.Test.render!(session) =~ "Enter Send"
+    Breeze.Test.input(session, ctrl("p"))
+    type(session, "hotkeys")
+    Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.modal == :hotkeys
+    Breeze.Test.input(session, "Escape")
+    metadata = Breeze.Test.metadata(session)
+    id = metadata.assigns.selected_session_id
+    assert metadata.focused == "prompt"
+    assert metadata.assigns.drafts[id] == "first line\nsecond line"
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "first line"
+    assert screen =~ "second line"
+
+    projection = metadata.assigns.projection
+
+    queued = %ReyCode.Orchestration.Turn{
+      id: "queued-composer",
+      session_id: id,
+      status: :queued,
+      input_kind: :follow_up
+    }
+
+    record = %{projection.sessions[id] | queued_turn_ids: [queued.id]}
+
+    projection = %{
+      projection
+      | sequence: projection.sequence + 1,
+        sessions: Map.put(projection.sessions, id, record),
+        turns: Map.put(projection.turns, queued.id, queued)
+    }
+
+    Breeze.Test.info(session, {:projection_snapshot, projection})
+    screen = Breeze.Test.render!(session)
+    assert screen =~ "Enter Queue"
+    assert screen =~ "/steer"
+  end
+
   test "composer events and new-session shortcut preserve prompt focus" do
     session =
       Breeze.Test.start!(ReyCode.TUI,
@@ -300,6 +534,23 @@ defmodule ReyCode.TUI.RenderComponentsTest do
   end
 
   defp ctrl(key), do: %{"ctrlKey" => true, "key" => key}
+
+  defp mouse_action(session, label, action \\ "press") do
+    {line, y} =
+      session
+      |> Breeze.Test.render!()
+      |> plain()
+      |> String.split("\n")
+      |> Enum.with_index()
+      |> Enum.find(fn {line, _y} -> String.contains?(line, label) end)
+
+    {index, _length} = :binary.match(line, label)
+    x = line |> binary_part(0, index) |> String.length()
+
+    Breeze.Test.input(session, %{
+      "mouse" => %{"button" => "left", "action" => action, "x" => x, "y" => y}
+    })
+  end
 
   defp plain(screen), do: Regex.replace(~r/\e\[[0-9;]*m/, screen, "")
 

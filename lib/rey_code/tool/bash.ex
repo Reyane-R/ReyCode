@@ -9,6 +9,9 @@ defmodule ReyCode.Tool.Bash do
   and kills its process group, and the executor escalates to SIGKILL. Stdout
   and stderr are captured separately under byte caps, and every result reports
   the exit code, wall time, timeout, and truncation state.
+
+  The optional `:environment` map replaces the ambient environment source before
+  allowlisting. Successful output remains stdout; nonempty stderr is metadata.
   """
 
   alias ReyCode.Provider.TextBuffer
@@ -29,7 +32,8 @@ defmodule ReyCode.Tool.Bash do
     with {:ok, command} <- Support.require_arg(arguments, :command),
          :ok <- Support.require_present(command, :missing_command),
          {:ok, cwd} <- cwd(arguments, request) do
-      execute(command, cwd, policy, limits(policy))
+      environment = Keyword.get_lazy(opts, :environment, &System.get_env/0)
+      execute(command, cwd, environment_opts(policy, environment), limits(policy))
     else
       {:error, {:missing_argument, :command}} -> Result.error(:missing_command)
       {:error, reason} -> Result.error(reason)
@@ -42,9 +46,9 @@ defmodule ReyCode.Tool.Bash do
     end
   end
 
-  defp execute(command, cwd, policy, limits) do
+  defp execute(command, cwd, environment_opts, limits) do
     {wrapper, wrapped_args, env} =
-      Environment.wrap("bash", ["-c", command], environment_opts(policy))
+      Environment.wrap("bash", ["-c", command], environment_opts)
 
     started_at = System.monotonic_time(:millisecond)
 
@@ -57,9 +61,9 @@ defmodule ReyCode.Tool.Bash do
     end
   end
 
-  defp environment_opts(policy) do
+  defp environment_opts(policy, environment) when is_map(environment) do
     [
-      source: System.get_env(),
+      source: environment,
       additional_names: policy.env_allowlist,
       cpu_seconds: policy.cpu_seconds,
       open_files: policy.open_files
@@ -189,6 +193,12 @@ defmodule ReyCode.Tool.Bash do
       }
 
     cond do
+      not String.valid?(output) or not String.valid?(stderr) ->
+        Result.error(:invalid_utf8_output,
+          metadata: Map.put(metadata, "invalid_utf8", true),
+          truncated: capture.truncated?
+        )
+
       timed_out? ->
         Result.error(
           %{"exit_code" => status, "output" => output, "stderr" => stderr, "reason" => "timeout"},
@@ -197,6 +207,7 @@ defmodule ReyCode.Tool.Bash do
         )
 
       status == 0 ->
+        metadata = if stderr == "", do: metadata, else: Map.put(metadata, "stderr", stderr)
         Result.ok(output, metadata: metadata, truncated: capture.truncated?)
 
       true ->

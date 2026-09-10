@@ -2,6 +2,7 @@ defmodule ReyCode.Event do
   @moduledoc "A versioned durable fact stored in global sequence order."
 
   alias ReyCode.{Failure, JSON}
+  alias ReyCode.Orchestration.{StrategicReview, Turn, VerifiedChange, VerifiedChangeResolution}
 
   @schema_version 2
 
@@ -44,6 +45,8 @@ defmodule ReyCode.Event do
         }
 
   @types ~w(
+    verified_change_recorded
+    verified_change_resolution_recorded
     room_created session_forked context_compacted participant_added participant_configured message_posted turn_queued turn_started assistant_message_opened
     invocation_started invocation_steering_requested provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
     turn_completed snapshot_recorded squad_configured squad_stage_entered squad_decision_recorded
@@ -117,6 +120,14 @@ defmodule ReyCode.Event do
   }
 
   @contract %{
+    verified_change_resolution_recorded: %{
+      required: %{"room_id" => :id, "record" => :wire_map},
+      optional: %{}
+    },
+    verified_change_recorded: %{
+      required: %{"room_id" => :id, "record" => :wire_map},
+      optional: %{}
+    },
     room_created: %{
       required: %{
         "room_id" => :id,
@@ -203,6 +214,7 @@ defmodule ReyCode.Event do
         "input_kind" => {:one_of, @input_kinds},
         "source_invocation_id" => :id,
         "retry_of_turn_id" => :nullable_text,
+        "strategy_review" => :wire_map,
         "task" => :text,
         "detached" => :boolean
       }
@@ -668,6 +680,34 @@ defmodule ReyCode.Event do
   end
 
   # Sibling-dependent rules that single-field rules cannot express.
+  defp cross_field_rules(:turn_queued, %{"strategy_review" => packet} = data) do
+    packet = StrategicReview.from_map(packet)
+
+    if data["mode"] == "delegate" and is_binary(data["participant_id"]) and
+         Turn.strategy_review_bound?(packet, data["room_id"], data["context_through_sequence"]),
+       do: :ok,
+       else: {:error, "invalid strategic review turn"}
+  rescue
+    ArgumentError -> {:error, "invalid strategic review packet"}
+  end
+
+  defp cross_field_rules(:verified_change_resolution_recorded, %{"record" => record}) do
+    case VerifiedChangeResolution.from_wire(record) do
+      {:ok, _record} ->
+        :ok
+
+      {:error, _reason} ->
+        {:error, "invalid verified_change_resolution_recorded event: invalid field \"record\""}
+    end
+  end
+
+  defp cross_field_rules(:verified_change_recorded, %{"record" => record}) do
+    case VerifiedChange.from_wire(record) do
+      {:ok, _record} -> :ok
+      {:error, :invalid_verified_change} -> {:error, "invalid verified-change record"}
+    end
+  end
+
   defp cross_field_rules(:provider_frame_recorded, %{"kind" => "text_delta", "data" => data}) do
     if is_map(data) and is_binary(Map.get(data, "text")) do
       :ok

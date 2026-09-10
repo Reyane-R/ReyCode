@@ -129,6 +129,43 @@ defmodule ReyCode.OneShotTest do
     assert report.error =~ "not configured"
   end
 
+  test "open copies the newest matching workspace primary tier, not an unrelated latest session" do
+    engine = start_unconfigured_engine()
+    root = Path.join(System.tmp_dir!(), "one-shot-profiles-#{System.unique_integer([:positive])}")
+    source = Path.join(root, "source")
+    target = Path.join(root, "target")
+    other = Path.join(root, "other")
+    Enum.each([source, target, other], &File.mkdir_p!/1)
+    on_exit(fn -> File.rm_rf!(root) end)
+    {:ok, source_id} = Engine.create_blank_session("source", source, engine)
+    source_session = Engine.snapshot(engine).sessions[source_id]
+    source_primary = Enum.find(source_session.participants, &(&1.kind == :primary))
+    :ok = Engine.configure_participant_tier(source_id, source_primary.id, :smol, engine)
+    {:ok, _other_id} = Engine.create_blank_session("other", other, engine)
+
+    assert {:ok, target_id} =
+             OneShot.open(
+               %{prompt: "new", workspace: target, source_workspace: source_session.workspace},
+               engine
+             )
+
+    target_session = Engine.snapshot(engine).sessions[target_id]
+    assert [%{kind: :primary, model_tier: :smol}] = target_session.participants
+  end
+
+  test "run_turn validates before posting and preserves the existing session identity" do
+    {:ok, session_id} = Engine.create_blank_session("OneShot existing", File.cwd!())
+
+    assert {:error, %{session_id: ^session_id, turn_id: nil}} =
+             OneShot.run_turn(session_id, "do not run", 0)
+
+    assert {:ok, first} = OneShot.run_turn(session_id, "first", 5000)
+    assert {:ok, second} = OneShot.run_turn(session_id, "second", 5000)
+    assert first.session_id == session_id
+    assert second.session_id == session_id
+    assert first.turn_id != second.turn_id
+  end
+
   defp start_unconfigured_engine do
     suffix = System.unique_integer([:positive])
     agent_registry = :"one_shot_agent_#{suffix}"

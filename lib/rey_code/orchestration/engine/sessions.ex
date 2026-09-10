@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.Engine.Sessions do
   @moduledoc "Handles session creation and runtime configuration commands for the Engine."
 
-  alias ReyCode.Orchestration.{EventEntries, ModelTier, Projection, Validation}
+  alias ReyCode.Orchestration.{EventEntries, ModelTier, Projection, Validation, VerifiedChange}
 
   alias ReyCode.Orchestration.Engine.{
     Configuration,
@@ -13,6 +13,25 @@ defmodule ReyCode.Orchestration.Engine.Sessions do
   @type response :: {:reply, term(), map()}
   @max_task_participants_per_session 32
   @workspace_session_title "ReyCode"
+
+  @doc "Validates and appends one verified-change record against the current Session."
+  @spec record_verified_change(map(), term(), term()) :: response()
+  def record_verified_change(state, session_id, wire) do
+    session = Map.get(state.projection.sessions, session_id)
+
+    with :ok <- session_source(session),
+         {:ok, record} <- VerifiedChange.from_wire(wire),
+         :ok <- VerifiedChange.transition(session.verified_change, record) do
+      entry =
+        {:verified_change_recorded,
+         %{"room_id" => session_id, "record" => VerifiedChange.to_wire(record)},
+         [aggregate_type: :room, aggregate_id: session_id, room_id: session_id]}
+
+      {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
 
   @doc "Returns the newest Session for a canonical Workspace or creates its blank source Session."
   @spec ensure_workspace(map(), term()) :: response()

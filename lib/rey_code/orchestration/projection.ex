@@ -34,13 +34,19 @@ defmodule ReyCode.Orchestration.Projection do
     projection = normalize_legacy_keys(projection)
     projection = struct!(__MODULE__, Map.take(projection, @fields))
 
-    %{
+    projection = %{
       projection
       | sessions: normalize_records(projection.sessions, &Session.from_map/1),
         messages: normalize_records(projection.messages, &Message.from_map/1),
         turns: normalize_records(projection.turns, &Turn.from_map/1),
         invocations: normalize_records(projection.invocations, &Invocation.from_map/1)
     }
+
+    Enum.each(projection.turns, fn {_id, turn} ->
+      Turn.validate_strategy_review!(turn, projection.sessions[turn.session_id])
+    end)
+
+    projection
   end
 
   @doc "Returns the newest Session ID rooted at an exact canonical Workspace."

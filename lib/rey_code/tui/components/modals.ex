@@ -31,6 +31,7 @@ defmodule ReyCode.TUI.Components.Modals do
     SlashPalette,
     ToolInspector,
     ToolReview,
+    Verification,
     WorkPlan,
     Workspace
   }
@@ -38,6 +39,7 @@ defmodule ReyCode.TUI.Components.Modals do
   alias ReyCode.TUI.Components.SettingsModal
 
   @registry %{
+    verification: Verification,
     artifacts: Artifacts,
     agent_hub: AgentHub,
     agent_profile: AgentProfile,
@@ -79,6 +81,7 @@ defmodule ReyCode.TUI.Components.Modals do
   end
 
   defp dispatch(:artifacts, assigns), do: Artifacts.modal(assigns)
+  defp dispatch(:verification, assigns), do: Verification.modal(assigns)
 
   defp dispatch(:agent_hub, assigns), do: AgentHub.modal(assigns)
   defp dispatch(:agent_profile, assigns), do: AgentProfile.modal(assigns)

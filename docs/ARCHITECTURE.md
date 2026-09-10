@@ -586,6 +586,22 @@ callback check whether all invocations are done. If so, the workflow writes a
 `turn_completed` event. The TUI re-renders, showing the completed response in
 the timeline.
 
+### Interactive verified changes
+
+`/verify` starts a separate supervised coordinator and immediately selects its
+new durable Session. `VerifiedChange.Interactive` owns admission and the atomic
+preparing receipt; `VerifiedChange.Coordinator` owns the deadline and provider
+continuation; `VerifiedChange` runs the baseline/check/repair workflow. Approval
+and question waits remain ordinary Engine transitions, not blocking TUI calls.
+
+`Engine.SourceTask` leases external operations through bounded completion and
+cleanup, even when the requesting coordinator stops. This makes cancellation
+and restart barriers independent of BEAM worker exit. `/changes` reads retained
+evidence; `Engine.VerifiedChangeResolution` records Apply/Discard intent and
+completion separately. `VerifiedChange.Patch` uses the stored patch bytes and
+reconciles uncertainty without blind reapplication. No Git or verification
+command runs inside the Engine or TUI callback.
+
 ---
 
 ## 7. Where to find things

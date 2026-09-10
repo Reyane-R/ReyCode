@@ -495,6 +495,9 @@ defmodule ReyCode.TUI.Completion do
 
   defp whitespace?(grapheme), do: String.match?(grapheme, ~r/^\s$/u)
 
+  defp parse_arguments(_context, %{command: "/verify"} = command, []),
+    do: parsed(command, nil, nil, :text)
+
   defp parse_arguments(context, command, arguments) do
     case {Map.get(command, :argument), arguments} do
       {nil, []} -> parsed(command, nil, nil, nil)
