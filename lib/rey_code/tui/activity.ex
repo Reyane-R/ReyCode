@@ -864,7 +864,7 @@ defmodule ReyCode.TUI.Activity do
 
   defp first_argument(arguments) when is_map(arguments) do
     case Enum.sort_by(arguments, fn {key, _value} -> to_string(key) end) do
-      [{key, value} | _rest] -> "#{key}=#{value}"
+      [{key, value} | _rest] -> "#{key}=#{target_text(value)}"
       [] -> nil
     end
   end
@@ -940,7 +940,12 @@ defmodule ReyCode.TUI.Activity do
   defp single_line(nil), do: nil
 
   defp single_line(value),
-    do: value |> to_string() |> String.replace(~r/\s+/, " ") |> String.trim()
+    do: value |> target_text() |> String.replace(~r/\s+/, " ") |> String.trim()
+
+  defp target_text(value) when is_binary(value), do: value
+  defp target_text(value) when is_number(value) or is_atom(value), do: to_string(value)
+
+  defp target_text(value), do: inspect(value, limit: 8, printable_limit: 160)
 
   defp truncate(nil, _limit), do: nil
   defp truncate(value, limit) when limit <= 0, do: String.slice(value, 0, 0)

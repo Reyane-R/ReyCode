@@ -8,6 +8,45 @@ defmodule ReyCode.TUI.ActivityTest do
   @now_ms DateTime.to_unix(~U[2026-08-26 22:00:10Z], :millisecond)
   @workspace "/workspace"
 
+  test "legacy task-list tool arguments render without converting objects to charlists" do
+    event = %{
+      "kind" => "tool_completed",
+      "tool" => "todowrite",
+      "frame_sequence" => 1,
+      "state" => %{
+        "tool_call_id" => "legacy-todos",
+        "status" => "completed",
+        "arguments" => %{
+          "todos" => [%{"content" => "Inspect repository", "status" => "in_progress"}]
+        }
+      }
+    }
+
+    assert [row] = Activity.provider_tools([event], @workspace, @now_ms)
+    assert row.state == :terminal
+    assert row.target =~ "todos="
+    assert row.target =~ "Inspect repository"
+  end
+
+  test "structured and scalar argument previews remain bounded single-line text" do
+    for value <- [
+          %{"nested" => [%{"content" => "Inspect\nrepository"}]},
+          [%{"content" => String.duplicate("large", 1000)}],
+          [1, 2, 3],
+          true,
+          42
+        ],
+        tool <- ["custom_tool", "bash", "read"] do
+      key = %{"custom_tool" => "input", "bash" => "command", "read" => "path"}[tool]
+      run = tool_run("structured", tool, :completed, %{key => value})
+      row = Activity.tool(run, @workspace, @now_ms)
+
+      assert is_binary(row.target)
+      assert String.length(row.target) <= 160
+      refute row.target =~ "\n"
+    end
+  end
+
   test "provider thinking is active and elapsed from the durable Turn" do
     {projection, session_id, invocation_id} = fixture(invocation_status: :running)
     view = Activity.present(session_id, projection, %{}, @now_ms)
