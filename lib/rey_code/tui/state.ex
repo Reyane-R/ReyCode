@@ -356,7 +356,9 @@ defmodule ReyCode.TUI.State do
         %{label: "Ready", class: "text-muted"}
 
       is_nil(provider) and Registry.retired?(primary.provider) ->
-        %{label: "#{Registry.display_name(primary.provider)} — /connect", class: "text-warning"}
+        # A retired runtime cannot run new work, so its stale assignment is
+        # presented exactly like a missing one: choose a model.
+        connect_status()
 
       true ->
         %{label: "Provider unavailable — /connect", class: "text-warning"}

@@ -3,6 +3,7 @@ defmodule ReyCode.TUI.Components.SettingsModal do
 
   use Breeze.Component
 
+  alias ReyCode.Provider.{Credentials, Keychain, Registry}
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Notice, Settings}
 
@@ -46,6 +47,15 @@ defmodule ReyCode.TUI.Components.SettingsModal do
           )}
         </box>
       </box>
+      <box :if={@term.settings.step == :api_key} class="pt-2 w-full">
+        <box class="font-bold">{key_step_title(@term.settings.key_provider)}</box>
+        <box class="pt-1">{masked_key(@term.settings.api_key)}</box>
+        <box class="pt-1 text-muted">
+          save: {save_target(@term.settings.save_key?)}{keychain_hint()}
+        </box>
+        <box class="pt-1 text-muted">{credential_source(@term, @term.settings.key_provider)}</box>
+        <box class="pt-2 text-muted">Enter check connection   Tab toggle save   Esc back</box>
+      </box>
       <box :if={@term.settings.step == :models} class="pt-2 w-full">
         <box class="font-bold">Select a model</box>
         <box class="text-muted">
@@ -77,11 +87,13 @@ defmodule ReyCode.TUI.Components.SettingsModal do
     do: "Esc close   R recheck   D details"
 
   defp header_controls(%{step: :providers}), do: "Esc back   R recheck   D details"
+  defp header_controls(%{step: :api_key}), do: "Esc back"
   defp header_controls(_settings), do: "Esc back"
 
   defp step_label(:participants), do: "choose agents"
   defp step_label(:providers), do: "choose runtime"
   defp step_label(:models), do: "choose model"
+  defp step_label(:api_key), do: "enter API key"
 
   # Breeze clips overflow at the cell boundary without a marker; ending on an
   # ellipsis keeps long provider guidance visibly bounded instead of cut.
@@ -102,4 +114,42 @@ defmodule ReyCode.TUI.Components.SettingsModal do
 
   defp marker(index, index), do: ">"
   defp marker(_index, _selected), do: " "
+
+  defp credentials(term), do: Map.get(term.assigns, :credentials, Credentials)
+
+  defp key_step_title(provider_id) do
+    case Registry.fetch_api_profile(provider_id) do
+      {:ok, profile} -> "#{profile.name} API key"
+      _profile -> "API key"
+    end
+  end
+
+  # The terminal never displays the secret; one bullet per character keeps
+  # only its length visible.
+  defp masked_key(""), do: "> Paste or type the API key…"
+  defp masked_key(key), do: "> " <> String.duplicate("•", String.length(key))
+
+  defp save_target(true), do: "system keychain"
+  defp save_target(false), do: "this run only"
+
+  defp keychain_hint do
+    if Keychain.supported?(), do: "", else: " (no system keychain)"
+  end
+
+  defp credential_source(term, provider_id) do
+    case Registry.fetch_api_profile(provider_id) do
+      {:ok, %{key_env: key_env}} when is_binary(key_env) ->
+        key_env
+        |> credentials(term).source()
+        |> source_label(key_env)
+
+      _profile ->
+        ""
+    end
+  end
+
+  defp source_label(nil, _key_env), do: "no credential stored"
+  defp source_label(:session, _key_env), do: "active key: this run"
+  defp source_label(:environment, key_env), do: "active key: environment #{key_env}"
+  defp source_label(:keychain, _key_env), do: "active key: system keychain"
 end

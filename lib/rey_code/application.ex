@@ -17,6 +17,7 @@ defmodule ReyCode.Application do
       {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
       {ReyCode.EventStore, [config: runtime_config.persistence] ++ event_store_options},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
+      {ReyCode.Provider.Credentials, []},
       {ReyCode.Provider.Catalog, [config: runtime_config]},
       ReyCode.ProcessHub,
       ReyCode.DebuggerHub,

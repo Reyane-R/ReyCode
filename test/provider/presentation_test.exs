@@ -61,7 +61,7 @@ defmodule ReyCode.Provider.PresentationTest do
     local = %{id: :ollama, status: :error, failure: failure}
 
     assert Presentation.selection_help(keyed) =~ "DEEPSEEK_API_KEY"
-    assert String.downcase(Presentation.selection_help(keyed)) =~ "restart"
+    assert String.downcase(Presentation.selection_help(keyed)) =~ "replace"
     assert Presentation.selection_help(local) =~ "access settings"
     refute Presentation.selection_help(local) =~ "Set "
     refute Presentation.selection_help(local) =~ "restart ReyCode"
@@ -76,6 +76,19 @@ defmodule ReyCode.Provider.PresentationTest do
     refute help =~ "API key"
     assert Presentation.unavailable_help(entry) == help
     refute Presentation.ready?(entry, %{model: "llama3"})
+  end
+
+  test "current assignments hide retired runtimes but history keeps its label" do
+    retired = %{provider: :opencode, model: "gpt-5.6-luna"}
+
+    assert Presentation.current_assignment_label(retired) == "No model selected"
+    assert Presentation.short_runtime_label(retired) == "gpt-5.6-luna"
+
+    live = %{provider: :deepseek, model: "deepseek/deepseek-chat"}
+    assert Presentation.current_assignment_label(live) == "deepseek-chat"
+
+    assert Presentation.current_assignment_label(%{provider: :unconfigured, model: nil}) ==
+             "not configured"
   end
 
   test "request diagnostics are available separately from recovery guidance" do

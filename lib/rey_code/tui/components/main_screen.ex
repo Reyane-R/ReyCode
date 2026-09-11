@@ -88,8 +88,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   defp home_panel(assigns) do
     ~H"""
-    <.scroll id="home-scroll" class="h-full w-full overflow-scroll mute-scrollbar-40 px-4 pt-2">
-      <box class="inline w-full border-b border-muted pb-1">
+    <.scroll id="home-scroll" class="h-full w-full overflow-scroll mute-scrollbar-40 px-4">
+      <box class="pt-2 inline w-full border-b border-muted pb-1">
         <box class="font-bold text-primary">REYCODE</box>
         <box class="pl-2 text-muted">AI workbench</box>
         <box :if={@update_notice} class={"w-full text-right " <> Notice.text_class(@update_notice)}>
@@ -109,7 +109,11 @@ defmodule ReyCode.TUI.Components.MainScreen do
         </box>
       </box>
       <box class="pt-2 text-muted">Quick start</box>
+      <box :if={connect_first?(@composer_status)} id="connect-setup" class="text-primary">
+        /connect  Choose a model provider
+      </box>
       <box
+        :if={not connect_first?(@composer_status)}
         id="verification-setup"
         implicit={Action}
         focusable
@@ -131,7 +135,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box>Continue a previous session</box>
       </box>
       <box class="pt-2 text-muted">More</box>
-      <box class="inline w-full">
+      <box :if={not connect_first?(@composer_status)} class="inline w-full">
         <box class="w-12 text-muted">/connect</box>
         <box>Choose a model provider</box>
       </box>
@@ -152,7 +156,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
         None yet. Create one when a responsibility repeats.
       </box>
       <box :for={participant <- task_participants(@session)}>
-        {participant.name} · {Presentation.short_runtime_label(participant)}
+        {participant.name} · {Presentation.current_assignment_label(participant)}
       </box>
       <box class="pt-2 text-muted">Recent sessions · {length(@recent_session_rows)}</box>
       <box :if={@recent_session_rows == []} class="text-muted">No previous sessions.</box>
@@ -344,11 +348,17 @@ defmodule ReyCode.TUI.Components.MainScreen do
   defp primary_summary(session) do
     case Enum.find(session.participants, &(&1.kind == :primary)) do
       nil -> "Assistant setup required"
-      participant -> "#{participant.name} · #{Presentation.short_runtime_label(participant)}"
+      participant -> "#{participant.name} · #{Presentation.current_assignment_label(participant)}"
     end
   end
 
   defp task_participants(session), do: Enum.filter(session.participants, &(&1.kind == :task))
+
+  # A Primary without a usable runtime cannot answer anything; connection
+  # outranks every other quick-start action until it is resolved.
+  defp connect_first?(%{label: "Ready"}), do: false
+  defp connect_first?(%{label: "Checking providers…"}), do: false
+  defp connect_first?(_status), do: true
 
   defp header_context(session, terminal_width, git_branch, token_label) do
     branch = if is_binary(git_branch), do: " · " <> git_branch, else: ""

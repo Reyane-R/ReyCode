@@ -731,6 +731,21 @@ environment and select a model in `Ctrl+G`:
 export DEEPSEEK_API_KEY=sk-...
 ```
 
+You can also enter keys directly in the wizard. In `Ctrl+G`, select a keyed
+provider that shows `key required` and press Enter (or `K`): type or paste the
+API key into the masked field and press Enter. ReyCode checks the connection
+immediately — no restart — and advances to model selection when it succeeds.
+With the `save` toggle on (default on macOS), the key is stored in the system
+Keychain and survives restarts; toggle it off to keep the key for this run
+only. `X` on a provider row removes its stored credential, and the step shows
+which credential source is active. Keys never enter conversation history,
+events, logs, diagnostics, or tool subprocesses. `Tab` toggles save; on
+platforms without a system keychain, keys apply to the running process only.
+
+Credential resolution order: a key entered this run wins over the environment,
+and the environment wins over the system Keychain — so an export always
+overrides a previously saved key after a restart.
+
 More cloud providers ship as built-in keyed profiles. Export the matching key
 and restart ReyCode; each row then lists its models in `Ctrl+G`:
 
@@ -788,8 +803,11 @@ config :rey_code,
 Override any profile's base URL at runtime without changing config:
 
 ```sh
-export REYCODE_DEEPSEEK_BASE_URL=https://your-proxy.example
+export REYCODE_ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
 ```
+
+This also switches Z.ai between the standard API and the Coding Plan
+endpoint; both are OpenAI-compatible, but usage and billing differ.
 
 ### Strict servers and capability flags
 

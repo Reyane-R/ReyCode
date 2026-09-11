@@ -507,7 +507,9 @@ defmodule ReyCode.VerifiedChangeTest do
     source: source
   } do
     engine = engine(source, [], 1000)
-    assert {:error, report} = VerifiedChange.run(options(source, timeout_ms: 1500), engine)
+    # A wide deadline keeps the assertion robust on a loaded machine while
+    # the delayed assistant remains mid-round when it fires.
+    assert {:error, report} = VerifiedChange.run(options(source, timeout_ms: 5000), engine)
     retain_cleanup(report)
     assert report.error =~ "timeout"
     assert report.turn_id != nil

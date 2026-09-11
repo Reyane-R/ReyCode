@@ -114,6 +114,19 @@ defmodule ReyCode.Provider.Presentation do
   @spec refresh_notice() :: String.t()
   def refresh_notice, do: "Checking providers..."
 
+  @doc """
+  Compact label for a Participant's current runtime assignment.
+
+  Unlike historical message metadata, a retired runtime can no longer run new
+  work, so its stale model identity is never presented as the selected model.
+  """
+  @spec current_assignment_label(map()) :: String.t()
+  def current_assignment_label(participant) do
+    if Registry.retired?(Map.get(participant, :provider)),
+      do: "No model selected",
+      else: short_runtime_label(participant)
+  end
+
   @doc "Removes provider namespaces from a model identifier."
   @spec short_model(String.t()) :: String.t()
   def short_model(model), do: model |> String.split("/") |> List.last()
@@ -130,8 +143,8 @@ defmodule ReyCode.Provider.Presentation do
 
   defp setup_help(profile, %{failure: %Failure{category: :authentication_failed}}) do
     if profile.require_key do
-      "#{profile.name} rejected authentication. Check #{profile.key_env} and account access, " <>
-        "then restart ReyCode with the corrected key."
+      "#{profile.name} rejected the stored key. Press Enter to replace it, " <>
+        "or check #{profile.key_env} and account access, then press R to recheck."
     else
       "#{profile.name} rejected authentication. This profile sends no API key. " <>
         "Check the server's access settings, then press R to recheck."
@@ -145,8 +158,8 @@ defmodule ReyCode.Provider.Presentation do
 
   defp setup_help(profile, %{status: :available}) do
     if profile.require_key do
-      "Restart ReyCode with #{profile.key_env} set to use #{profile.name}. " <>
-        "An export in another shell cannot update this running process."
+      "Press Enter to add the #{profile.name} API key; ReyCode checks the connection " <>
+        "immediately. Restarting with #{profile.key_env} exported also works."
     else
       server_help(profile)
     end

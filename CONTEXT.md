@@ -130,6 +130,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Advisor** — Opt-in Task Participant used for explicit advisory review; its output is a Recommendation, not an authoritative Resolution.
 
+**Credential** — Provider API key resolved for one ProviderRound or discovery from the Operator's session entry, process environment, or the system keychain, in that precedence. A Credential is transient authority for provider HTTP requests only; it is never durable orchestration state and never reaches Events, projections, diagnostics, or tool subprocesses.
+
 **StrategicReview** — Frozen, Workspace-scoped evidence packet owned by one advisory Turn, containing selected prior task evidence and a separately captured ProjectMemory snapshot. Its findings propose alternatives and experiments; they grant no execution or decision authority. A TurnRetry preserves the original packet.
 
 **AgentHub** — TUI projection and control surface for delegated child Invocations.

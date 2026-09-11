@@ -28,6 +28,8 @@ defmodule ReyCode.TUI.RenderComponentsTest do
 
     on_exit(fn -> Breeze.Test.stop(session) end)
     type(session, "keep this draft")
+    # /verify appears in Quick start only once a model is connected.
+    connect_simulator(session)
     id = Breeze.Test.metadata(session).assigns.selected_session_id
     Breeze.Test.input(session, "Tab")
     assert Breeze.Test.metadata(session).focused == "prompt"
@@ -533,7 +535,101 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     assert screen =~ "Message Assistant"
   end
 
+  test "home content scrolls above the composer instead of painting over it" do
+    session =
+      Breeze.Test.start!(ReyCode.TUI,
+        size: {80, 24},
+        theme: ReyCode.Theme.default(),
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
+
+    assigns = Breeze.Test.metadata(session).assigns
+    projection = assigns.projection
+    session_id = assigns.selected_session_id
+
+    recent =
+      for index <- 1..3 do
+        %{
+          id: "overflow-#{index}",
+          title: "OVERFLOW-SESSION-#{index}",
+          message_order: ["message-#{index}"],
+          created_at: "2026-09-10T10:0#{index}:00Z",
+          workspace: assigns.projection.sessions[session_id].workspace
+        }
+      end
+
+    projection = %{
+      projection
+      | sequence: projection.sequence + 1,
+        session_order: projection.session_order ++ Enum.map(recent, & &1.id),
+        sessions: Map.merge(projection.sessions, Map.new(recent, &{&1.id, &1}))
+    }
+
+    assert {:noreply, _focused} = Breeze.Test.info(session, {:projection_snapshot, projection})
+
+    lines =
+      session
+      |> Breeze.Test.render!()
+      |> plain()
+      |> String.split("\n")
+
+    composer_top =
+      Enum.find_index(lines, &String.contains?(&1, "Ask anything"))
+
+    assert composer_top
+    composer_region = Enum.slice(lines, max(composer_top - 1, 0)..-1//1)
+
+    # The composer separator, label, input, and footer rows belong to the
+    # composer alone; scrolled home rows must never paint over them.
+    for line <- composer_region do
+      refute line =~ "OVERFLOW-SESSION", "home row painted over the composer: #{inspect(line)}"
+    end
+
+    # Content taller than the viewport renders a scrollbar instead of
+    # spilling into the composer.
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "▼"
+  end
+
   defp ctrl(key), do: %{"ctrlKey" => true, "key" => key}
+
+  # Marks the Primary Assistant ready so the home screen renders its full
+  # quick-start set, mirroring the composer-readiness seam.
+  defp connect_simulator(session) do
+    providers = %{simulator: %{id: :simulator, status: :configured, models: ["test"]}}
+    generation = Breeze.Test.metadata(session).assigns.providers_generation + 1
+
+    {:noreply, _} =
+      Breeze.Test.info(
+        session,
+        {:provider_catalog_updated, %{generation: generation, providers: providers}}
+      )
+
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    projection = Breeze.Test.metadata(session).assigns.engine.snapshot()
+    session_record = projection.sessions[session_id]
+
+    participant =
+      session_record.participants
+      |> Enum.find(&(&1.kind == :primary))
+      |> Map.merge(%{provider: :simulator, model: "test"})
+
+    projection =
+      put_in(
+        projection,
+        [:sessions, session_id, Access.key(:participants)],
+        [participant | Enum.reject(session_record.participants, &(&1.kind == :primary))]
+      )
+
+    {:noreply, _} =
+      Breeze.Test.info(
+        session,
+        {:projection_snapshot, %{projection | sequence: projection.sequence + 1}}
+      )
+  end
 
   defp mouse_action(session, label, action \\ "press") do
     {line, y} =

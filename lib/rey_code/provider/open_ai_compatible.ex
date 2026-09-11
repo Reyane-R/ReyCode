@@ -11,7 +11,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   alias ReyCode.Capabilities
   alias ReyCode.Failure
   alias ReyCode.Memory.Store
-  alias ReyCode.Provider.{Frame, Request, Response, Runtime}
+  alias ReyCode.Provider.{Credentials, Frame, Request, Response, Runtime}
   alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, RequestShape, Stream}
   alias ReyCode.RuntimeConfig
   alias ReyCode.RuntimeConfig.OpenAICompatible, as: OpenAIPolicy
@@ -25,7 +25,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   @doc "Discovers one profile's availability and models without exposing its key."
   @spec discover(Profile.t(), keyword()) :: {:ok, map()}
   def discover(profile, opts \\ []) do
-    if profile.require_key == false or not blank?(System.get_env(profile.key_env)) do
+    if profile.require_key == false or Credentials.known?(profile.key_env) do
       case fetch_models(profile, opts) do
         {:ok, models} ->
           {:ok,
@@ -751,16 +751,28 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp fetch_key(%Profile{require_key: false}), do: {:ok, nil}
 
   defp fetch_key(profile) do
-    if blank?(System.get_env(profile.key_env)) do
-      {:error,
-       HTTP.error(:missing_credentials, "Set #{profile.key_env} to use #{profile.name}", false)}
-    else
-      {:ok, System.get_env(profile.key_env)}
+    case Credentials.fetch(profile.key_env) do
+      {:ok, key, _source} ->
+        {:ok, key}
+
+      :error ->
+        {:error,
+         HTTP.error(
+           :missing_credentials,
+           "Add the #{profile.name} API key with /connect or set #{profile.key_env}",
+           false
+         )}
     end
   end
 
   defp api_key(%Profile{require_key: false}), do: nil
-  defp api_key(profile), do: System.get_env(profile.key_env)
+
+  defp api_key(profile) do
+    case Credentials.fetch(profile.key_env) do
+      {:ok, key, _source} -> key
+      :error -> nil
+    end
+  end
 
   defp credential_count(%Profile{require_key: false}), do: 0
   defp credential_count(_profile), do: 1

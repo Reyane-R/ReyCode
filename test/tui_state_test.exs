@@ -6,16 +6,12 @@ defmodule ReyCode.TUI.StateTest do
 
   @workspace "/workspace"
 
-  test "a retired runtime names itself instead of a generic unavailability" do
-    for {provider, label} <- [
-          {:opencode, "OpenCode (retired) — /connect"},
-          {:open_code, "OpenCode (retired) — /connect"},
-          {:omp, "OMP (retired) — /connect"}
-        ] do
+  test "a retired runtime is presented like a missing model selection" do
+    for provider <- [:opencode, :open_code, :omp] do
       session = session(provider: provider, model: "gpt-5.6-luna")
 
       assert State.composer_status(session, %{}) == %{
-               label: label,
+               label: "Connect a model — /connect",
                class: "text-warning"
              }
     end
