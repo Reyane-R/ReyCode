@@ -39,7 +39,19 @@ defmodule ReyCode.Provider.CatalogTest do
     end
 
     assert Enum.sort(Map.keys(Catalog.snapshot(catalog).providers)) ==
-             [:deepseek, :lmstudio, :ollama]
+             [
+               :deepseek,
+               :fireworks,
+               :groq,
+               :lmstudio,
+               :mistral,
+               :moonshot,
+               :ollama,
+               :openrouter,
+               :together,
+               :xai,
+               :zai
+             ]
   end
 
   test "disabled discovery performs no probes" do
@@ -172,8 +184,10 @@ defmodule ReyCode.Provider.CatalogTest do
     Catalog.subscribe(catalog)
     assert length(Registry.lookup(@registry, :providers)) == 1
 
+    probe_count = catalog |> Catalog.snapshot() |> Map.get(:providers) |> map_size()
+
     probes =
-      for _ <- 1..3 do
+      for _ <- 1..probe_count do
         assert_receive {:probe, _id, pid}, 1_000
         pid
       end

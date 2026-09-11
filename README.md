@@ -731,6 +731,20 @@ environment and select a model in `Ctrl+G`:
 export DEEPSEEK_API_KEY=sk-...
 ```
 
+More cloud providers ship as built-in keyed profiles. Export the matching key
+and restart ReyCode; each row then lists its models in `Ctrl+G`:
+
+| Provider | Key env | Base URL |
+|---|---|---|
+| Z.ai | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4` |
+| OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| Groq | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` |
+| xAI | `XAI_API_KEY` | `https://api.x.ai/v1` |
+| Mistral | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` |
+| Moonshot | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` |
+| Together | `TOGETHER_API_KEY` | `https://api.together.xyz/v1` |
+| Fireworks | `FIREWORKS_API_KEY` | `https://api.fireworks.ai/inference/v1` |
+
 Ollama and LM Studio ship as built-in **keyless** profiles targeting
 `http://localhost:11434/v1` and `http://localhost:1234/v1`. They need no
 credential: requests through them never carry an `Authorization` header, not

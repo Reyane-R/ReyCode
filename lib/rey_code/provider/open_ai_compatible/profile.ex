@@ -92,6 +92,54 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
         base_url: "http://localhost:1234/v1",
         key_env: nil,
         require_key: false
+      },
+      %__MODULE__{
+        id: :zai,
+        name: "Z.ai",
+        base_url: "https://api.z.ai/api/paas/v4",
+        key_env: "ZAI_API_KEY"
+      },
+      %__MODULE__{
+        id: :openrouter,
+        name: "OpenRouter",
+        base_url: "https://openrouter.ai/api/v1",
+        key_env: "OPENROUTER_API_KEY"
+      },
+      %__MODULE__{
+        id: :groq,
+        name: "Groq",
+        base_url: "https://api.groq.com/openai/v1",
+        key_env: "GROQ_API_KEY"
+      },
+      %__MODULE__{
+        id: :xai,
+        name: "xAI",
+        base_url: "https://api.x.ai/v1",
+        key_env: "XAI_API_KEY"
+      },
+      %__MODULE__{
+        id: :mistral,
+        name: "Mistral",
+        base_url: "https://api.mistral.ai/v1",
+        key_env: "MISTRAL_API_KEY"
+      },
+      %__MODULE__{
+        id: :moonshot,
+        name: "Moonshot",
+        base_url: "https://api.moonshot.ai/v1",
+        key_env: "MOONSHOT_API_KEY"
+      },
+      %__MODULE__{
+        id: :together,
+        name: "Together",
+        base_url: "https://api.together.xyz/v1",
+        key_env: "TOGETHER_API_KEY"
+      },
+      %__MODULE__{
+        id: :fireworks,
+        name: "Fireworks",
+        base_url: "https://api.fireworks.ai/inference/v1",
+        key_env: "FIREWORKS_API_KEY"
       }
     ]
   end

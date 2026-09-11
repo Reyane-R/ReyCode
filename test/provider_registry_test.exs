@@ -22,39 +22,44 @@ defmodule ReyCode.Provider.RegistryTest do
              :deepseek,
              :ollama,
              :lmstudio,
+             :zai,
+             :openrouter,
+             :groq,
+             :xai,
+             :mistral,
+             :moonshot,
+             :together,
+             :fireworks,
              :local_api
            ]
 
-    assert Registry.live_provider_ids(config: cfg, allow_simulator?: true) == [
-             :deepseek,
-             :ollama,
-             :lmstudio,
-             :local_api,
-             :simulator
-           ]
+    assert Registry.live_provider_ids(config: cfg, allow_simulator?: true) ==
+             List.replace_at(
+               Registry.live_provider_ids(config: cfg, allow_simulator?: false),
+               -1,
+               :local_api
+             ) ++ [:simulator]
 
-    assert Enum.map(Registry.descriptors(cfg), &Map.take(&1, [:id, :name, :description])) == [
-             %{
-               id: :deepseek,
-               name: "DeepSeek",
-               description: "OpenAI-compatible API"
-             },
-             %{
-               id: :ollama,
-               name: "Ollama",
-               description: "OpenAI-compatible API"
-             },
-             %{
-               id: :lmstudio,
-               name: "LM Studio",
-               description: "OpenAI-compatible API"
-             },
-             %{
-               id: :local_api,
-               name: "Local API",
-               description: "OpenAI-compatible API"
-             }
-           ]
+    assert Enum.map(Registry.descriptors(cfg), &Map.take(&1, [:id, :name, :description])) ==
+             Enum.map(
+               [
+                 {:deepseek, "DeepSeek"},
+                 {:ollama, "Ollama"},
+                 {:lmstudio, "LM Studio"},
+                 {:zai, "Z.ai"},
+                 {:openrouter, "OpenRouter"},
+                 {:groq, "Groq"},
+                 {:xai, "xAI"},
+                 {:mistral, "Mistral"},
+                 {:moonshot, "Moonshot"},
+                 {:together, "Together"},
+                 {:fireworks, "Fireworks"},
+                 {:local_api, "Local API"}
+               ],
+               fn {id, name} ->
+                 %{id: id, name: name, description: "OpenAI-compatible API"}
+               end
+             )
 
     assert Registry.descriptor(:opencode) == nil
     assert Registry.descriptor(:omp) == nil

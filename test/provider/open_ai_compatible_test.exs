@@ -1078,6 +1078,29 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       System.delete_env("REYCODE_DEEPSEEK_BASE_URL")
     end
 
+    test "exposes the built-in cloud provider pack" do
+      expected = [
+        zai: {"Z.ai", "https://api.z.ai/api/paas/v4", "ZAI_API_KEY"},
+        openrouter: {"OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"},
+        groq: {"Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY"},
+        xai: {"xAI", "https://api.x.ai/v1", "XAI_API_KEY"},
+        mistral: {"Mistral", "https://api.mistral.ai/v1", "MISTRAL_API_KEY"},
+        moonshot: {"Moonshot", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY"},
+        together: {"Together", "https://api.together.xyz/v1", "TOGETHER_API_KEY"},
+        fireworks: {"Fireworks", "https://api.fireworks.ai/inference/v1", "FIREWORKS_API_KEY"}
+      ]
+
+      assert Enum.drop(Profile.ids(), 3) == Enum.map(expected, &elem(&1, 0))
+
+      for {id, {name, base_url, key_env}} <- expected do
+        assert {:ok, profile} = Profile.fetch(id)
+        assert profile.name == name
+        assert profile.base_url == base_url
+        assert profile.key_env == key_env
+        assert profile.require_key
+      end
+    end
+
     test "configured profiles override colliding built-in IDs without moving their slot" do
       config =
         RuntimeConfig.fresh(
