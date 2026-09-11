@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.State do
   alias Breeze.{Component, View}
   alias ReyCode.Memory.Store, as: MemoryStore
   alias ReyCode.Orchestration.{Engine, ModelTier}
-  alias ReyCode.Provider.{Catalog, Presentation}
+  alias ReyCode.Provider.{Catalog, Presentation, Registry}
   alias ReyCode.RuntimeConfig
   alias ReyCode.Update
 
@@ -354,6 +354,9 @@ defmodule ReyCode.TUI.State do
 
       Presentation.ready?(provider, primary) ->
         %{label: "Ready", class: "text-muted"}
+
+      is_nil(provider) and Registry.retired?(primary.provider) ->
+        %{label: "#{Registry.display_name(primary.provider)} — /connect", class: "text-warning"}
 
       true ->
         %{label: "Provider unavailable — /connect", class: "text-warning"}

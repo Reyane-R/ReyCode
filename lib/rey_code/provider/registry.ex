@@ -108,11 +108,17 @@ defmodule ReyCode.Provider.Registry do
   defp open_ai_policy(nil), do: RuntimeConfig.fresh().open_ai
   defp open_ai_policy(%RuntimeConfig{} = config), do: config.open_ai
 
+  @retired_ids [:opencode, :open_code, :omp]
+
+  @doc "Whether a provider identity is a retired runtime that cannot run new work."
+  @spec retired?(term()) :: boolean()
+  def retired?(id) when is_atom(id), do: id in @retired_ids
+  def retired?(_id), do: false
+
   defp special_display_name(:simulator, _provider), do: "Simulator"
 
-  defp special_display_name(id, _provider) when id in [:opencode, :open_code],
-    do: "OpenCode (retired)"
-
+  defp special_display_name(:open_code, _provider), do: "OpenCode (retired)"
+  defp special_display_name(:opencode, _provider), do: "OpenCode (retired)"
   defp special_display_name(:omp, _provider), do: "OMP (retired)"
   defp special_display_name(_id, provider), do: to_string(provider)
 end
