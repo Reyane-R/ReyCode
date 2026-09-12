@@ -752,6 +752,7 @@ and restart ReyCode; each row then lists its models in `Ctrl+G`:
 | Provider | Key env | Base URL |
 |---|---|---|
 | Z.ai | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4` |
+| Z.ai Coding | `ZAI_CODING_API_KEY` | `https://api.z.ai/api/coding/paas/v4` |
 | OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
 | Groq | `GROQ_API_KEY` | `https://api.groq.com/openai/v1` |
 | xAI | `XAI_API_KEY` | `https://api.x.ai/v1` |
@@ -806,8 +807,12 @@ Override any profile's base URL at runtime without changing config:
 export REYCODE_ZAI_BASE_URL=https://api.z.ai/api/coding/paas/v4
 ```
 
-This also switches Z.ai between the standard API and the Coding Plan
-endpoint; both are OpenAI-compatible, but usage and billing differ.
+Both Z.ai endpoints are also built-in profiles: **Z.ai** targets the standard
+API and **Z.ai Coding** targets the Coding Plan endpoint. They are separate
+profiles with separate key entries (`ZAI_API_KEY` vs `ZAI_CODING_API_KEY`), so
+pick the one matching your subscription instead of overriding the base URL;
+the export remains as an escape hatch. Usage and billing differ between the
+two endpoints.
 
 ### Strict servers and capability flags
 

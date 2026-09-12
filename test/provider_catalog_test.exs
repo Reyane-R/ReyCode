@@ -50,7 +50,8 @@ defmodule ReyCode.Provider.CatalogTest do
                :openrouter,
                :together,
                :xai,
-               :zai
+               :zai,
+               :zai_coding
              ]
   end
 

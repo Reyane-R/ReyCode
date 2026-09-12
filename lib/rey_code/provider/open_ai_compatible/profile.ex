@@ -99,6 +99,14 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
         base_url: "https://api.z.ai/api/paas/v4",
         key_env: "ZAI_API_KEY"
       },
+      # Z.ai Coding Plan subscriptions only cover the coding endpoint; the
+      # standard endpoint rejects their keys with a billing error.
+      %__MODULE__{
+        id: :zai_coding,
+        name: "Z.ai Coding",
+        base_url: "https://api.z.ai/api/coding/paas/v4",
+        key_env: "ZAI_CODING_API_KEY"
+      },
       %__MODULE__{
         id: :openrouter,
         name: "OpenRouter",

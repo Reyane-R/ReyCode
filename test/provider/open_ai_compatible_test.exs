@@ -1081,6 +1081,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     test "exposes the built-in cloud provider pack" do
       expected = [
         zai: {"Z.ai", "https://api.z.ai/api/paas/v4", "ZAI_API_KEY"},
+        zai_coding: {"Z.ai Coding", "https://api.z.ai/api/coding/paas/v4", "ZAI_CODING_API_KEY"},
         openrouter: {"OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"},
         groq: {"Groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY"},
         xai: {"xAI", "https://api.x.ai/v1", "XAI_API_KEY"},
