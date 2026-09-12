@@ -115,8 +115,6 @@ defmodule ReyCode.TUI.Components.SettingsModal do
   defp marker(index, index), do: ">"
   defp marker(_index, _selected), do: " "
 
-  defp credentials(term), do: Map.get(term.assigns, :credentials, Credentials)
-
   defp key_step_title(provider_id) do
     case Registry.fetch_api_profile(provider_id) do
       {:ok, profile} -> "#{profile.name} API key"
@@ -140,7 +138,7 @@ defmodule ReyCode.TUI.Components.SettingsModal do
     case Registry.fetch_api_profile(provider_id) do
       {:ok, %{key_env: key_env}} when is_binary(key_env) ->
         key_env
-        |> credentials(term).source()
+        |> Credentials.source(Map.get(term, :credentials, Credentials))
         |> source_label(key_env)
 
       _profile ->
