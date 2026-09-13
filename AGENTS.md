@@ -38,6 +38,12 @@ security boundaries. CI enforces per-function CRAP scores against a committed
 ratchet baseline (`quality/crap-baseline.json`) — never regenerate it to
 silence a regression; that requires a genuine improvement.
 
+Before cutting a release, the working tree must be clean: any dangling change
+is reviewed and either committed or parked explicitly (stash with the intent
+noted). Choose the version bump from user-visible surface — new pickers,
+profiles, or commands are a minor bump; fixes alone are a patch — never from
+diff size.
+
 ## Invariants
 
 - **Event sourcing.** Every state change is an event appended to the
