@@ -1074,6 +1074,43 @@ defmodule ReyCode.TUITest do
     assert after_index < response_index
   end
 
+  test "Z.ai reasoning batches grow one visible thought while working" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 80}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    first = %{
+      "kind" => "agent_note",
+      "frame_sequence" => 1,
+      "segment_sequence" => 1,
+      "note" => "Inspect "
+    }
+
+    second = %{
+      "kind" => "agent_note",
+      "frame_sequence" => 2,
+      "segment_sequence" => 1,
+      "note" => "the project"
+    }
+
+    projection =
+      long_response_projection(session)
+      |> update_in([:invocations, "inv-layout", :participant], &%{&1 | provider: :zai_coding})
+      |> put_in([:invocations, "inv-layout", :provider_activity_events], [first])
+
+    push_projection(session, projection)
+    open_first_session(session)
+    assert session |> Breeze.Test.render!() |> plain() =~ "· Inspect"
+
+    projection =
+      put_in(projection, [:invocations, "inv-layout", :provider_activity_events], [second, first])
+
+    push_projection(session, projection)
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "· Inspect the project"
+    assert length(Regex.scan(~r/· Inspect/, screen)) == 1
+  end
+
   test "renders agent-initiated delegation as a delegate tool row" do
     %{engine: tui_engine_13} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_13)

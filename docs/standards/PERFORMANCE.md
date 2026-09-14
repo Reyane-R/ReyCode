@@ -15,6 +15,11 @@ These are design envelopes, not benchmarks. Changes to a data-plane path update 
 
 Design intent: network latency dominates. Buffer short text to reduce event transactions while flushing within interactive latency. Output caps bound binary retention and parsing.
 
+Reasoning deltas share the text chunk byte and latency limits. Pending reasoning
+flushes even during transport silence; batches carry their segment's first frame
+sequence so the transcript joins them without repeating the growing prefix in
+each durable event. The existing provider activity retention bound still applies.
+
 Historical provider activity remains readable, bounded to the newest 256 events
 per Invocation. New model API calls return text and ToolCalls; tool activity is
 recorded through ReyCode's durable ToolRun lifecycle.

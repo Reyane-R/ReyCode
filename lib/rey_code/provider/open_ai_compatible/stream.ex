@@ -122,7 +122,12 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
   defp await_stream(%Session{} = session, state) do
     now = monotonic_ms()
-    flush_deadline = TextBuffer.next_flush_deadline(state.text_buffer)
+
+    flush_deadline =
+      min_deadline(
+        TextBuffer.next_flush_deadline(state.text_buffer),
+        TextBuffer.next_flush_deadline(state.note_buffer)
+      )
 
     cond do
       now >= session.deadline ->
@@ -257,6 +262,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   defp cancellation_error,
     do: HTTP.error(:request_cancelled, "Provider request was cancelled", false)
 
+  defp min_deadline(nil, deadline), do: deadline
   defp min_deadline(deadline, nil), do: deadline
   defp min_deadline(deadline, flush_deadline), do: min(deadline, flush_deadline)
 
@@ -338,14 +344,13 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
     state |> flush_note(emit) |> buffer_text(text, emit)
   end
 
-  # Reasoning fields arrive as token-sized deltas. Keep one reversed fragment
-  # list per reasoning segment and flush at the next content/tool boundary or
-  # DONE, avoiding one durable event per token. Notes remain advisory and never
-  # set valid_output?.
+  # Reasoning uses the same bounded batching as answer text. A segment keeps
+  # its first frame sequence across batches so the transcript can join them.
+  # Notes remain advisory and never set valid_output?.
   defp apply_event({:note, note}, state, emit) do
-    state
-    |> flush_pending(emit)
-    |> Map.update!(:note_fragments, &[note | &1])
+    state = flush_pending(state, emit)
+    {chunks, buffer} = TextBuffer.append(state.note_buffer, note)
+    state |> Map.put(:note_buffer, buffer) |> emit_note_chunks(chunks, emit)
   end
 
   defp apply_event({:tool_started, tool, tool_state}, state, emit) do
@@ -418,13 +423,23 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
   defp decode_arguments(_other), do: %{}
 
-  defp flush_note(%{note_fragments: []} = state, _emit), do: state
-
   defp flush_note(state, emit) do
-    sequence = state.sequence + 1
-    note = state.note_fragments |> Enum.reverse() |> IO.iodata_to_binary()
-    :ok = emit.(Frame.agent_note(sequence, note))
-    %{state | sequence: sequence, note_fragments: []}
+    {chunks, buffer} = TextBuffer.flush(state.note_buffer)
+
+    state
+    |> Map.put(:note_buffer, buffer)
+    |> emit_note_chunks(chunks, emit)
+    |> Map.put(:note_segment_sequence, nil)
+  end
+
+  defp emit_note_chunks(state, chunks, emit) do
+    Enum.reduce(chunks, state, fn note, state ->
+      sequence = state.sequence + 1
+      segment_sequence = state.note_segment_sequence || sequence
+      frame = Frame.agent_note(sequence, note)
+      :ok = emit.(%{frame | data: Map.put(frame.data, :segment_sequence, segment_sequence)})
+      %{state | sequence: sequence, note_segment_sequence: segment_sequence}
+    end)
   end
 
   defp buffer_text(state, "", _emit), do: state
@@ -445,7 +460,13 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
   defp flush_due(state, emit, now) do
     {chunks, buffer} = TextBuffer.flush_due(state.text_buffer, now)
-    state |> Map.put(:text_buffer, buffer) |> emit_text_chunks(chunks, emit)
+    {notes, note_buffer} = TextBuffer.flush_due(state.note_buffer, now)
+
+    state
+    |> Map.put(:text_buffer, buffer)
+    |> Map.put(:note_buffer, note_buffer)
+    |> emit_text_chunks(chunks, emit)
+    |> emit_note_chunks(notes, emit)
   end
 
   defp emit_text_chunks(state, chunks, emit),
@@ -472,7 +493,13 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
       sequence: request.resume_from,
       bytes: 0,
       max_bytes: profile.max_output_bytes,
-      note_fragments: [],
+      note_buffer:
+        TextBuffer.new(
+          chunk_bytes: config.chunk_bytes,
+          chunk_latency_ms: config.chunk_latency_ms,
+          flush_tail_on_size?: true
+        ),
+      note_segment_sequence: nil,
       usage: nil,
       protocol_error: nil,
       valid_output?: false,

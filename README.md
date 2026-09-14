@@ -814,6 +814,12 @@ pick the one matching your subscription instead of overriding the base URL;
 the export remains as an escape hatch. Usage and billing differ between the
 two endpoints.
 
+Provider reasoning (`reasoning_content` or `reasoning`, when supplied by the
+model) appears live in the transcript as a growing thought block. It uses the
+same byte- and latency-bounded batching as answer text, including during pauses
+in the stream. The “Thinking” pulse remains a waiting indicator when the
+provider has not supplied reasoning text.
+
 ### Strict servers and capability flags
 
 Some servers reject optional request features with HTTP 400. Profiles carry two

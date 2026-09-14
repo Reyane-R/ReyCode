@@ -703,12 +703,11 @@ defmodule ReyCode.TUI.State do
 
   # Compatibility: retired CLI activity is still rendered from durable history.
   defp provider_trace_rows(
-         %{participant: %{provider: provider}} = invocation,
+         %{participant: %{provider: _provider}} = invocation,
          workspace,
          now_ms,
          target_graphemes
-       )
-       when provider in [:omp, :opencode, "omp", "opencode"] do
+       ) do
     events = Map.get(invocation, :provider_activity_events, [])
 
     if is_list(events) and

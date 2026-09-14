@@ -1070,11 +1070,13 @@ defmodule ReyCode.Orchestration.Projector do
     note = data["note"]
 
     if is_binary(note) and note != "" do
-      event = %{
-        "kind" => "agent_note",
-        "frame_sequence" => data["frame_sequence"],
-        "note" => note
-      }
+      event =
+        %{
+          "kind" => "agent_note",
+          "frame_sequence" => data["frame_sequence"],
+          "note" => note
+        }
+        |> Map.merge(Map.take(data, ["segment_sequence"]))
 
       invocation
       |> Map.put(:notes, Enum.take(invocation.notes ++ [note], -@max_invocation_notes))

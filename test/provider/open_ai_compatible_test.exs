@@ -1,4 +1,5 @@
 defmodule ReyCode.Provider.OpenAICompatibleTest do
+  alias ReyCode.TUI.Activity
   use ExUnit.Case, async: false
 
   alias ReyCode.Failure
@@ -272,6 +273,46 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       send(producer, {token, :resume})
       assert {:ok, %Response{text: "latency bounded"}} = Task.await(task, 1_000)
       refute_receive {:frame, %Frame{kind: :text_delta, data: %{text: "latency bounded"}}}
+    end
+
+    test "reasoning becomes visible while the provider pauses before answering" do
+      token = make_ref()
+      test_pid = self()
+
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"reasoning_content":"考える "}}]}\n\n),
+        {:pause, test_pid, token},
+        ~s(data: {"choices":[{"delta":{"reasoning_content":"carefully"}}]}\n\n),
+        ~s(data: {"choices":[{"delta":{"content":"Answer"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      task =
+        Task.async(fn ->
+          policy = [openai_compatible_chunk_bytes: 1_000, openai_compatible_chunk_latency_ms: 50]
+
+          OpenAICompatible.stream(runtime(policy), request(), fn frame ->
+            send(test_pid, {:frame, frame})
+            :ok
+          end)
+        end)
+
+      assert_receive {:transport_paused, ^token, producer}, 500
+      assert_receive {:frame, %Frame{kind: :agent_note, data: %{note: "考える "}} = first}, 500
+      assert Task.yield(task, 0) == nil
+      refute_receive {:frame, %Frame{kind: :text_delta}}, 10
+      send(producer, {token, :resume})
+      assert {:ok, %Response{text: "Answer"}} = Task.await(task, 1_000)
+      assert_receive {:frame, %Frame{kind: :agent_note, data: %{note: "carefully"}} = second}
+
+      events =
+        Enum.map([second, first], fn frame ->
+          wire = Frame.to_event_data(frame)
+          Map.merge(wire["data"], Map.take(wire, ["kind", "frame_sequence"]))
+        end)
+
+      assert [%Activity.TraceNote{text: "考える carefully"}] =
+               Activity.provider_trace(events, ".", 0)
     end
 
     test "starts emitted frame sequence from request.resume_from" do
@@ -575,9 +616,17 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert {:ok, %Response{text: "Answer"}} = result
 
       assert emitted == [
-               %Frame{sequence: 1, kind: :agent_note, data: %{note: "thinking hard"}},
+               %Frame{
+                 sequence: 1,
+                 kind: :agent_note,
+                 data: %{note: "thinking hard", segment_sequence: 1}
+               },
                %Frame{sequence: 2, kind: :text_delta, data: %{text: "Answer"}},
-               %Frame{sequence: 3, kind: :agent_note, data: %{note: "more thought"}}
+               %Frame{
+                 sequence: 3,
+                 kind: :agent_note,
+                 data: %{note: "more thought", segment_sequence: 3}
+               }
              ]
     end
 
@@ -592,13 +641,26 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       {result, emitted} =
         collect_frames(fn emit ->
-          wire_result(OpenAICompatible.stream(runtime(), request(), emit))
+          wire_result(
+            OpenAICompatible.stream(
+              runtime(
+                openai_compatible_chunk_bytes: 1_000,
+                openai_compatible_chunk_latency_ms: 1_000
+              ),
+              request(),
+              emit
+            )
+          )
         end)
 
       assert {:ok, %Response{text: "Answer"}} = result
 
       assert emitted == [
-               %Frame{sequence: 1, kind: :agent_note, data: %{note: "thinking hard now"}},
+               %Frame{
+                 sequence: 1,
+                 kind: :agent_note,
+                 data: %{note: "thinking hard now", segment_sequence: 1}
+               },
                %Frame{sequence: 2, kind: :text_delta, data: %{text: "Answer"}}
              ]
     end

@@ -163,6 +163,10 @@ defmodule ReyCode.TUI.Activity do
           row -> [row]
         end
       end)
+      |> Enum.chunk_by(& &1.sequence)
+      |> Enum.map(fn [first | _rest] = batches ->
+        %{first | text: Enum.map_join(batches, & &1.text)}
+      end)
 
     tools =
       Enum.map(provider_tool_rows(events), fn row ->
@@ -481,7 +485,8 @@ defmodule ReyCode.TUI.Activity do
     note = provider_value(event, "note")
 
     if provider_value(event, "kind") == "agent_note" and is_binary(note) and note != "" do
-      %{kind: :note, text: note, sequence: provider_sequence(event, index)}
+      sequence = provider_value(event, "segment_sequence") || provider_sequence(event, index)
+      %{kind: :note, text: note, sequence: sequence}
     end
   end
 

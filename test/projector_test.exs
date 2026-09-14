@@ -7,6 +7,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
   @max_provider_activity_events_count 256
 
   alias ReyCode.Event
+  alias ReyCode.TUI.Activity
 
   alias ReyCode.Orchestration.{
     Author,
@@ -145,6 +146,26 @@ defmodule ReyCode.Orchestration.ProjectorTest do
              "reading config",
              "checking the workspace"
            ]
+  end
+
+  test "reasoning segment identity survives durable replay" do
+    frames =
+      Enum.map([{1, "Inspect "}, {2, "the project"}], fn {sequence, note} ->
+        event(sequence + 4, :provider_frame_recorded, :invocation, "inv-1", %{
+          "invocation_id" => "inv-1",
+          "message_id" => "msg-assistant",
+          "frame_sequence" => sequence,
+          "kind" => "agent_note",
+          "data" => %{"note" => note, "segment_sequence" => 1}
+        })
+      end)
+
+    state = Projector.replay(opened_invocation_events() ++ frames)
+    events = state.invocations["inv-1"].provider_activity_events
+    assert Enum.all?(events, &(&1["segment_sequence"] == 1))
+
+    assert [%Activity.TraceNote{text: "Inspect the project"}] =
+             Activity.provider_trace(events, ".", 0)
   end
 
   test "provider tool events retain frame chronology for the execution ledger" do

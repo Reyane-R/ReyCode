@@ -16,6 +16,7 @@ defmodule ReyCode.Provider.Frame do
   @type data ::
           %{text: String.t()}
           | %{note: String.t()}
+          | %{note: String.t(), segment_sequence: pos_integer()}
           | %{usage: map()}
           | %{tool: String.t(), state: term()}
           | %{tool: String.t(), request_id: String.t(), arguments: map()}
@@ -82,6 +83,9 @@ defmodule ReyCode.Provider.Frame do
   def validate(_other), do: {:error, :invalid_frame}
 
   defp to_wire_data(:text_delta, %{text: text}), do: %{"text" => text}
+
+  defp to_wire_data(:agent_note, %{note: note, segment_sequence: sequence}),
+    do: %{"note" => note, "segment_sequence" => sequence}
 
   defp to_wire_data(:agent_note, %{note: note}), do: %{"note" => note}
 
