@@ -48,11 +48,16 @@ defmodule ReyCode.AgentLoopApprovalTest do
       provider_catalog: ReyCode.Provider.Catalog,
       config:
         RuntimeConfig.fresh(
+          tool_permissions: %{
+            default: :allow,
+            rules: [%{tool: "bash", action: :ask}, %{tool: "write", action: :ask}]
+          },
           allow_simulator_provider: true,
           default_provider: :simulator
         ),
       agent_delay_ms: 0
-    ] ++ extra
+    ]
+    |> Keyword.merge(extra)
   end
 
   defp start_engine(extra) do
@@ -190,7 +195,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
     end
   end
 
-  test "approved memory decision records rationale through the durable tool lifecycle", %{
+  test "memory decision records rationale directly through the durable tool lifecycle", %{
     workspace_a: workspace
   } do
     if is_nil(Process.whereis(MemoryStore)) do
@@ -230,6 +235,7 @@ defmodule ReyCode.AgentLoopApprovalTest do
     assert {:ok, session_id} = Engine.create_blank_session("Decision Loop", workspace, @engine)
     assert {:ok, turn_id} = Engine.post_message(session_id, "Choose storage", :direct, @engine)
     assert resolve_all_waiting(turn_id, :approve).outcome == :completed
+    assert events_of_type(store, :tool_run_approval_resolved) == []
     completed = events_of_type(store, :tool_run_completed)
     assert [%{data: %{"result" => %{"ok" => true}}}] = completed
 
@@ -239,6 +245,20 @@ defmodule ReyCode.AgentLoopApprovalTest do
     assert {:ok, [memory]} = MemoryStore.list(project, ["decision"], 10)
     assert Jason.decode!(memory.value)["rationale"] == "single writer"
     assert memory.tags == ["decision"]
+  end
+
+  test "default policy executes a write exactly once without an approval event", %{
+    workspace_a: workspace
+  } do
+    config = RuntimeConfig.fresh(allow_simulator_provider: true, default_provider: :simulator)
+    store = start_engine(Keyword.put(ask_scenario_opts(), :config, config))
+    assert {:ok, session_id} = Engine.create_blank_session("Direct tools", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Write it", :direct, @engine)
+    Wait.projection(@engine, fn projection -> projection.turns[turn_id].status == :terminal end)
+    assert File.read!(Path.join(workspace, "out.txt")) == "approved-content"
+    assert length(events_of_type(store, :tool_run_started)) == 1
+    assert length(events_of_type(store, :tool_run_completed)) == 1
+    assert events_of_type(store, :tool_run_approval_resolved) == []
   end
 
   test "approve executes the persisted request once and completes the conversation", %{

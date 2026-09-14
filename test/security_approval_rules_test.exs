@@ -3,6 +3,7 @@ defmodule ReyCode.Security.ApprovalRulesTest do
 
   alias ReyCode.Security.ApprovalRules
   alias ReyCode.ToolRegistry
+  @permissions %ReyCode.Security.Permissions{default: :ask}
 
   setup do
     workspace =
@@ -22,7 +23,11 @@ defmodule ReyCode.Security.ApprovalRulesTest do
     refute ApprovalRules.allows?(workspace, call("git status --short"))
     refute ApprovalRules.allows?(workspace, call("mix testing"))
 
-    assert ToolRegistry.authorization(call("mix test test/example_test.exs"), workspace) == :allow
+    assert ToolRegistry.authorization(
+             call("mix test test/example_test.exs"),
+             workspace,
+             @permissions
+           ) == :allow
   end
 
   test "shell control operators and malformed rules fail closed", %{workspace: workspace} do
@@ -30,17 +35,17 @@ defmodule ReyCode.Security.ApprovalRulesTest do
 
     for command <- ["mix test; rm -rf .", "mix test && echo unsafe", "mix test $(whoami)"] do
       refute ApprovalRules.allows?(workspace, call(command))
-      assert ToolRegistry.authorization(call(command), workspace) == :ask
+      assert ToolRegistry.authorization(call(command), workspace, @permissions) == :ask
     end
 
     File.write!(rules_path(workspace), ~s({"version":1,"allow":{"bash":["mix * test"]}}))
     assert {:error, :invalid_schema} = ApprovalRules.load(workspace)
-    assert ToolRegistry.authorization(call("mix test"), workspace) == :ask
+    assert ToolRegistry.authorization(call("mix test"), workspace, @permissions) == :ask
   end
 
   test "missing and symlinked rule files fail closed", %{workspace: workspace} do
     assert {:error, :missing} = ApprovalRules.load(workspace)
-    assert ToolRegistry.authorization(call("git status"), workspace) == :ask
+    assert ToolRegistry.authorization(call("git status"), workspace, @permissions) == :ask
 
     outside =
       Path.join(
@@ -53,7 +58,7 @@ defmodule ReyCode.Security.ApprovalRulesTest do
     :ok = :file.make_symlink(to_charlist(outside), to_charlist(rules_path(workspace)))
 
     assert {:error, :not_regular} = ApprovalRules.load(workspace)
-    assert ToolRegistry.authorization(call("git status"), workspace) == :ask
+    assert ToolRegistry.authorization(call("git status"), workspace, @permissions) == :ask
   end
 
   test "read-only tools remain allowed and unknown tools remain denied", %{workspace: workspace} do

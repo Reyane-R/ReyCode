@@ -15,7 +15,13 @@ defmodule ReyCode.Tool.EvalTest do
     end
 
     start_request = request.(%{action: "start", name: name, language: "python"})
-    policy = RuntimeConfig.fresh(workspace_roots: [workspace])
+
+    policy =
+      RuntimeConfig.fresh(
+        workspace_roots: [workspace],
+        tool_permissions: %{default: :ask, rules: []}
+      )
+
     assert {:ask, _} = ToolRegistry.dispatch(start_request, policy)
     assert %Result{ok: true} = ToolRegistry.execute(start_request, policy)
 

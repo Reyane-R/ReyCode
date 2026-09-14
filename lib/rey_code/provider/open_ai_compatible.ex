@@ -408,7 +408,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp wire_tool_description("lsp") do
-    "Query a configured language server; rename is owner-approved before workspace edits apply"
+    "Query a configured language server; rename validates workspace edits before applying them"
   end
 
   defp wire_tool_description("process") do
@@ -425,7 +425,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp wire_tool_description("eval"),
     do:
-      "Run bounded Python or JavaScript code in a persistent kernel; host execution requires approval"
+      "Run bounded Python or JavaScript code in a persistent kernel under configured tool permissions"
 
   defp wire_tool_description("memory") do
     "Store and retrieve bounded workspace memory. Record kind=decision when choosing an " <>

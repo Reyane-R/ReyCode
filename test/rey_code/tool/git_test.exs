@@ -32,7 +32,12 @@ defmodule ReyCode.Tool.GitTest do
     File.write!(Path.join(workspace, "README.txt"), "committed\n")
     git!(workspace, ["add", "README.txt"])
     request = request(workspace, %{action: "commit", message: "update docs"})
-    policy = RuntimeConfig.fresh(workspace_roots: [workspace])
+
+    policy =
+      RuntimeConfig.fresh(
+        workspace_roots: [workspace],
+        tool_permissions: %{default: :ask, rules: []}
+      )
 
     assert {:ask, %Request{tool: "git"}} = ToolRegistry.dispatch(request, policy)
     assert %Result{ok: true} = ToolRegistry.execute(request, policy)
@@ -44,7 +49,13 @@ defmodule ReyCode.Tool.GitTest do
       request(workspace, %{action: "resolve_conflict", path: "README.txt", choice: "root"})
 
     assert {:ask, %Request{tool: "git"}} =
-             ToolRegistry.dispatch(request, RuntimeConfig.fresh(workspace_roots: [workspace]))
+             ToolRegistry.dispatch(
+               request,
+               RuntimeConfig.fresh(
+                 workspace_roots: [workspace],
+                 tool_permissions: %{default: :ask, rules: []}
+               )
+             )
   end
 
   test "supports diff, log, branches, and conflict inspection", %{workspace: workspace} do

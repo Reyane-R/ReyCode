@@ -148,6 +148,7 @@ defmodule ReyCode.RuntimeConfig do
         max_checkpoint_bytes: values.max_checkpoint_bytes
       },
       tools: %Tools{
+        permissions: values.tool_permissions,
         bash: %Tools.Bash{
           timeout_ms: values.tool_bash_timeout_ms,
           max_output_bytes: values.tool_bash_max_output_bytes,

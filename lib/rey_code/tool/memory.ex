@@ -21,7 +21,7 @@ defmodule ReyCode.Tool.Memory do
     end
   end
 
-  @doc "Memory mutations require owner approval; recall and reflect are read-only."
+  @doc "Classifies memory mutations; recall and reflect are read-only."
   @spec mutating_action?(term()) :: boolean()
   def mutating_action?(action), do: action in ["retain", "learn", "forget"]
 

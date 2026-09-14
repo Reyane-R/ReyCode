@@ -45,7 +45,12 @@ defmodule ReyCode.Tool.LSPTest do
     request =
       request(workspace, "rename", file, %{"new_name" => "beta"})
 
-    assert {:ask, %Request{tool: "lsp"}} = ToolRegistry.dispatch(request, policy)
+    asking = %{
+      policy
+      | tools: %{policy.tools | permissions: %ReyCode.Security.Permissions{default: :ask}}
+    }
+
+    assert {:ask, %Request{tool: "lsp"}} = ToolRegistry.dispatch(request, asking)
 
     assert %Result{ok: true, metadata: %{"files" => 1, "edits" => 1}} =
              ToolRegistry.execute(request, policy)

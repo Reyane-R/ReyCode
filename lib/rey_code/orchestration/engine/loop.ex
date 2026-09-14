@@ -358,15 +358,13 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       workspace_roots: workspace_roots
     }
 
-    session = state.projection.sessions[invocation.session_id]
-
-    authorization =
-      if session.verified_change != nil and call.tool == "write",
-        do: :ask,
-        else: tool_authorization(call, workspace)
+    authorization = ToolRegistry.authorization(call, workspace, state.config.tools.permissions)
 
     run = %{run | authorization: authorization}
-    entries = tool_run_request_entries(invocation, run, authorization)
+
+    entries =
+      tool_run_request_entries(invocation, run, authorization, state.config.tools.permissions)
+
     next = Persistence.append_and_apply!(state, entries)
     run = next.projection.invocations[invocation.id].tool_runs[run.id]
     next = maybe_release_for_approval(next, invocation, authorization)
@@ -442,20 +440,17 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   defp authorization_action(:ask), do: :await
   defp authorization_action(:denied), do: :denied
 
-  defp tool_authorization(call, workspace),
-    do: ToolRegistry.authorization(call, workspace)
-
-  defp tool_run_request_entries(invocation, run, :denied) do
+  defp tool_run_request_entries(invocation, run, :denied, permissions) do
     [
       EventEntries.tool_run_requested(invocation, run),
       EventEntries.tool_run_failed(invocation, run, %{
         "ok" => false,
-        "error" => "unknown_tool"
+        "error" => Atom.to_string(ToolRegistry.denial_reason(run, run.workspace, permissions))
       })
     ]
   end
 
-  defp tool_run_request_entries(invocation, run, _authorization),
+  defp tool_run_request_entries(invocation, run, _authorization, _permissions),
     do: [EventEntries.tool_run_requested(invocation, run)]
 
   defp maybe_release_for_approval(state, invocation, :ask),

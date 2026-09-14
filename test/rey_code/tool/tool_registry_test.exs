@@ -19,7 +19,15 @@ defmodule ReyCode.ToolRegistryTest do
     Request.new(tool: tool, arguments: arguments, workspace: @workspace, roots: [@root])
   end
 
-  defp policy, do: RuntimeConfig.fresh(workspace_roots: [@root])
+  defp policy,
+    do:
+      RuntimeConfig.fresh(
+        workspace_roots: [@root],
+        tool_permissions: %{
+          default: :allow,
+          rules: [%{tool: "bash", action: :ask}, %{tool: "write", action: :ask}]
+        }
+      )
 
   test "allow-listed tools execute immediately" do
     path = Path.join(@workspace, "note.txt")
@@ -50,39 +58,10 @@ defmodule ReyCode.ToolRegistryTest do
     assert File.read!(path) == "data"
   end
 
-  test "allow tools are not approval-required; ask tools are" do
-    refute ToolRegistry.requires_approval?("read")
-    refute ToolRegistry.requires_approval?("grep")
-    assert ToolRegistry.requires_approval?("bash")
-    assert ToolRegistry.requires_approval?("write")
-  end
-
-  test "only mutating LSP requests require approval" do
-    refute ToolRegistry.requires_approval?(
-             request("lsp", %{action: "references", file: "lib/a.ex", line: 1})
-           )
-
-    assert ToolRegistry.requires_approval?(
-             request("lsp", %{action: "rename", file: "lib/a.ex", line: 1, new_name: "next"})
-           )
-  end
-
-  test "process state changes require approval while inspection remains read-only" do
-    refute ToolRegistry.requires_approval?(request("process", %{action: "logs", name: "web"}))
-
-    assert ToolRegistry.requires_approval?(
-             request("process", %{action: "start", name: "web", command: ["echo", "ok"]})
-           )
-  end
-
-  test "memory decisions remain owner-approved while recall stays read-only" do
-    assert ToolRegistry.requires_approval?(
-             request("memory", %{action: "retain", kind: "decision", key: "storage"})
-           )
-
-    refute ToolRegistry.requires_approval?(
-             request("memory", %{action: "recall", query: "storage"})
-           )
+  test "supported tools execute directly by default" do
+    for tool <- ToolRegistry.tool_names() do
+      assert ToolRegistry.authorization(request(tool, %{}), @root) == :allow
+    end
   end
 
   test "tool_names/0 lists the sixteen supported tools" do

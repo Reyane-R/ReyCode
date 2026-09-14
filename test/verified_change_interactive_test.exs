@@ -34,6 +34,10 @@ defmodule ReyCode.VerifiedChangeInteractiveTest do
 
     config =
       RuntimeConfig.fresh(
+        tool_permissions: %{
+          default: :allow,
+          rules: [%{tool: "write", action: :ask}, %{tool: "bash", action: :ask}]
+        },
         default_provider: :simulator,
         allow_simulator_provider: true,
         provider_discovery: false,

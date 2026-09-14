@@ -5,6 +5,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
   # {key, default-lambda, kind} — validated by validate_kind!/3.
   alias ReyCode.Orchestration.Squad
   alias ReyCode.Provider.OpenAICompatible.Profile
+  alias ReyCode.Security.Permissions
 
   defp settings do
     [
@@ -51,6 +52,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:max_replay_events, fn -> 2_000 end, {:integer, 1}},
       {:max_checkpoint_bytes, fn -> 67_108_864 end, {:integer, 1}},
       # Tool policy
+      {:tool_permissions, fn -> %{default: :allow, rules: []} end, :permissions},
       {:tool_bash_timeout_ms, fn -> 30_000 end, {:integer, 1}},
       {:tool_bash_max_output_bytes, fn -> 256_000 end, {:integer, 1}},
       {:tool_bash_max_error_bytes, fn -> 64_000 end, {:integer, 1}},
@@ -134,6 +136,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
   end
 
   # validation implementation
+  defp validate_kind!(_key, value, :permissions), do: Permissions.new!(value)
   ## Validation
 
   defp validate_kind!(_key, :infinity, kind) when kind in [:limit, :queue_limit], do: :infinity

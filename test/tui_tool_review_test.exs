@@ -250,6 +250,14 @@ defmodule ReyCode.TUI.ToolReviewTest do
 
     config = RuntimeConfig.load!()
 
+    config = %{
+      config
+      | tools: %{
+          config.tools
+          | permissions: %ReyCode.Security.Permissions{rules: [%{tool: "write", action: :ask}]}
+        }
+    }
+
     opts = [
       name: engine,
       event_store: store,

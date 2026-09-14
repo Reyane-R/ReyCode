@@ -53,7 +53,7 @@ defmodule ReyCode.Security.VerifiedChangeBoundary do
 
   def start_request(session, run) do
     with :ok <- authorize(session, run) do
-      if run.tool == "write" and run.resolution != :approve,
+      if run.authorization != :allow and run.resolution != :approve,
         do: {:error, :verified_change_approval_required},
         else: {:ok, %{scoped_request(session, run) | request_id: run.id}}
     end

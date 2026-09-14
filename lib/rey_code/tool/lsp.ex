@@ -5,7 +5,7 @@ defmodule ReyCode.Tool.LSP do
   Each call initializes a fresh server for the Invocation workspace, opens one
   bounded UTF-8 document, performs one request, and shuts the process down.
   Read-only operations return bounded JSON. `rename` applies only a validated
-  `WorkspaceEdit.changes` set after the durable ToolRun has owner approval.
+  `WorkspaceEdit.changes` set after the durable ToolRun is authorized.
   """
 
   @behaviour ReyCode.Tool

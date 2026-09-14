@@ -46,6 +46,10 @@ defmodule ReyCode.AgentLoopLifecycleTest do
       provider_catalog: ReyCode.Provider.Catalog,
       config:
         RuntimeConfig.fresh(
+          tool_permissions: %{
+            default: :allow,
+            rules: [%{tool: "write", action: :ask}, %{tool: "bash", action: :ask}]
+          },
           allow_simulator_provider: true,
           default_provider: :simulator
         ),

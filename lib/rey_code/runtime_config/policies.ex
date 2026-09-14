@@ -329,6 +329,7 @@ defmodule ReyCode.RuntimeConfig.Tools do
   }
 
   @enforce_keys [
+    :permissions,
     :bash,
     :read,
     :edit,
@@ -345,6 +346,7 @@ defmodule ReyCode.RuntimeConfig.Tools do
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
+          permissions: ReyCode.Security.Permissions.t(),
           bash: Bash.t(),
           read: Read.t(),
           edit: Edit.t(),

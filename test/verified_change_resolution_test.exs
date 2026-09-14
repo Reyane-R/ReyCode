@@ -871,6 +871,10 @@ defmodule ReyCode.VerifiedChangeResolutionTest do
 
     config =
       RuntimeConfig.fresh(
+        tool_permissions: %{
+          default: :allow,
+          rules: [%{tool: "bash", action: :ask}, %{tool: "write", action: :ask}]
+        },
         default_provider: :simulator,
         allow_simulator_provider: true,
         provider_discovery: false,

@@ -219,6 +219,10 @@ defmodule ReyCode.RuntimeConfigTest do
       projection_checkpoint_interval: config.persistence.checkpoint_interval,
       max_replay_events: config.persistence.max_replay_events,
       max_checkpoint_bytes: config.persistence.max_checkpoint_bytes,
+      tool_permissions: %{
+        default: config.tools.permissions.default,
+        rules: Enum.map(config.tools.permissions.rules, &Map.from_struct/1)
+      },
       tool_bash_timeout_ms: config.tools.bash.timeout_ms,
       tool_bash_max_output_bytes: config.tools.bash.max_output_bytes,
       tool_bash_max_error_bytes: config.tools.bash.max_error_bytes,

@@ -69,6 +69,10 @@ defmodule ReyCode.NativeProviderIntegrationTest do
 
     config =
       RuntimeConfig.fresh(
+        tool_permissions: %{
+          default: :allow,
+          rules: [%{tool: "bash", action: :ask}, %{tool: "write", action: :ask}]
+        },
         workspace_roots: [workspace],
         openai_compatible_transport: ModelWire
       )

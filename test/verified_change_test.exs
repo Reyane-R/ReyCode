@@ -556,6 +556,7 @@ defmodule ReyCode.VerifiedChangeTest do
       ReyCode.RuntimeConfig.fresh(
         Keyword.merge(
           [
+            tool_permissions: %{default: :allow, rules: [%{tool: "write", action: :ask}]},
             default_provider: :simulator,
             allow_simulator_provider: true,
             agent_delay_ms: delay_ms

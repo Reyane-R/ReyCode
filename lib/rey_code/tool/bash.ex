@@ -1,10 +1,10 @@
 defmodule ReyCode.Tool.Bash do
   @moduledoc """
-  Executes an approved shell command against the host under a minimal
+  Executes an authorized shell command against the host under a minimal
   allowlisted environment.
 
-  Bash is explicit host execution, not a filesystem sandbox: every run shows
-  the exact command for owner approval before anything executes. On timeout
+  Bash is explicit host execution, not a filesystem sandbox. Permission rules
+  are evaluated by the registry before execution. On timeout
   the whole process tree is torn down — the environment wrapper traps TERM
   and kills its process group, and the executor escalates to SIGKILL. Stdout
   and stderr are captured separately under byte caps, and every result reports

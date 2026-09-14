@@ -10,7 +10,13 @@ defmodule ReyCode.Tool.DebugTest do
     workspace = temp_dir()
     server = fake_server(workspace)
     name = "debug-#{System.unique_integer([:positive])}"
-    policy = RuntimeConfig.fresh(workspace_roots: [workspace], tool_debugger_command: [server])
+
+    policy =
+      RuntimeConfig.fresh(
+        workspace_roots: [workspace],
+        tool_debugger_command: [server],
+        tool_permissions: %{default: :ask, rules: []}
+      )
 
     request =
       Request.new(

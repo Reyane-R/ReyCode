@@ -4,7 +4,7 @@ defmodule ReyCode.Tool.Git do
 
   Inspection never stages or writes. Commit only commits already-staged files;
   conflict resolution writes one explicitly selected file version and requires
-  owner approval through the normal ToolRun gate.
+  authorization through the configured ToolRun permission policy.
   """
 
   @behaviour ReyCode.Tool

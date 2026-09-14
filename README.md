@@ -258,7 +258,7 @@ commands, or check output. The assistant itself cannot run shell, Git, network,
 debugger, LSP, background-process, memory, or delegation tools in this mode.
 Its file tools are confined to the isolated worktree. Git metadata, ignore and
 attribute rules, ignored untracked files, and hardlinked mutation targets are
-protected. Creating files with `write` still requires approval. Interactive
+protected. Creating files with `write` follows configured tool permissions. Interactive
 verification waits for you; the headless command cancels and reports `blocked`
 when approval or an operator answer is needed. Neither surface automatically
 grants broader permission. Restart does not resume an interrupted coordinator.
@@ -480,7 +480,7 @@ ReyCode treats unstated assumptions and implementation choices as traceable
 work. When materially different paths require your judgment, the assistant uses
 `ask_operator`. Otherwise it records a typed `decision` or `assumption` in
 ProjectMemory before proceeding, with rationale, alternatives, and concrete
-file/ToolRun evidence. Memory mutation remains owner-approved, and the timeline
+file/ToolRun evidence. Memory updates execute directly by default, and the timeline
 shows the recording ToolRun as `Recorded · <key>`.
 
 Use `/decisions` to browse active and invalidated records for the current
@@ -523,7 +523,7 @@ Developer environment tools include structured Git status/diff/review/commit and
 conflict-resolution operations, DAP debugger sessions, persistent Python and
 JavaScript evaluation kernels, web search, rich URL/PDF/HTML/JSON reading,
 project memory, and an opt-in Advisor review. Git commits, conflict resolution,
-debugger execution, evaluation, and memory mutation require owner approval.
+debugger execution, evaluation, and memory mutation follow configured tool permissions.
 `/hub` opens the live delegated-child control surface. Wide terminals show a
 roster and selected-Invocation inspector together; narrow terminals use `Tab`
 to switch panels. `T` toggles flat/tree lineage, `M` reviews a pending patch,
@@ -707,9 +707,9 @@ Local   failed     -       -           211      Provider is unavailable
 Use `--json` for the same fields in machine-readable form. The command exits
 zero only when every candidate completes; otherwise it prints the complete
 report and exits nonzero. `--timeout-ms` bounds the audition (default 600000).
-Workspace roots and tool approval are identical to ordinary runs: `bash` and
-`write` still need owner approval, so unattended auditions should use
-read-only tasks.
+Workspace roots and tool permissions are identical to ordinary runs. Tools
+execute directly by default; an explicitly configured approval requirement
+needs an interactive run.
 
 ## Model API setup
 
@@ -850,8 +850,8 @@ Providers can request workspace and developer-environment tools — `read`,
 `write`, `edit`, `bash`, `grep`, `glob`, `list`, `lsp`, `process`, `git`, `debug`,
 `eval`, `memory`, `web_search`, and `read_url`. ReyCode executes them inside
 trusted Workspace roots where applicable. Read-only inspection runs after
-containment checks. Bash, write, Git mutations, debugger control, evaluation,
-and memory mutations require owner approval. Unknown tools fail closed. See
+containment checks. Supported tools run directly by default; configured rules
+can require approval or deny execution. Unknown tools fail closed. See
 [Tool approval](#tool-approval) for the approval surface.
 
 For editable files within the read byte limit, `read` returns a lowercase
@@ -868,7 +868,7 @@ workspace-contained; rename validates the returned WorkspaceEdit before
 applying it.
 
 The `process` tool owns bounded named background processes. `start`, `stop`,
-and `restart` require approval; `list`, `logs`, and bounded readiness `wait`
+and `restart` change process state; `list`, `logs`, and bounded readiness `wait`
 only inspect Hub state. Processes retain only the newest configured output
 bytes and are terminated when the supervised Hub stops.
 
@@ -876,7 +876,7 @@ bytes and are terminated when the supervised Hub stops.
 and conflict-resolution operations. `debug` drives a configured DAP adapter for
 breakpoints, threads, stack frames, scopes, variables, evaluation, stepping,
 and controlled execution. `eval` keeps one bounded Python or JavaScript
-namespace alive between approved calls.
+namespace alive between calls.
 
 `web_search` uses an explicitly configured JSON search endpoint. `read_url`
 normalizes bounded HTML, JSON, text, and PDF responses when `pdftotext` is
@@ -888,8 +888,34 @@ installed. `memory` stores append-only project facts and lessons in SQLite;
 Providers can only request workspace tools — `read`, `write`, `edit`, `bash`,
 `grep`, `glob`, `list`, `lsp`, `process`, `git`, `debug`, `eval`, `memory`,
 `web_search`, and `read_url`. Read-only inspection runs after containment
-checks. Bash, write, Git mutations, debugger control, evaluation, and memory
-mutations require owner approval. Unknown tools fail closed.
+checks. Tools execute directly by default, including Bash, Write, and memory
+updates. Unknown tools fail closed. Configure optional permissions in Elixir:
+
+```elixir
+config :rey_code, tool_permissions: %{
+  default: :allow,
+  rules: [
+    %{tool: "bash", action: :ask},
+    %{tool: "bash", pattern: "mix test*", action: :allow},
+    %{tool: "bash", pattern: "git push*", action: :deny},
+    %{tool: "write", pattern: "private/*", action: :deny}
+  ]
+}
+```
+
+Actions are `:allow`, `:ask`, and `:deny`. Rules are ordered: the last matching
+rule wins. Tool `"*"` matches every executable tool. Optional patterns match
+the supplied `command` for Bash and canonical `path` for file tools (`*` and `?`
+wildcards). Relative path patterns use the canonical workspace-relative path;
+absolute patterns use the canonical absolute path, including symlink resolution.
+Patterns are supported for `bash`, `read`, `write`, `edit`, `glob`, `list`, and
+`grep`; other tools accept tool-wide rules only. Missing or oversized pattern
+inputs, unresolved paths, and exhausted matching budgets deny execution with
+a diagnostic category rather than falling back to an allow rule.
+Command patterns match the whole submitted string, not individual shell commands.
+Rules are limited to 128 entries and patterns to 512 bytes; invalid config
+fails at startup. Workspace containment, deadlines, output limits, and
+verified-change acceptance still apply independently of tool permissions.
 
 Configure the additional tools with these environment variables:
 
@@ -901,8 +927,8 @@ REYCODE_WEB_SEARCH_ENDPOINT=https://api.search.brave.com/res/v1/web/search
 REYCODE_WEB_SEARCH_KEY_ENV=BRAVE_API_KEY
 ```
 
-Git inspection is read-only; commits and conflict resolutions are approval
-gated. Debugger, evaluation, and memory mutation calls are also approval-gated.
+Git inspection is read-only; commits and conflict resolutions execute under
+the same configured permissions as debugger, evaluation, and memory calls.
 Web search requires an explicitly configured endpoint and key environment
 variable; credentials are read at invocation time and never persisted.
 
@@ -921,8 +947,9 @@ A Workspace can auto-allow familiar Bash commands with
 Rules are per Workspace. Each entry is either an exact command or one trailing
 ` *` wildcard; the wildcard matches the base command and its arguments.
 Commands containing shell control operators never match. Missing, malformed,
-oversized, or symlinked rule files fail closed and leave the ordinary approval
-gate in place. Rules cannot allow unknown tools or change read-only policy.
+oversized, or symlinked rule files do not grant an exception. These legacy
+allow rules apply only when configured permissions resolve to `:ask`; they
+never override `:deny` or allow an unknown tool.
 
 When a tool needs approval, ReyCode emits one terminal bell for the newly
 pending durable request and a banner appears above the current transcript:

@@ -22,7 +22,7 @@ defmodule ReyCode.Tool.Eval do
     end
   end
 
-  @doc "Evaluation is host execution and always requires owner approval."
+  @doc "Evaluation is host execution, classified as a mutation."
   @spec mutating_action?(term()) :: boolean()
   def mutating_action?(action), do: action in @actions
 
