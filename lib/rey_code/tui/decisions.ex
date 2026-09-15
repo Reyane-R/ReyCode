@@ -6,7 +6,7 @@ defmodule ReyCode.TUI.Decisions do
   alias Breeze.{Component, View}
   alias ReyCode.Memory.Store
   alias ReyCode.Provider.TextBuffer
-  alias ReyCode.TUI.{Notice, SlashPalette}
+  alias ReyCode.TUI.{Challenge, Notice, SlashPalette}
 
   @kinds ~w(decision assumption)
   @max_entry_count 100
@@ -64,6 +64,17 @@ defmodule ReyCode.TUI.Decisions do
   end
 
   def handle_input(key, term) when key in ["y", "Y"], do: invalidate(term)
+
+  def handle_input(key, term) when key in ["c", "C"] do
+    case current_entry(term) do
+      nil ->
+        {:noreply, term}
+
+      entry ->
+        {:noreply, Challenge.open(term, %{"kind" => "decision", "id" => entry.id})}
+    end
+  end
+
   def handle_input("Enter", term), do: submit(term)
 
   def handle_input("Escape", %{assigns: %{decisions: %{step: :detail}}} = term),
@@ -224,8 +235,11 @@ defmodule ReyCode.TUI.Decisions do
   defp term_assigns(assigns), do: assigns
   defp status(%{active: true}), do: "active"
   defp status(%{active: false}), do: "invalidated"
-  defp controls(:list), do: "j/k move   Enter inspect   Y invalidate   Esc close"
-  defp controls(:detail), do: "j/k or PageUp/PageDown scroll   Y invalidate   Esc list"
+  defp controls(:list), do: "j/k move   Enter inspect   C challenge   Y invalidate   Esc close"
+
+  defp controls(:detail),
+    do: "j/k or PageUp/PageDown scroll   C challenge   Y invalidate   Esc list"
+
   defp scroll_delta(key) when key in ["ArrowUp", "k"], do: -1
   defp scroll_delta(key) when key in ["ArrowDown", "j"], do: 1
   defp scroll_delta("PageUp"), do: -@visible_line_count

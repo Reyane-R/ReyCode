@@ -15,6 +15,7 @@ defmodule ReyCode.TUI.Components.Modals do
     AgentProfile,
     Artifacts,
     Cancellation,
+    Challenge,
     ContextBoundary,
     Decisions,
     Delegation,
@@ -39,6 +40,7 @@ defmodule ReyCode.TUI.Components.Modals do
   alias ReyCode.TUI.Components.SettingsModal
 
   @registry %{
+    challenge: Challenge,
     verification: Verification,
     artifacts: Artifacts,
     agent_hub: AgentHub,
@@ -87,6 +89,7 @@ defmodule ReyCode.TUI.Components.Modals do
   defp dispatch(:agent_profile, assigns), do: AgentProfile.modal(assigns)
   defp dispatch(:context_boundary, assigns), do: ContextBoundary.modal(assigns)
   defp dispatch(:decisions, assigns), do: Decisions.modal(assigns)
+  defp dispatch(:challenge, assigns), do: Challenge.modal(assigns)
   defp dispatch(:delegation, assigns), do: Delegation.modal(assigns)
   defp dispatch(:hotkeys, assigns), do: Hotkeys.modal(assigns)
   defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)

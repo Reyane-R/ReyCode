@@ -18,6 +18,11 @@ defmodule ReyCode.Capabilities do
     %{command: "/artifacts", description: "Inspect spooled ToolRun outputs", action: :artifacts},
     %{command: "/cancel", description: "Cancel the current task", action: :cancel},
     %{
+      command: "/challenge",
+      description: "Question an answer or decision against frozen evidence",
+      action: :challenge
+    },
+    %{
       command: "/changes",
       description: "Review retained verification evidence and resolve a patch",
       action: :verified_changes

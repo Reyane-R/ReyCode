@@ -175,6 +175,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     assert Breeze.Test.metadata(session).focused == timeline_id
 
     for target <- [
+          "choose-model",
           "verification-review",
           "verification-cancel",
           "verification-tools",
@@ -531,7 +532,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
 
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "Workspace"
-    assert screen =~ "Browse commands"
+    assert screen =~ "Browse actions"
     assert screen =~ "Message Assistant"
   end
 

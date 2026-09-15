@@ -1,7 +1,7 @@
 defmodule ReyCode.TUI.SlashPaletteTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.TUI.{Notice, SlashPalette}
+  alias ReyCode.TUI.{Notice, PaletteMenu, SlashPalette}
 
   test "matches/1 filters commands by prefix" do
     assert Enum.take(Enum.map(SlashPalette.matches("/ag"), & &1.command), 2) == [
@@ -19,7 +19,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert Enum.map(SlashPalette.matches("/exp"), & &1.command) == ["/export"]
 
     assert Enum.map(SlashPalette.matches("/"), & &1.command) ==
-             ~w(/verify /task /agent /agents /model /connect /new /resume /plan /artifacts /help)
+             ~w(/new /resume /agents /@agents /@review /@settings)
   end
 
   test "the registry is the single consistent source of commands and actions" do
@@ -113,9 +113,9 @@ defmodule ReyCode.TUI.SlashPaletteTest do
       })
 
     assert length(SlashPalette.rows(assigns, 40)) == 12
-    assert length(SlashPalette.rows(assigns, 20)) == 11
+    assert length(SlashPalette.rows(assigns, 20)) == 10
     assert length(SlashPalette.rows(assigns, 10)) == 1
-    assert SlashPalette.style(80, 10, assigns).height == 2
+    assert SlashPalette.style(80, 10, assigns).height == 3
   end
 
   test "the root palette prepends commands relevant to current work" do
@@ -124,10 +124,9 @@ defmodule ReyCode.TUI.SlashPaletteTest do
       |> SlashPalette.rows(40)
       |> Enum.map(fn {candidate, _index} -> candidate.label end)
 
-    assert Enum.take(labels, 4) == ~w(/steer /cancel /dequeue /hub)
+    assert Enum.take(labels, 3) == ~w(/cancel /steer /dequeue)
 
-    assert Enum.slice(labels, 4, 8) ==
-             ~w(/verify /task /agent /agents /model /connect /new /resume)
+    assert Enum.drop(labels, 3) == ~w(/new /resume /agents /@agents /@review /@settings)
   end
 
   test "cancel/1 restores the original draft" do
@@ -137,6 +136,190 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert result.assigns.slash == nil
     assert result.assigns.drafts["room-1"] == "original"
     assert result.focused == "prompt"
+  end
+
+  test "root uses goal labels and groups browse without replacing the original draft" do
+    opened = SlashPalette.open(term(draft: "Keep my question"))
+
+    labels =
+      opened.assigns
+      |> SlashPalette.rows(40)
+      |> Enum.map(fn {candidate, _} -> PaletteMenu.label(candidate) end)
+
+    assert labels == [
+             "New conversation",
+             "Resume a conversation",
+             "Choose a model",
+             "Work with task agents…",
+             "Review work…",
+             "Settings…"
+           ]
+
+    {:noreply, grouped} = opened |> SlashPalette.move(4) |> SlashPalette.execute_selected()
+    assert grouped.assigns.modal == :slash
+    assert grouped.assigns.slash.group == :review
+    assert grouped.assigns.slash.restore_draft == "Keep my question"
+
+    names =
+      grouped.assigns
+      |> SlashPalette.rows(40)
+      |> Enum.map(fn {candidate, _} -> candidate.value end)
+
+    assert "/challenge" in names and "/runs" in names and "/verify" in names
+    assert SlashPalette.command("/@review") == nil
+    {:noreply, root} = SlashPalette.handle_input("Escape", grouped)
+    assert root.assigns.modal == :slash
+    assert root.assigns.slash.group == :root
+    {:noreply, closed} = SlashPalette.handle_input("Escape", root)
+    assert closed.assigns.drafts["room-1"] == "Keep my question"
+  end
+
+  test "plain-language phrases find actions without breaking explicit argument completion" do
+    assert hd(SlashPalette.matches("/switch model")).command == "/agents"
+    assert hd(SlashPalette.matches("/why")).command == "/challenge"
+    assert hd(SlashPalette.matches("/check changes")).command == "/verify"
+    assert hd(SlashPalette.matches("/check changes")).palette_open?
+    assert SlashPalette.matches("/not a real action zzzz") == []
+    assert hd(SlashPalette.matches("/model")).command == "/model"
+    assert SlashPalette.matches("/steer change direction") == []
+  end
+
+  test "a grouped action dispatches once and restores the existing draft" do
+    root = SlashPalette.open(term(draft: "Keep my question"))
+    {:noreply, settings} = root |> SlashPalette.move(5) |> SlashPalette.execute_selected()
+    assert settings.assigns.slash.group == :settings
+    {:noreply, help} = settings |> SlashPalette.move(5) |> SlashPalette.execute_selected()
+    assert help.assigns.modal == :help
+    assert help.assigns.slash == nil
+    assert help.assigns.drafts["room-1"] == "Keep my question"
+  end
+
+  test "Tab browses a group without inserting an internal navigation token" do
+    grouped = term(restore_draft: "Keep me") |> SlashPalette.move(4) |> SlashPalette.complete()
+    assert grouped.assigns.slash.group == :review
+    assert grouped.assigns.drafts["room-1"] == "/"
+    refute grouped.assigns.drafts["room-1"] =~ "@review"
+  end
+
+  test "semantic activation retains trailing arguments and revalidates them" do
+    searching =
+      term(query: "/exit unexpected")
+      |> put_in([Access.key(:assigns), :slash, :cursor], 5)
+
+    assert {:noreply, result} = SlashPalette.execute_selected(searching)
+    assert result.assigns.drafts["room-1"] == "/quit unexpected"
+    assert result.assigns.modal == :slash
+    assert %Notice{severity: :warning} = result.assigns.notice
+  end
+
+  test "palette placement stays inside very short terminals" do
+    for height <- 1..10 do
+      style = SlashPalette.style(50, height, %{query: "/"})
+      assert style.height >= 1
+      assert style.bottom >= 0
+      assert style.bottom + style.height <= height
+    end
+  end
+
+  test "an unmatched action search does not discard the original draft" do
+    assert {:noreply, result} =
+             SlashPalette.execute_selected(
+               term(query: "/zzzz no action", restore_draft: "Keep my work")
+             )
+
+    assert result.assigns.drafts["room-1"] == "Keep my work"
+    assert result.assigns.modal == nil
+    assert %Notice{severity: :warning} = result.assigns.notice
+  end
+
+  test "pending approvals outrank routine navigation" do
+    pending =
+      contextual_term()
+      |> put_in([Access.key(:assigns), :projection, :turns, "turn-active"], %{
+        status: :running,
+        invocation_order: ["invocation-review"]
+      })
+      |> put_in(
+        [Access.key(:assigns), :projection, :invocations, "invocation-review", :status],
+        :waiting_tool_approval
+      )
+      |> put_in(
+        [
+          Access.key(:assigns),
+          :projection,
+          :invocations,
+          "invocation-review",
+          :pending_tool_review
+        ],
+        %{tool: "write"}
+      )
+
+    {candidate, _} =
+      Enum.find(SlashPalette.rows(pending.assigns, 40), fn {candidate, _} ->
+        candidate.value == "/tools"
+      end)
+
+    assert candidate.value == "/tools"
+    assert PaletteMenu.label(candidate) == "Review pending approval"
+  end
+
+  test "idle natural-language search hides pending-only actions while explicit shortcuts survive" do
+    for phrase <- ["/approve", "/question", "/stop"] do
+      refute Enum.any?(SlashPalette.matches(phrase), &(&1.command in ~w(/tools /answer /cancel)))
+    end
+
+    assert hd(SlashPalette.matches("/cancel")).command == "/cancel"
+  end
+
+  test "Stop remains visible with both pending approvals and questions" do
+    pending =
+      contextual_term()
+      |> put_in(
+        [
+          Access.key(:assigns),
+          :projection,
+          :invocations,
+          "invocation-review",
+          :pending_tool_review
+        ],
+        %{tool: "write"}
+      )
+      |> put_in(
+        [Access.key(:assigns), :projection, :invocations, "invocation-child", :coordination],
+        %{pending_question: %{}}
+      )
+
+    names =
+      pending.assigns
+      |> SlashPalette.rows(40)
+      |> Enum.take(3)
+      |> Enum.map(fn {candidate, _} -> candidate.value end)
+
+    assert names == ~w(/cancel /tools /answer)
+  end
+
+  test "merge approvals lead to task-agent review rather than tool approval" do
+    pending =
+      contextual_term()
+      |> put_in(
+        [
+          Access.key(:assigns),
+          :projection,
+          :invocations,
+          "invocation-child",
+          :pending_tool_review
+        ],
+        %{tool: "merge"}
+      )
+
+    names =
+      pending.assigns
+      |> SlashPalette.rows(40)
+      |> Enum.take(3)
+      |> Enum.map(fn {candidate, _} -> candidate.value end)
+
+    assert "/hub" in names
+    refute "/tools" in names
   end
 
   test "close/2 clears palette state and preserves a notice" do
@@ -190,7 +373,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
         "invocation-review" => %{
           id: "invocation-review",
           turn_id: "turn-active",
-          pending_tool_review: %{},
+          pending_tool_review: nil,
           delegated_from_invocation_id: nil
         },
         "invocation-child" => %{

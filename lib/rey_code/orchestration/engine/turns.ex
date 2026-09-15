@@ -1,6 +1,7 @@
 defmodule ReyCode.Orchestration.Engine.Turns do
   @moduledoc "Handles user-facing turn commands for the Engine."
 
+  alias ReyCode.Orchestration.Challenge
   alias ReyCode.Orchestration.Engine.{Admission, Identity, Lifecycle, Persistence}
   alias ReyCode.Orchestration.Engine.VerifiedChangeResolution
   alias ReyCode.Orchestration.{EventEntries, Mode, Squad, Validation, VerifiedChangeContext}
@@ -46,6 +47,26 @@ defmodule ReyCode.Orchestration.Engine.Turns do
       }
 
       queue(state, turn, if(focus in [nil, ""], do: "Review session strategy", else: focus))
+    else
+      nil -> {:reply, {:error, :session_not_found}, state}
+      {:error, reason} -> {:reply, {:error, reason}, state}
+      %{} -> {:reply, {:error, :verified_change_not_owner}, state}
+    end
+  end
+
+  @doc "Validates a selected target and queues a challenge with its frozen evidence."
+  def challenge(state, session_id, participant_id, selection, entries) do
+    with %{} = session <- state.projection.sessions[session_id],
+         nil <- session.verified_change,
+         {:ok, packet} <- Challenge.capture(state.projection, session, entries, selection) do
+      turn = %Turn{
+        session_id: session_id,
+        mode: :delegate,
+        participant_id: participant_id,
+        strategy_review: packet
+      }
+
+      queue(state, turn, packet.focus)
     else
       nil -> {:reply, {:error, :session_not_found}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}

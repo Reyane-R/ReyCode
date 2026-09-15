@@ -105,6 +105,7 @@ defmodule ReyCode.TUI.Completion do
   @spec candidates(Context.t()) :: [Candidate.t()]
   def candidates(%Context{} = context) do
     position = token_position(context.draft, context.cursor)
+    position = search_position(context, position)
 
     context
     |> source(position)
@@ -112,6 +113,25 @@ defmodule ReyCode.TUI.Completion do
     |> Enum.take(context.max_candidates)
     |> Enum.map(&candidate(&1, position))
   end
+
+  # Unknown slash-prefixed phrases are action searches; known commands retain
+  # their existing argument completion and validation behavior.
+  defp search_position(context, %{command: command} = position) when not is_nil(command) do
+    if String.starts_with?(context.draft, "/") and
+         not Enum.any?(context.commands, &(&1.command == command)) do
+      %{
+        position
+        | command: nil,
+          start: 0,
+          length: String.length(context.draft),
+          query: context.draft
+      }
+    else
+      position
+    end
+  end
+
+  defp search_position(_context, position), do: position
 
   @doc "Returns whether the cursor is inside an ordinary-message file mention."
   @spec file_mention_at?(String.t(), non_neg_integer()) :: boolean()
@@ -432,9 +452,13 @@ defmodule ReyCode.TUI.Completion do
   defp rank(entries, query) do
     query = query |> unquote_token() |> String.downcase()
 
-    entries
-    |> Enum.map(&{&1, fuzzy_rank(&1.label, query)})
-    |> Enum.reject(fn {_entry, result} -> is_nil(result) end)
+    ranked =
+      Enum.map(entries, &{&1, fuzzy_rank(&1.label, query)})
+      |> Enum.reject(fn {_entry, result} -> is_nil(result) end)
+
+    ranked = if ranked == [], do: semantic_matches(entries, query), else: ranked
+
+    ranked
     |> Enum.sort_by(fn {entry, result} ->
       {
         result,
@@ -444,6 +468,28 @@ defmodule ReyCode.TUI.Completion do
       }
     end)
     |> Enum.map(&elem(&1, 0))
+  end
+
+  defp semantic_matches(entries, query) do
+    query = String.trim_leading(query, "/")
+
+    Enum.flat_map(entries, fn entry ->
+      terms =
+        if entry.kind == :command and Map.get(entry.payload, :search_available?, true),
+          do: Map.get(entry.payload, :search_terms, []),
+          else: []
+
+      ranks = Enum.map(terms, &fuzzy_rank(&1, query)) |> Enum.reject(&is_nil/1)
+
+      if ranks == [] do
+        []
+      else
+        payload =
+          Map.put(entry.payload, :palette_open?, Map.get(entry.payload, :search_default?, false))
+
+        [{%{entry | payload: payload}, Enum.min(ranks)}]
+      end
+    end)
   end
 
   defp fuzzy_rank(label, query) do

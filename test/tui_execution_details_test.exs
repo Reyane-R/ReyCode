@@ -34,7 +34,13 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
       ~H"""
       <box class="w-screen h-screen">
         <box class="grid grid-cols-1 grid-rows-2 h-full w-full overflow-hidden">
-          <.timeline messages={@messages} timeline_id="timeline" message_width={70} activity_frame="*"/>
+          <.timeline
+            messages={@messages}
+            timeline_id="timeline"
+            message_width={70}
+            activity_frame="*"
+            terminal_height={@breeze.terminal.height}
+          />
           <box id="prompt" focusable class="h-1">Footer</box>
         </box>
       </box>
@@ -72,7 +78,7 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
     message = message("answer", notes ++ [run])
     session = start([message], 30)
     screen = Breeze.Test.render!(session)
-    assert screen =~ "1 tool actions"
+    assert screen =~ "1 tool action"
     assert screen =~ "Show details"
     assert screen =~ "Final response"
     refute screen =~ "secret.ex"
@@ -96,6 +102,56 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
     refute Breeze.Test.render!(session) =~ "secret.ex"
     Breeze.Test.input(session, " ")
     assert Breeze.Test.render!(session) =~ "Hide details"
+  end
+
+  test "thinking-only replies have a truthful disclosure and empty replies have none" do
+    thinking = start([message("thinking", [%{kind: :note, text: "Consider options"}])], 30)
+    screen = Breeze.Test.render!(thinking)
+    assert screen =~ "Thinking · Show details"
+    refute screen =~ "0 tool actions"
+    Breeze.Test.event(thinking, "execution_details_toggle", %{message_id: "thinking"})
+    assert Breeze.Test.render!(thinking) =~ "Consider options"
+
+    empty = start([message("empty", [])], 30)
+    refute Breeze.Test.render!(empty) =~ "Show details"
+  end
+
+  test "message boundaries breathe on tall terminals and tighten on short ones" do
+    user =
+      message("user", [])
+      |> Map.merge(%{role: :user, body: "First prompt", created_at: "2026-09-14T14:38:00Z"})
+
+    next = %{user | id: "next", body: "Second prompt"}
+
+    for {width, height} <- [{50, 24}, {80, 40}, {140, 40}] do
+      session =
+        Breeze.Test.start!(TimelineView,
+          size: {width, height},
+          start_opts: [messages: [user, message("reply", []), next]]
+        )
+
+      on_exit(fn -> Breeze.Test.stop(session) end)
+      screen = Breeze.Test.render!(session)
+
+      lines =
+        screen
+        |> String.replace(~r/\e\[[0-?]*[ -\/]*[@-~]/, "")
+        |> String.split("\n")
+        |> Enum.map(&String.trim/1)
+
+      first = Enum.find_index(lines, &(&1 == "│ First prompt"))
+      assistant = Enum.find_index(lines, &(&1 == "Assistant"))
+      answer = Enum.find_index(lines, &(&1 == "Final response"))
+      second = Enum.find_index(lines, &(&1 == "│ Second prompt"))
+
+      assert is_integer(first) and is_integer(assistant) and is_integer(answer) and
+               is_integer(second)
+
+      assert assistant - first == 2
+      assert answer - assistant == if(height >= 32, do: 2, else: 1)
+      assert second - answer == if(height >= 32, do: 4, else: 3)
+      assert screen =~ "Footer"
+    end
   end
 
   test "active, failed, denied and blocked executions never disappear" do

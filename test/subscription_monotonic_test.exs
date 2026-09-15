@@ -185,8 +185,12 @@ defmodule ReyCode.SubscriptionMonotonicTest do
            discovery?: true}
         )
 
+      # Probe arrival order is concurrent; collect the full provider set so
+      # DeepSeek is released regardless of which three happen to start first.
+      probe_count = map_size(Catalog.snapshot(catalog).providers)
+
       probes =
-        for _ <- 1..3 do
+        for _ <- 1..probe_count do
           assert_receive {:probe_started, _id, pid}, 500
           pid
         end

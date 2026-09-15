@@ -22,6 +22,7 @@ defmodule ReyCode.TUI.State do
     ModelTiers,
     Notice,
     OperatorQuestion,
+    PaletteMenu,
     PromptHistory,
     SessionPicker,
     SessionTree,
@@ -444,8 +445,8 @@ defmodule ReyCode.TUI.State do
     rows =
       Enum.map(SlashPalette.rows(assigns, height), fn {candidate, index} ->
         %{
-          command: candidate.label,
-          description: candidate.detail,
+          command: PaletteMenu.label(candidate),
+          description: PaletteMenu.detail(candidate),
           option_class: SlashPalette.option_class(index, assigns.slash.index),
           command_class: SlashPalette.command_class(candidate.kind, index, assigns.slash.index),
           description_class: SlashPalette.description_class(index, assigns.slash.index)

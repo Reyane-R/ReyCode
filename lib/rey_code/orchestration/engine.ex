@@ -6,7 +6,7 @@ defmodule ReyCode.Orchestration.Engine do
   alias ReyCode.EventStore
   alias ReyCode.Memory.Store, as: MemoryStore
 
-  alias ReyCode.Orchestration.Projector
+  alias ReyCode.Orchestration.{Challenge, Projector}
 
   alias ReyCode.Orchestration.Engine.{
     DelegationFinalization,
@@ -246,6 +246,17 @@ defmodule ReyCode.Orchestration.Engine do
   catch
     :exit, _reason -> {:error, :strategy_memory_unavailable}
   end
+
+  @doc "Queues a targeted, frozen, zero-tool challenge through a task Participant."
+  def challenge(session_id, participant_id, selection, server \\ __MODULE__) do
+    with {:ok, workspace} <- GenServer.call(server, {:strategy_workspace, session_id}),
+         {:ok, entries} <- challenge_memories(workspace, selection) do
+      GenServer.call(server, {:challenge, session_id, participant_id, selection, entries})
+    end
+  end
+
+  defp challenge_memories(workspace, %{"kind" => "decision"}), do: Challenge.memories(workspace)
+  defp challenge_memories(_workspace, _selection), do: {:ok, []}
 
   @doc "Records one OperatorQuestion answer selection."
   @spec answer_question(String.t(), String.t(), term(), GenServer.server()) ::
@@ -517,6 +528,9 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:advise_strategy, session_id, participant_id, focus, entries}, _from, state),
     do: Turns.advise_strategy(state, session_id, participant_id, focus, entries)
+
+  def handle_call({:challenge, session_id, participant_id, selection, entries}, _from, state),
+    do: Turns.challenge(state, session_id, participant_id, selection, entries)
 
   def handle_call({:answer_question, invocation_id, question_id, option_id}, _from, state),
     do:

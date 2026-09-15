@@ -15,6 +15,7 @@ defmodule ReyCode.TUI.SlashPalette do
     AgentProfile,
     Artifacts,
     Cancellation,
+    Challenge,
     Completion,
     ContextBoundary,
     Decisions,
@@ -25,6 +26,7 @@ defmodule ReyCode.TUI.SlashPalette do
     ModelTiers,
     Notice,
     OperatorQuestion,
+    PaletteMenu,
     PromptHistory,
     Recovery,
     SessionCommand,
@@ -40,23 +42,11 @@ defmodule ReyCode.TUI.SlashPalette do
   }
 
   @commands Capabilities.commands()
-  @commands_by_name Map.new(@commands, &{&1.command, &1})
-  @default_command_names [
-    "/verify",
-    "/task",
-    "/agent",
-    "/agents",
-    "/model",
-    "/connect",
-    "/new",
-    "/resume",
-    "/plan",
-    "/artifacts",
-    "/help"
-  ]
+  @situational_commands ~w(/cancel /steer /retry /tools /answer /dequeue)
   @max_visible_row_count 12
   @reserved_composer_row_count 8
   @palette_border_row_count 1
+  @palette_header_row_count 1
 
   @doc "Completes the palette query when Tab is pressed while it is open."
   @spec focus(map()) :: map()
@@ -88,6 +78,9 @@ defmodule ReyCode.TUI.SlashPalette do
       {:noreply, term}
     end
   end
+
+  def handle_input("Escape", %{assigns: %{slash: %{group: group}}} = term) when group != :root,
+    do: {:noreply, show_group(term, :root)}
 
   def handle_input("Escape", term), do: {:noreply, cancel(term)}
 
@@ -201,11 +194,17 @@ defmodule ReyCode.TUI.SlashPalette do
   @doc "Returns the fixed-position style for the command palette."
   @spec style(pos_integer(), pos_integer(), map() | nil) :: map()
   def style(terminal_width, terminal_height, slash) do
+    palette_height =
+      min(
+        height(slash, terminal_height) + @palette_border_row_count + @palette_header_row_count,
+        terminal_height
+      )
+
     %{
       position: :fixed,
       left: 0,
-      bottom: 6,
-      height: height(slash, terminal_height) + @palette_border_row_count,
+      bottom: min(6, max(terminal_height - palette_height, 0)),
+      height: palette_height,
       width: terminal_width,
       layer: 40
     }
@@ -216,9 +215,9 @@ defmodule ReyCode.TUI.SlashPalette do
   def option_class(_index, _selected), do: "inline w-full px-1 bg-panel"
 
   @doc "Returns the style class for a palette candidate label."
-  def command_class(:command, index, index), do: "w-14 text-bg"
+  def command_class(:command, index, index), do: "w-28 text-bg"
   def command_class(_kind, index, index), do: "pr-1 text-bg"
-  def command_class(:command, _index, _selected), do: "w-14 text-warning"
+  def command_class(:command, _index, _selected), do: "w-28 text-primary"
   def command_class(_kind, _index, _selected), do: "pr-1 text-warning"
 
   @doc "Returns the style class for a palette command description."
@@ -250,6 +249,9 @@ defmodule ReyCode.TUI.SlashPalette do
     case Enum.at(Completion.candidates(context), slash.index) do
       nil ->
         term
+
+      %{payload: %{palette_group: group}} ->
+        show_group(term, group)
 
       %{kind: :file} = candidate ->
         accept_file_candidate(term, context, candidate)
@@ -328,8 +330,21 @@ defmodule ReyCode.TUI.SlashPalette do
   @spec execute_selected(map()) :: {:noreply, map()}
   def execute_selected(%{assigns: %{slash: slash}} = term) do
     context = completion_context(term.assigns)
+    activate_candidate(term, context, Enum.at(Completion.candidates(context), slash.index))
+  end
 
-    case Enum.at(Completion.candidates(context), slash.index) do
+  defp activate_candidate(term, _context, %{payload: %{palette_group: group}}),
+    do: {:noreply, show_group(term, group)}
+
+  defp activate_candidate(term, context, %{payload: %{palette_open?: true} = command} = candidate) do
+    if candidate.replacement_start == 0 and
+         candidate.replacement_length == String.length(context.draft),
+       do: run_parsed(term, Map.put(command, :argument, nil)),
+       else: accept_and_dispatch(term, context, candidate)
+  end
+
+  defp activate_candidate(%{assigns: %{slash: slash}} = term, context, candidate) do
+    case candidate do
       %{kind: :file} = candidate ->
         {:noreply, accept_file_candidate(term, context, candidate)}
 
@@ -341,8 +356,8 @@ defmodule ReyCode.TUI.SlashPalette do
           {:error, _reason} ->
             {:noreply,
              term
-             |> clear_draft()
-             |> close(Notice.new(:warning, "Unknown command: #{slash.query}"))}
+             |> cancel()
+             |> Component.assign(notice: Notice.new(:warning, "Unknown command: #{slash.query}"))}
         end
 
       %{kind: :command, suffix: suffix} = candidate when suffix != "" ->
@@ -450,6 +465,7 @@ defmodule ReyCode.TUI.SlashPalette do
   defp run_action(term, :artifacts, nil), do: {:noreply, Artifacts.open(term)}
   defp run_action(term, :context_boundary, nil), do: {:noreply, ContextBoundary.open(term)}
   defp run_action(term, :decisions, nil), do: {:noreply, Decisions.open(term)}
+  defp run_action(term, :challenge, nil), do: {:noreply, Challenge.open(term)}
   defp run_action(term, :hotkeys, nil), do: {:noreply, Hotkeys.open(term)}
   defp run_action(term, :prompt_history, nil), do: {:noreply, PromptHistory.open(term)}
   defp run_action(term, :retry, nil), do: Recovery.retry_latest(term)
@@ -488,19 +504,25 @@ defmodule ReyCode.TUI.SlashPalette do
   end
 
   defp commands_for(assigns, "/") do
-    assigns
-    |> contextual_command_names()
-    |> Kernel.++(@default_command_names)
-    |> Enum.uniq()
-    |> Enum.with_index()
-    |> Enum.map(fn {name, priority} ->
-      @commands_by_name
-      |> Map.fetch!(name)
-      |> Map.put(:palette_priority, priority)
+    group = assigns |> Map.get(:slash, %{}) |> Kernel.||(%{}) |> Map.get(:group, :root)
+    names = contextual_command_names(assigns) |> Enum.uniq()
+    names = if "/cancel" in names, do: ["/cancel" | List.delete(names, "/cancel")], else: names
+    PaletteMenu.entries(group, Enum.take(names, 3))
+  end
+
+  defp commands_for(assigns, _draft) do
+    relevant = contextual_command_names(assigns)
+
+    Enum.map(PaletteMenu.commands(), fn command ->
+      available? = command.command not in @situational_commands or command.command in relevant
+      Map.put(command, :search_available?, available?)
     end)
   end
 
-  defp commands_for(_assigns, _draft), do: @commands
+  defp show_group(term, group) do
+    term = set_query(term, "/")
+    Component.assign(term, slash: Map.put(term.assigns.slash, :group, group))
+  end
 
   defp contextual_command_names(%{projection: projection, selected_session_id: session_id}) do
     case Map.get(projection.sessions, session_id) do
@@ -508,7 +530,9 @@ defmodule ReyCode.TUI.SlashPalette do
         []
 
       session ->
-        maybe_command(not is_nil(session.verified_change), "/changes") ++
+        pending_command_names(projection, session, session_id) ++
+          maybe_command(needs_connection?(session), "/connect") ++
+          maybe_command(not is_nil(session.verified_change), "/changes") ++
           maybe_command(
             match?(
               %{phase: phase} when phase not in ["ready", "blocked"],
@@ -537,6 +561,32 @@ defmodule ReyCode.TUI.SlashPalette do
   end
 
   defp contextual_command_names(_assigns), do: []
+
+  defp pending_command_names(projection, session, session_id) do
+    merge? =
+      Enum.any?(
+        Projection.delegated_invocations(projection, session_id),
+        &match?(%{pending_tool_review: %{tool: "merge"}}, &1)
+      )
+
+    maybe_command(
+      not is_nil(Projection.pending_tool_invocation(projection, session.active_turn_id)),
+      "/tools"
+    ) ++
+      maybe_command(
+        not is_nil(Projection.pending_question_invocation(projection, session_id)),
+        "/answer"
+      ) ++
+      maybe_command(merge?, "/hub")
+  end
+
+  defp needs_connection?(session) do
+    case Enum.find(session.participants, &(&1.kind == :primary)) do
+      nil -> false
+      participant -> participant.provider == :unconfigured or is_nil(participant.model)
+    end
+  end
+
   defp active_command_names(%{active_turn_id: nil}), do: []
   defp active_command_names(_session), do: ["/steer", "/cancel"]
   defp maybe_command(true, command), do: [command]
@@ -608,7 +658,9 @@ defmodule ReyCode.TUI.SlashPalette do
 
   defp row_limit(terminal_height) do
     terminal_height
-    |> Kernel.-(@reserved_composer_row_count + @palette_border_row_count)
+    |> Kernel.-(
+      @reserved_composer_row_count + @palette_border_row_count + @palette_header_row_count
+    )
     |> min(@max_visible_row_count)
     |> max(1)
   end

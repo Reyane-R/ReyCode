@@ -60,6 +60,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
           timeline_id={@timeline_id}
           message_width={@message_width}
           activity_frame={@activity_frame}
+          terminal_height={@terminal_height}
+          challenge_enabled={is_nil(@session.verified_change)}
         />
         <.composer
           modal={@modal}
@@ -100,7 +102,15 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box class="font-bold">{compact_home(@session.workspace)}</box>
       <box class="pt-2 text-muted">Assistant</box>
       <box class="inline w-full">
-        <box class="font-bold">{primary_summary(@session)}</box>
+        <box
+          id="choose-model-home"
+          implicit={Action}
+          focusable
+          br-change="configure_models"
+          class="font-bold focus:text-secondary"
+        >
+          {primary_summary(@session)}
+        </box>
         <box
           :if={@composer_status.label != "Ready"}
           class={"w-full text-right " <> @composer_status.class}
@@ -124,7 +134,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
       </box>
       <box class="inline w-full">
         <box class="w-12 text-muted">/</box>
-        <box>Browse commands</box>
+        <box>Browse actions · Ctrl+P</box>
       </box>
       <box class="inline w-full">
         <box class="w-12 text-muted">@file</box>
@@ -134,22 +144,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box class="w-12 text-muted">/resume</box>
         <box>Continue a previous session</box>
       </box>
-      <box class="pt-2 text-muted">More</box>
-      <box :if={not connect_first?(@composer_status)} class="inline w-full">
-        <box class="w-12 text-muted">/connect</box>
-        <box>Choose a model provider</box>
-      </box>
-      <box class="inline w-full">
-        <box class="w-12 text-muted">/agent</box>
-        <box>Create a teammate</box>
-      </box>
-      <box class="inline w-full">
-        <box class="w-12 text-muted">/advise</box>
-        <box>Request a second opinion</box>
-      </box>
-      <box class="inline w-full">
-        <box class="w-12 text-muted">/hub</box>
-        <box>Inspect delegated work</box>
+      <box class="pt-1 text-muted">
+        Find task agents, review tools, and settings in the action menu.
       </box>
       <box class="pt-2 text-muted">Teammates · {length(task_participants(@session))}</box>
       <box :if={task_participants(@session) == []} class="text-muted">
@@ -180,13 +176,21 @@ defmodule ReyCode.TUI.Components.MainScreen do
     ~H"""
     <box
       class={if @session.verified_change do
-      "h-9 w-full bg-surface border-b border-muted px-2"
+      "h-7 w-full bg-surface border-b border-muted px-2"
     else
-      "h-5 w-full bg-surface border-b border-muted px-2"
+      "h-3 w-full bg-surface border-b border-muted px-2"
     end}
     >
       <box class="inline w-full overflow-hidden">
-        <box class="font-bold text-primary">{primary_summary(@session)}</box>
+        <box
+          id="choose-model"
+          implicit={Action}
+          focusable
+          br-change="configure_models"
+          class="font-bold text-primary focus:text-secondary"
+        >
+          {primary_summary(@session)}
+        </box>
         <box class="text-muted">
           {header_context(@session, @terminal_width, @git_branch, @token_label)}
         </box>
@@ -325,9 +329,20 @@ defmodule ReyCode.TUI.Components.MainScreen do
     ~H"""
     <box
       :if={@modal == :slash}
-      class="bg-panel border-l border-r border-t border-muted overflow-hidden layer-40"
+      class={if @slash_style.height > 1 do
+      "bg-panel border-l border-r border-t border-muted overflow-hidden layer-40"
+    else
+      "bg-panel overflow-hidden layer-40"
+    end}
       style={@slash_style}
     >
+      <box :if={@slash_style.height >= 3} class="h-1 w-full px-1 text-muted overflow-hidden">
+        {if @slash_empty_label == "No matching files" do
+          "Files"
+        else
+          "Actions"
+        end} · type to search · Esc back
+      </box>
       <box :for={row <- @slash_rows} class={row.option_class}>
         <box class={row.command_class}>{row.command}</box>
         <box class={row.description_class}>{row.description}</box>

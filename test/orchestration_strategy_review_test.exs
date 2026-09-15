@@ -106,6 +106,85 @@ defmodule ReyCode.Orchestration.StrategyReviewTest do
     }
   end
 
+  test "targeted challenge captures the selected answer and runs tool-free with replayable evidence",
+       context do
+    before = Engine.snapshot(@engine)
+    session = before.sessions[context.session_id]
+    message_id = List.first(session.message_order)
+
+    assert {:ok, turn_id} =
+             Engine.challenge(
+               context.session_id,
+               context.participant_id,
+               %{"kind" => "answer", "id" => message_id, "question" => "support"},
+               @engine
+             )
+
+    assert_receive {:request, worker, request}, 2_000
+    assert request.tool_names == []
+    assert request.system_prompt_mode == :frozen
+    packet = Engine.snapshot(@engine).turns[turn_id].strategy_review
+    assert packet.focus =~ message_id
+    assert [%{"outputs" => [%{"message_id" => ^message_id}]}] = packet.turns
+    assert request.system_prompt =~ "Initial plan recorded"
+
+    report =
+      Jason.encode!(%{
+        summary: "Only the recorded report is available.",
+        limitations: "No independent check supports it.",
+        findings: []
+      })
+
+    send(worker, {:respond, Response.new(text: report)})
+    assert wait_terminal(turn_id).outcome == :completed
+    assert Projector.replay(EventStore.load(context.store)) == Engine.snapshot(@engine)
+
+    assert {:error, :invalid_challenge_target} =
+             Engine.challenge(
+               context.session_id,
+               context.participant_id,
+               %{"kind" => "answer", "id" => "missing", "question" => "support"},
+               @engine
+             )
+  end
+
+  test "decision targets remain selectable behind newer unrelated memories", context do
+    {:ok, memory} =
+      MemoryStore.record(context.workspace, "decision", "chosen-design", "Use the smaller change")
+
+    for index <- 1..101,
+        do: MemoryStore.record(context.workspace, "fact", "fact-#{index}", "unrelated")
+
+    assert {:ok, turn_id} =
+             Engine.challenge(
+               context.session_id,
+               context.participant_id,
+               %{"kind" => "decision", "id" => memory.id, "question" => "assumptions"},
+               @engine
+             )
+
+    assert_receive {:request, worker, request}, 2_000
+    assert request.tool_names == []
+    packet = Engine.snapshot(@engine).turns[turn_id].strategy_review
+    assert [%{"memory_id" => id}] = packet.memory
+    assert id == memory.id
+
+    send(
+      worker,
+      {:respond,
+       Response.new(
+         text:
+           Jason.encode!(%{
+             summary: "A recorded decision",
+             limitations: "No supporting tools",
+             findings: []
+           })
+       )}
+    )
+
+    assert wait_terminal(turn_id).outcome == :completed
+  end
+
   test "ordinary delegation retains live context and instructions", context do
     {:ok, turn_id} =
       Engine.delegate_task(context.session_id, context.participant_id, "Ordinary advice", @engine)

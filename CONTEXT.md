@@ -134,6 +134,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **StrategicReview** — Frozen, Workspace-scoped evidence packet owned by one advisory Turn, containing selected prior task evidence and a separately captured ProjectMemory snapshot. Its findings propose alternatives and experiments; they grant no execution or decision authority. A TurnRetry preserves the original packet.
 
+**Challenge** — An Operator-requested advisory examination of one recorded answer, decision, or assumption against selected frozen evidence. It distinguishes observed results from explanations and uncertainty, and may propose an experiment. A Challenge is not proof that a claim is true or authorization to execute the proposed experiment.
+
 **AgentHub** — TUI projection and control surface for delegated child Invocations.
 
 ## Provider discovery

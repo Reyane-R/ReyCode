@@ -37,7 +37,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Assistant"
     assert screen =~ "Quick start"
     assert screen =~ "Workspace"
-    assert screen =~ "More"
+    assert screen =~ "Browse actions"
     assert screen =~ "Message Assistant"
     assert screen =~ "commands"
     refute screen =~ "You ·"
@@ -371,7 +371,7 @@ defmodule ReyCode.TUITest do
     on_exit(fn -> Breeze.Test.stop(session) end)
 
     type(session, "/cancel")
-    assert Breeze.Test.render!(session) =~ "Cancel the current task"
+    assert Breeze.Test.render!(session) =~ "Stop current work"
 
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
     assert Breeze.Test.metadata(session).assigns.modal == :cancel
@@ -394,8 +394,8 @@ defmodule ReyCode.TUITest do
 
     type(session, "/")
     palette_screen = Breeze.Test.render!(session)
-    assert palette_screen =~ "/task"
-    assert palette_screen =~ "/help"
+    assert palette_screen =~ "Work with task agents"
+    assert palette_screen =~ "Settings…"
     refute palette_screen =~ "/workspace"
     refute palette_screen =~ "/advise"
 
@@ -677,7 +677,7 @@ defmodule ReyCode.TUITest do
     end
   end
 
-  test "cycles focus directly between the prompt and current session" do
+  test "cycles focus through the session and its model settings action" do
     %{engine: tui_engine_9} = start_isolated_stack([])
     session = start_session({160, 32}, engine: tui_engine_9)
     on_exit(fn -> Breeze.Test.stop(session) end)
@@ -692,7 +692,13 @@ defmodule ReyCode.TUITest do
     session_id = Breeze.Test.metadata(session).assigns.selected_session_id
     timeline_id = State.timeline_id(session_id)
     assert {:noreply, ^timeline_id, true} = Breeze.Test.input(session, "Tab")
+    assert {:noreply, "choose-model", true} = Breeze.Test.input(session, "Tab")
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Tab")
+    Breeze.Test.input(session, "Tab")
+    Breeze.Test.input(session, "Tab")
+    Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.modal == :settings
+    assert Breeze.Test.render!(session) =~ "Configure agents"
   end
 
   test "startup announces newer published releases with the update command" do
@@ -1479,7 +1485,7 @@ defmodule ReyCode.TUITest do
     assert metadata.assigns.drafts[session_id] == "/"
 
     screen = Breeze.Test.render!(session)
-    assert screen =~ "/agents"
+    assert screen =~ "Connect a provider"
 
     assert {:noreply, "prompt", true} = Breeze.Test.input(session, "Escape")
     assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "Keep this draft"
@@ -1719,7 +1725,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Unknown command"
     refute screen =~ "No matching commands"
     session_id = Breeze.Test.metadata(session).assigns.selected_session_id
-    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == ""
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "/bogus"
   end
 
   test "runs a slash command with the prompt shortcut" do

@@ -474,6 +474,50 @@ records a bounded extractive ContextSummary and a durable ContextBoundary. The
 timeline keeps the complete transcript and inserts a visible compaction divider;
 `/context` shows the summary sent with later Messages.
 
+The conversation view separates exchanges with whitespace and marks your
+message text with a subtle `│` rail. On terminals at least 32 rows tall,
+answers have an extra row below their header and exchanges have a two-row
+gap; shorter terminals use compact spacing. The session header reserves less
+empty space so more of the transcript stays visible.
+
+Completed replies use a compact checkmark. Thinking-only replies disclose
+`Thinking · Show details`, tool activity shows an action count, and replies
+without activity have no details control. Live work and failures remain
+visible; expanding completed details preserves the existing keyboard and
+mouse controls.
+
+## Challenge a claim against evidence
+
+Use `/challenge` to choose a recent answer or a recorded decision/assumption,
+then ask what supports it, what contradicts it, which assumptions are untested,
+whether a simpler alternative exists, or what experiment could distinguish
+the alternatives. You can also activate **Challenge** on a terminal answer's
+header, or press `C` on an entry in `/decisions`.
+
+Configure a task Participant named **Advisor** first (`/agent`, then `/agents`).
+This picker operates in ordinary Sessions; verified-change Sessions retain
+their separate `/changes` evidence and acceptance workflow.
+The challenge uses the existing frozen strategic-review lifecycle with **zero
+tools**: it cannot silently change files or run the proposed experiment.
+Recorded actions and results are distinguished from model-authored explanations;
+displayed thinking is not proof of why a model acted.
+
+Reopen `/challenge` and select **Evidence / follow-up** on a review to inspect
+packet-local citations such as `T1.I1.R1` or `M1`. The browser shows the captured
+preview, durable source IDs, missing/clipped flags, and artifact-availability
+limits. It does not claim to inspect current artifact or file contents.
+Only citation-validated reports offer **Prepare follow-up** entries: these put
+the proposed experiment and originating review ID into your composer, preserving
+any existing draft. Review and send it as a separate task; preparation runs no tools.
+
+Selection is bounded to the newest 100 message references in the current Session
+and 100 workspace decisions/assumptions. An answer challenge captures its selected
+Invocation and parent Turn, not a complete workspace audit; a decision challenge
+captures that memory record only. Existing packet limits still apply (including
+clipped previews and at most two retained terminal ToolRuns). Missing evidence
+must remain an explicit limitation. Per-round prompt inspection and automatic
+verification of free-text evidence claims are not provided by this view.
+
 ## Decisions and assumptions
 
 ReyCode treats unstated assumptions and implementation choices as traceable
@@ -510,8 +554,21 @@ request and moved into that ProviderRound only when its response is durably
 recorded; steering that arrives during a stream therefore forces another round
 instead of being lost.
 
-In the command palette, `/` shows common commands plus controls relevant to
-current work; typing searches the full registry. Arrow keys move the selection,
+In the action palette (`/` or `Ctrl+P`), start with six goals: **New conversation**,
+**Resume a conversation**, **Choose a model**, **Work with task agents…**,
+**Review work…**, and **Settings…**. Review, task-agent, and settings groups open
+smaller menus; `Esc` returns to the main menu, then restores your original draft.
+Up to three relevant actions—such as a pending approval, a question, or stopping
+active work—appear first. When setup is needed, connecting a provider replaces
+the ordinary model choice.
+
+Action names lead; slash spellings appear as secondary shortcuts. Search with
+phrases such as `switch model`, `why`, or `check changes` after `/`. Existing
+slash commands and their argument completion still work. The model summary on
+the home and conversation screens also opens model/participant settings when
+activated, so you can reach that flow without remembering a command.
+
+Typing searches the full command registry. Arrow keys move the selection,
 Tab accepts the highlighted completion without executing it, Shift+Tab moves
 backward, Enter runs it, and Escape returns to the draft. Commands complete
 current task Participants, provider/models, and Sessions. `@` and `#` mentions

@@ -4,6 +4,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   use Breeze.Component
   import Breeze.Blocks
 
+  alias BackBreeze.TextSpan
   alias ReyCode.Failure
   alias ReyCode.Orchestration.StrategicReview
   alias ReyCode.Provider.Presentation
@@ -49,8 +50,12 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   attr :timeline_id, :string, required: true
   attr :message_width, :integer, required: true
   attr :activity_frame, :string, required: true
+  attr :terminal_height, :integer
+  attr :challenge_enabled, :boolean
 
   def timeline(assigns) do
+    assigns = Map.put_new(assigns, :terminal_height, 40)
+    assigns = Map.put_new(assigns, :challenge_enabled, true)
     # Keep vertical padding in the content so Breeze includes it in scroll bounds.
     ~H"""
     <.scroll
@@ -65,16 +70,28 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
             Message the Assistant or delegate focused work with /task.
           </box>
         </box>
-        <box :for={item <- @messages} class="w-full">
+        <box :for={{item, index} <- Enum.with_index(@messages)} class="w-full">
           <box :if={item.kind == :context_boundary} class="w-full py-1 text-warning">
             Context compacted · /context to inspect
             <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
           </box>
-          <box :if={item.kind == :message} class={message_class(item)}>
+          <box :if={item.kind == :message} class={message_class(item, index, @terminal_height)}>
             <box class="inline w-full overflow-hidden">
               <box class={author_name_class(item)}>{author_label(item)}</box>
               <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
               <box class={message_status_class(item)}>{message_status_label(item)}</box>
+              <box
+                :if={@challenge_enabled and challengeable?(item)}
+                id={"challenge-#{item.id}"}
+                implicit={Disclosure}
+                focusable
+                message_id={item.id}
+                timeline_id={@timeline_id}
+                br-change="challenge_message"
+                class="w-full text-right text-muted focus:text-primary"
+              >
+                Challenge
+              </box>
             </box>
             <box
               :if={collapsible?(item)}
@@ -86,11 +103,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
               br-change="execution_details_toggle"
               class="pl-2 w-full text-muted focus:text-primary"
             >
-              {Enum.count(item.execution_rows, &(&1.kind == :tool))} tool actions · {if details_visible?(item) do
-                "Hide details"
-              else
-                "Show details"
-              end}
+              {disclosure_label(item)}
             </box>
             <box
               :if={details_visible?(item) and note_overflow(item) > 0}
@@ -105,12 +118,12 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
                 … Diff preview truncated · /runs to inspect
               </box>
             </box>
-            <box :if={item.body != ""} class={body_section_class(item)}>
+            <box :if={item.body != ""} class={body_section_class(item, @terminal_height)}>
               <box
                 :for={line <- render_message(item, @message_width)}
                 class="pl-2 w-full overflow-hidden"
               >
-                <box>{line}</box>
+                <box>{message_line(item, line)}</box>
               </box>
             </box>
             <box :if={show_placeholder?(item)} class="pl-2 w-full text-muted">
@@ -133,6 +146,8 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   end
 
   defp render_message(message, width) do
+    width = if message.role == :user, do: max(width - 2, 1), else: width
+
     message
     |> display_body()
     |> MermaidASCII.expand()
@@ -175,8 +190,24 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp author_label(%{role: :user}), do: "You"
   defp author_label(%{author: %{name: name}}), do: name
 
-  defp message_class(%{role: :user}), do: "w-full pt-1 overflow-hidden"
-  defp message_class(_message), do: "w-full overflow-hidden"
+  defp challengeable?(%{
+         role: :assistant,
+         turn: %{status: :terminal, strategy_review: nil},
+         body: body
+       }),
+       do: body != ""
+
+  defp challengeable?(_item), do: false
+
+  defp message_class(_message, 0, _height), do: "w-full overflow-hidden"
+
+  defp message_class(%{role: :user}, _index, height) when height >= 32,
+    do: "w-full pt-2 overflow-hidden"
+
+  defp message_class(_message, _index, _height), do: "w-full pt-1 overflow-hidden"
+
+  defp message_line(%{role: :user}, line), do: [%TextSpan{text: "│ ", style: %{}} | line]
+  defp message_line(_message, line), do: line
 
   defp author_name_class(%{role: :user}), do: "font-bold text-secondary"
   defp author_name_class(%{author: %{id: "builder"}}), do: "font-bold text-primary"
@@ -186,6 +217,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp message_status_label(%{activity: activity}) do
     case Activity.badge(activity) do
       "" -> ""
+      "completed" -> " · ✓"
       badge -> " · " <> String.capitalize(badge)
     end
   end
@@ -228,6 +260,16 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp details_visible?(item),
     do: not collapsible?(item) or Map.get(item, :execution_details_expanded?, false)
 
+  defp disclosure_label(item) do
+    action = if details_visible?(item), do: "Hide details", else: "Show details"
+
+    case Enum.count(item.execution_rows, &(&1.kind == :tool)) do
+      0 -> "Thinking · " <> action
+      1 -> "1 tool action · " <> action
+      count -> "#{count} tool actions · " <> action
+    end
+  end
+
   defp trace_note(marker, text, color) do
     %{
       class: "pl-2 w-full overflow-hidden #{color}",
@@ -255,7 +297,10 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp visible_note_overflow(rows),
     do: max(Enum.count(rows, &match?(%{kind: :note}, &1)) - @max_visible_notes, 0)
 
-  defp body_section_class(item) do
+  defp body_section_class(%{role: :user}, _height), do: ""
+  defp body_section_class(_item, height) when height >= 32, do: "pt-1"
+
+  defp body_section_class(item, _height) do
     if item.execution_rows != [], do: "pt-1", else: ""
   end
 
