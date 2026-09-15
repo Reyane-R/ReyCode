@@ -8,7 +8,7 @@ These are design envelopes, not benchmarks. Changes to a data-plane path update 
 |---|---|
 | Request duration | 600,000 ms default provider deadline |
 | OpenAI-compatible retained output | Profile maximum, 10,000,000 bytes default |
-| Text frame batch | 16 frames per Agent persistence batch |
+| Frame persistence | Each provider-batched frame is recorded before acknowledgement; no second count-only buffer |
 | Text chunk target | 8,192 bytes |
 | Text flush latency | 50 ms |
 | Provider rounds | 16 per Invocation |

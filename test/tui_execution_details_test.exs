@@ -17,7 +17,14 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
          modal: nil,
          selected_session_id: "session",
          expanded_message_ids: [],
-         projection: %{sessions: %{"session" => %{message_order: Enum.map(messages, & &1.id)}}}
+         answer_copy: Keyword.get(opts, :answer_copy, fn _ -> {:error, :test_unavailable} end),
+         projection: %{
+           sessions: %{"session" => %{message_order: Enum.map(messages, & &1.id)}},
+           messages:
+             Map.new(messages, &{&1.id, Map.merge(&1, %{turn_id: nil, invocation_id: nil})}),
+           turns: %{},
+           invocations: %{}
+         }
        )}
     end
 
@@ -65,11 +72,41 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
     on_exit(fn -> Breeze.Test.stop(session) end)
     assert Breeze.Test.render!(session) =~ "Show details"
 
+    assert {:noreply, "copy-answer", _} = Breeze.Test.input(session, "Tab")
     assert {:noreply, "execution-details-answer", _} = Breeze.Test.input(session, "Tab")
     Breeze.Test.input(session, "Enter")
     assert Breeze.Test.render!(session) =~ "Hide details"
     assert {:noreply, "prompt", _} = Breeze.Test.input(session, "Tab")
     assert {:noreply, "timeline", _} = Breeze.Test.input(session, "Tab")
+  end
+
+  test "Copy is keyboard accessible and copies answer Markdown without thinking or controls" do
+    owner = self()
+
+    answer = %{
+      message("answer", [%{kind: :note, text: "Private activity note"}])
+      | body: "## Answer\n\n```elixir\n:ok\n```"
+    }
+
+    view =
+      Breeze.Test.start!(TimelineView,
+        size: {80, 30},
+        global_keybindings: ReyCode.TUI.global_keybindings(),
+        start_opts: [
+          messages: [answer],
+          answer_copy: fn text ->
+            send(owner, {:copied, text})
+            :ok
+          end
+        ]
+      )
+
+    on_exit(fn -> Breeze.Test.stop(view) end)
+    assert Breeze.Test.render!(view) =~ "Copy"
+    assert {:noreply, "copy-answer", _} = Breeze.Test.input(view, "Tab")
+    Breeze.Test.input(view, "Enter")
+    assert_receive {:copied, "## Answer\n\n```elixir\n:ok\n```"}
+    assert Breeze.Test.metadata(view).assigns.notice.message == "Answer copied"
   end
 
   test "completed tools disclose explicitly without hiding the final response; thoughts remain capped" do
@@ -140,7 +177,7 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
         |> Enum.map(&String.trim/1)
 
       first = Enum.find_index(lines, &(&1 == "│ First prompt"))
-      assistant = Enum.find_index(lines, &(&1 == "Assistant"))
+      assistant = Enum.find_index(lines, &String.starts_with?(&1, "Assistant"))
       answer = Enum.find_index(lines, &(&1 == "Final response"))
       second = Enum.find_index(lines, &(&1 == "│ Second prompt"))
 

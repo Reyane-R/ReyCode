@@ -81,6 +81,18 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
               <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
               <box class={message_status_class(item)}>{message_status_label(item)}</box>
               <box
+                :if={item.role == :assistant and item.body != ""}
+                id={"copy-#{item.id}"}
+                implicit={Disclosure}
+                focusable
+                message_id={item.id}
+                timeline_id={@timeline_id}
+                br-change="copy_answer"
+                class="w-full text-right text-muted focus:text-primary"
+              >
+                Copy
+              </box>
+              <box
                 :if={@challenge_enabled and challengeable?(item)}
                 id={"challenge-#{item.id}"}
                 implicit={Disclosure}
@@ -88,7 +100,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
                 message_id={item.id}
                 timeline_id={@timeline_id}
                 br-change="challenge_message"
-                class="w-full text-right text-muted focus:text-primary"
+                class="pl-2 text-muted focus:text-primary"
               >
                 Challenge
               </box>
@@ -149,11 +161,14 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     width = if message.role == :user, do: max(width - 2, 1), else: width
 
     message
-    |> display_body()
+    |> answer_text()
     |> MermaidASCII.expand()
     |> Breeze.Markdown.render(width)
     |> split_lines()
   end
+
+  @doc "Returns the displayed answer's Markdown source, without activity or UI decoration."
+  def answer_text(message), do: display_body(message)
 
   defp display_body(%{
          role: :assistant,

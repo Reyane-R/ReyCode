@@ -14,6 +14,7 @@ defmodule ReyCode.TUI do
   alias ReyCode.TUI.Components.Modals
 
   alias ReyCode.TUI.{
+    AnswerCopy,
     Attention,
     Cancellation,
     Challenge,
@@ -377,6 +378,9 @@ defmodule ReyCode.TUI do
 
   defp do_handle_event("verification_setup", _payload, term), do: open_verification(nil, term)
   defp do_handle_event("configure_models", _payload, term), do: open_provider_settings(nil, term)
+
+  defp do_handle_event("copy_answer", %{message_id: id}, %{assigns: %{modal: nil}} = term),
+    do: AnswerCopy.run(term, id)
 
   defp do_handle_event(
          "execution_details_toggle",

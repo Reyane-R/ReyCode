@@ -486,6 +486,22 @@ without activity have no details control. Live work and failures remain
 visible; expanding completed details preserves the existing keyboard and
 mouse controls.
 
+Use **Copy** on an answer header (click, or Tab then Enter) to copy the answer's
+Markdown without thinking notes, status labels, or transcript borders. Clipboard
+writes use `pbcopy` on macOS or `wl-copy` on Wayland, with explicit errors when
+unavailable, unsuccessful, or over the 10 MB copy limit.
+
+For selecting part of the visible text in **Ghostty**, hold **Shift while
+dragging**, then press **Cmd+C** on macOS. If your Ghostty configuration lets
+applications capture Shift-mouse events, set `mouse-shift-capture = never` in
+Ghostty's configuration. This keeps ordinary mouse scrolling and buttons
+working while reserving Shift-drag for terminal selection. See
+[Ghostty's mouse selection settings](https://ghostty.org/docs/config/reference#mouse-shift-capture).
+
+Answer and reasoning chunks are persisted as they arrive from the provider's
+byte/latency buffer, including before stream completion. Active thinking stays
+visible; after completion it collapses under **Thinking · Show details**.
+
 ## Challenge a claim against evidence
 
 Use `/challenge` to choose a recent answer or a recorded decision/assumption,

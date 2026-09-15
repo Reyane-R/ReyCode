@@ -2,7 +2,7 @@ defmodule ReyCode.Agent do
   @moduledoc """
   A supervised execution bridge for one provider invocation.
 
-  The process owns buffering, lifecycle, and error containment around
+  The process owns durable frame delivery, lifecycle, and error containment around
   `ReyCode.AgentLoop`, which performs the durable round/tool-run steps.
   """
 
@@ -19,9 +19,6 @@ defmodule ReyCode.Agent do
     name = {:via, Registry, {registry, invocation_id}}
     GenServer.start_link(__MODULE__, opts, name: name)
   end
-
-  @frame_batch_size 16
-  @buffer_key :frames
 
   @type state :: %{
           required(:engine) => term(),
@@ -45,36 +42,19 @@ defmodule ReyCode.Agent do
     end
   end
 
-  @doc "Streams one provider round with frame buffering and error containment."
+  @doc "Streams one provider round, persisting each already-batched frame before acknowledging it."
   @spec stream(state(), map(), Runtime.t()) :: {:ok, Response.t()} | {:error, Failure.t()}
   def stream(state, request, runtime) do
-    buffer = :ets.new(__MODULE__, [:set, :public])
+    # Native providers already enforce byte/latency batching. A second
+    # count-only buffer here hid short responses until stream completion.
+    emit = fn frame -> record_frame!(state.engine, state.invocation_id, frame) end
 
-    emit = fn frame -> enqueue_frame(state.engine, buffer, state.invocation_id, frame) end
-
-    result =
-      try do
-        runtime.module.stream(runtime, request, emit)
-      rescue
-        error ->
-          {:error, internal_error(Exception.message(error))}
-      catch
-        kind, reason ->
-          {:error, internal_error(Exception.format_banner(kind, reason))}
-      end
-
-    flush = flush_frame_buffer(state.engine, buffer, state.invocation_id)
-    :ets.delete(buffer)
-
-    case {result, flush} do
-      {{:error, _error} = result, _flush} ->
-        result
-
-      {_result, {:error, reason}} ->
-        {:error, internal_error("frame flush rejected: " <> inspect(reason))}
-
-      {result, :ok} ->
-        result
+    try do
+      runtime.module.stream(runtime, request, emit)
+    rescue
+      error -> {:error, internal_error(Exception.message(error))}
+    catch
+      kind, reason -> {:error, internal_error(Exception.format_banner(kind, reason))}
     end
   end
 
@@ -101,39 +81,13 @@ defmodule ReyCode.Agent do
   @impl true
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp enqueue_frame(engine, buffer, invocation_id, frame) do
-    frames = [frame | buffered_frames(buffer)]
-
-    if length(frames) >= @frame_batch_size do
-      true = :ets.delete(buffer, @buffer_key)
-      record_batch!(engine, invocation_id, frames)
-    else
-      true = :ets.insert(buffer, {@buffer_key, frames})
-      :ok
-    end
-  end
-
-  defp buffered_frames(buffer) do
-    case :ets.lookup(buffer, @buffer_key) do
-      [{@buffer_key, frames}] -> frames
-      [] -> []
-    end
-  end
-
-  defp flush_frame_buffer(engine, buffer, invocation_id) do
-    case :ets.take(buffer, @buffer_key) do
-      [{@buffer_key, frames}] -> Client.record_frames(engine, invocation_id, Enum.reverse(frames))
-      [] -> :ok
-    end
-  end
-
-  defp record_batch!(engine, invocation_id, frames) do
-    case Client.record_frames(engine, invocation_id, Enum.reverse(frames)) do
+  defp record_frame!(engine, invocation_id, frame) do
+    case Client.record_frames(engine, invocation_id, [frame]) do
       :ok ->
         :ok
 
       {:error, reason} ->
-        raise ArgumentError, "frame batch rejected: " <> inspect(reason)
+        raise ArgumentError, "frame rejected: " <> inspect(reason)
     end
   end
 
