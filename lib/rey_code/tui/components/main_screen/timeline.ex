@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   use Breeze.Component
   import Breeze.Blocks
 
-  alias BackBreeze.TextSpan
+  alias BackBreeze.{TextSpan, Ucwidth}
   alias ReyCode.Failure
   alias ReyCode.Orchestration.StrategicReview
   alias ReyCode.Provider.Presentation
@@ -123,7 +123,10 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
             >
               +{note_overflow(item)} earlier thoughts
             </box>
-            <box :for={row <- visible_execution_rows(item, @activity_frame)} class="w-full">
+            <box
+              :for={row <- visible_execution_rows(item, @activity_frame, @message_width)}
+              class="w-full"
+            >
               <box class={row.class}>{row.text}</box>
               <box :for={line <- row.diff_lines} class={diff_line_class(line)}>{line}</box>
               <box :if={row.diff_truncated?} class="pl-4 w-full text-muted">
@@ -245,21 +248,72 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp diff_line_class("@@" <> _line), do: "pl-4 w-full text-secondary"
   defp diff_line_class(_line), do: "pl-4 w-full text-muted"
 
-  defp visible_execution_rows(item, frame) do
+  defp visible_execution_rows(item, frame, width) do
     if(details_visible?(item), do: item.execution_rows, else: [])
     |> drop_hidden_notes(visible_note_overflow(item.execution_rows))
-    |> Enum.map(fn
-      %{kind: :note, text: text} ->
-        trace_note("·", text, "text-muted")
+    |> Enum.flat_map(&render_execution_row(&1, frame, width))
+  end
 
-      row ->
-        %{
-          class: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}",
-          text: Activity.text(row, frame),
-          diff_lines: row.diff_lines,
-          diff_truncated?: row.diff_truncated?
-        }
+  defp render_execution_row(%{kind: :note, text: text}, _frame, width) do
+    text
+    |> wrap_note(max(width - 2, 1))
+    |> Enum.with_index()
+    |> Enum.map(fn {line, index} ->
+      trace_note(if(index == 0, do: "·", else: " "), line, "text-muted")
     end)
+  end
+
+  defp render_execution_row(row, frame, _width) do
+    [
+      %{
+        class: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}",
+        text: Activity.text(row, frame),
+        diff_lines: row.diff_lines,
+        diff_truncated?: row.diff_truncated?
+      }
+    ]
+  end
+
+  defp wrap_note(text, width) do
+    {rows, current} =
+      text
+      |> String.split(~r/\s+/u, trim: true)
+      |> Enum.reduce({[], ""}, &append_note_word(&1, &2, width))
+
+    Enum.reverse(prepend_note_line(current, rows))
+  end
+
+  defp append_note_word(word, {rows, current}, width) do
+    joined = if current == "", do: word, else: current <> " " <> word
+
+    if cell_width(joined) <= width do
+      {rows, joined}
+    else
+      word
+      |> split_note_word(width)
+      |> Enum.reduce({prepend_note_line(current, rows), ""}, fn part, {rows, current} ->
+        {prepend_note_line(current, rows), part}
+      end)
+    end
+  end
+
+  defp prepend_note_line("", rows), do: rows
+  defp prepend_note_line(line, rows), do: [line | rows]
+
+  defp cell_width(text),
+    do: text |> String.graphemes() |> Enum.reduce(0, &(Ucwidth.width(&1) + &2))
+
+  defp split_note_word(word, width) do
+    {rows, current, _cells} =
+      Enum.reduce(String.graphemes(word), {[], [], 0}, fn char, {rows, current, cells} ->
+        size = Ucwidth.width(char)
+
+        if current != [] and cells + size > width,
+          do: {[Enum.reverse(current) | rows], [char], size},
+          else: {rows, [char | current], cells + size}
+      end)
+
+    [Enum.reverse(current) | rows] |> Enum.reverse() |> Enum.map(&Enum.join/1)
   end
 
   defp collapsible?(item) do

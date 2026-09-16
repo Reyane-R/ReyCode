@@ -29,6 +29,8 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
   }
 
   alias ReyCode.RuntimeConfig
+  alias ReyCode.Tool.Request, as: ToolRequest
+  alias ReyCode.ToolRegistry
 
   @key_env "DEEPSEEK_API_KEY"
 
@@ -854,6 +856,24 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         |> Jason.decode!()
 
       tools = body["tools"]
+
+      for {name, required} <- [
+            {"read", ["path"]},
+            {"list", ["path"]},
+            {"glob", ["path", "pattern"]},
+            {"grep", ["path", "pattern"]},
+            {"bash", ["command"]},
+            {"write", ["path", "content"]}
+          ] do
+        definition = Enum.find(tools, &(&1["function"]["name"] == name))
+        parameters = definition["function"]["parameters"]
+
+        assert parameters["required"] == required,
+               "#{name} must advertise its real required arguments"
+
+        for field <- required, do: assert(parameters["properties"][field]["type"] == "string")
+      end
+
       names = Enum.map(tools, & &1["function"]["name"])
       assert "spawn_task" in names
       assert "spawn_tasks" in names
@@ -900,6 +920,56 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       assert edit_parameters["properties"]["patches"]["items"]["required"] ==
                ["old_string", "new_string"]
+    end
+
+    @tag :tmp_dir
+    test "core tool arguments survive the provider stream and execute in a real workspace", %{
+      tmp_dir: workspace
+    } do
+      File.write!(Path.join(workspace, "hello.txt"), "hello schema\n")
+
+      calls = [
+        {"read", %{"path" => "hello.txt", "offset" => 1, "limit" => 1}},
+        {"list", %{"path" => "."}},
+        {"glob", %{"path" => ".", "pattern" => "*.txt"}},
+        {"grep", %{"path" => ".", "pattern" => "hello"}},
+        {"bash", %{"command" => "printf schema-ok"}},
+        {"write", %{"path" => "created.txt", "content" => "written"}}
+      ]
+
+      wire_calls =
+        Enum.with_index(calls)
+        |> Enum.map(fn {{name, args}, index} ->
+          %{
+            "id" => "call-#{index}",
+            "index" => index,
+            "type" => "function",
+            "function" => %{"name" => name, "arguments" => Jason.encode!(args)}
+          }
+        end)
+
+      delta = Jason.encode!(%{"choices" => [%{"delta" => %{"tool_calls" => wire_calls}}]})
+
+      FakeTransport.set_stream([
+        "data: #{delta}\n\n",
+        ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      assert {:ok, %Response{tool_calls: parsed}} =
+               OpenAICompatible.stream(runtime(), request(), fn _ -> :ok end)
+
+      assert Map.new(parsed, &{&1.tool, &1.arguments}) == Map.new(calls)
+      policy = RuntimeConfig.fresh(workspace_roots: [workspace])
+
+      for call <- parsed do
+        tool_request =
+          ToolRequest.new(tool: call.tool, arguments: call.arguments, workspace: workspace)
+
+        assert {:ok, %{ok: true}} = ToolRegistry.dispatch(tool_request, policy)
+      end
+
+      assert File.read!(Path.join(workspace, "created.txt")) == "written"
     end
 
     test "remembers the downgraded shape for the next round" do

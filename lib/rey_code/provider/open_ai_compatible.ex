@@ -403,6 +403,22 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp wire_tool_description("read"),
     do: "Read a bounded UTF-8 file window and return its source_hash when editable"
 
+  defp wire_tool_description("list"),
+    do: "List entries in a workspace directory; use path='.' for the workspace root"
+
+  defp wire_tool_description("glob"),
+    do:
+      "Find files using a relative glob pattern under path; use path='.' and pattern='**/*.ex' to search the workspace"
+
+  defp wire_tool_description("grep"),
+    do: "Search a file or directory at path for a regular-expression pattern"
+
+  defp wire_tool_description("bash"),
+    do: "Execute a shell command in the workspace, with an optional workspace-contained cwd"
+
+  defp wire_tool_description("write"),
+    do: "Create or replace a file at path with the supplied content"
+
   defp wire_tool_description("edit") do
     "Atomically apply unique replacement patches to the exact source_hash returned by read"
   end
@@ -709,8 +725,92 @@ defmodule ReyCode.Provider.OpenAICompatible do
     )
   end
 
-  defp tool_schema(_name),
-    do: %{"type" => "object", "additionalProperties" => true, "properties" => %{}}
+  defp tool_schema("read") do
+    object_schema(
+      %{
+        "path" =>
+          path_schema("File to read, relative to the workspace or absolute within trusted roots"),
+        "offset" => %{
+          "type" => "integer",
+          "minimum" => 1,
+          "description" => "First line to read (1-based); defaults to 1"
+        },
+        "limit" => %{
+          "type" => "integer",
+          "minimum" => 1,
+          "description" => "Maximum lines to return, capped by the configured read limit"
+        }
+      },
+      ["path"]
+    )
+  end
+
+  defp tool_schema("list") do
+    object_schema(%{"path" => path_schema("Directory to list; use '.' for the workspace root")}, [
+      "path"
+    ])
+  end
+
+  defp tool_schema("glob") do
+    object_schema(
+      %{
+        "path" => path_schema("Directory to search; use '.' for the workspace root"),
+        "pattern" => %{
+          "type" => "string",
+          "minLength" => 1,
+          "description" =>
+            "Relative glob such as '*.ex' or '**/*.ex'; do not put the root directory in the pattern"
+        }
+      },
+      ["path", "pattern"]
+    )
+  end
+
+  defp tool_schema("grep") do
+    object_schema(
+      %{
+        "path" => path_schema("File or directory to search; use '.' for the workspace root"),
+        "pattern" => %{
+          "type" => "string",
+          "minLength" => 1,
+          "description" => "Regular expression to search for"
+        }
+      },
+      ["path", "pattern"]
+    )
+  end
+
+  defp tool_schema("bash") do
+    object_schema(
+      %{
+        "command" => %{
+          "type" => "string",
+          "minLength" => 1,
+          "description" => "Shell command to execute, for example 'git status --short'"
+        },
+        "cwd" => path_schema("Optional working directory; defaults to the Invocation workspace")
+      },
+      ["command"]
+    )
+  end
+
+  defp tool_schema("write") do
+    object_schema(
+      %{
+        "path" => path_schema("File to create or replace"),
+        "content" => %{
+          "type" => "string",
+          "description" => "Complete file contents; may be empty"
+        }
+      },
+      ["path", "content"]
+    )
+  end
+
+  defp tool_schema(name), do: raise(ArgumentError, "missing provider schema for tool #{name}")
+
+  defp path_schema(description),
+    do: %{"type" => "string", "minLength" => 1, "description" => description}
 
   defp delegation_task_schema(include_detach?) do
     properties = %{
@@ -754,6 +854,9 @@ defmodule ReyCode.Provider.OpenAICompatible do
     case Credentials.fetch(profile.key_env) do
       {:ok, key, _source} ->
         {:ok, key}
+
+      {:error, _reason} ->
+        {:error, HTTP.error(:provider_unavailable, "Credential service is unavailable", true)}
 
       :error ->
         {:error,

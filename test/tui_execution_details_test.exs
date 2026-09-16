@@ -44,7 +44,7 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
           <.timeline
             messages={@messages}
             timeline_id="timeline"
-            message_width={70}
+            message_width={max(@breeze.terminal.width - 14, 1)}
             activity_frame="*"
             terminal_height={@breeze.terminal.height}
           />
@@ -189,6 +189,30 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
       assert second - answer == if(height >= 32, do: 4, else: 3)
       assert screen =~ "Footer"
     end
+  end
+
+  test "reasoning wraps within the viewport rather than clipping its trailing words" do
+    thought = Enum.map_join(1..24, " ", &"word#{&1}")
+    answer = %{message("answer", [%{kind: :note, text: thought}]) | status: :streaming}
+
+    for size <- [{50, 24}, {80, 30}] do
+      view = Breeze.Test.start!(TimelineView, size: size, start_opts: [messages: [answer]])
+      on_exit(fn -> Breeze.Test.stop(view) end)
+      screen = Breeze.Test.render!(view)
+      assert screen =~ "word24"
+      lines = screen |> String.replace(~r/\e\[[0-?]*[ -\/]*[@-~]/, "") |> String.split("\n")
+      assert Enum.count(lines, &String.contains?(&1, "word")) >= 3
+    end
+  end
+
+  test "wide Unicode reasoning and long unbroken tokens wrap without losing characters" do
+    thought = String.duplicate("界", 45) <> "TAIL"
+    answer = %{message("answer", [%{kind: :note, text: thought}]) | status: :streaming}
+    view = Breeze.Test.start!(TimelineView, size: {50, 24}, start_opts: [messages: [answer]])
+    on_exit(fn -> Breeze.Test.stop(view) end)
+    screen = Breeze.Test.render!(view)
+    assert screen =~ "TAIL"
+    assert length(String.split(screen, "界")) - 1 == 45
   end
 
   test "active, failed, denied and blocked executions never disappear" do
