@@ -6,10 +6,13 @@ defmodule ReyCode.Logging do
   @max_bytes 10 * 1024 * 1024
   @max_files 5
 
-  @spec install!(LoggingPolicy.t()) :: :ok
-  def install!(%LoggingPolicy{} = policy) do
+  @spec install!(LoggingPolicy.t(), :standalone | :client | :engine) :: :ok
+  def install!(%LoggingPolicy{} = policy, role \\ :standalone) do
     if policy.enabled? do
-      log_path = Path.join(policy.log_dir, "rey_code.log")
+      filename =
+        if role == :standalone, do: "rey_code.log", else: "rey_code_#{role}_#{System.pid()}.log"
+
+      log_path = Path.join(policy.log_dir, filename)
       File.mkdir_p!(policy.log_dir)
       File.chmod!(policy.log_dir, 0o700)
 

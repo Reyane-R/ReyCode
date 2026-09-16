@@ -2,37 +2,79 @@ defmodule ReyCode.Application do
   @moduledoc false
 
   require Logger
+  alias ReyCode.LocalEngine.Bootstrap
 
   use Application
 
   @impl true
   def start(_type, _args) do
+    role = ReyCode.LocalEngine.role()
+    if role == :engine, do: Bootstrap.restore()
     runtime_config = ReyCode.RuntimeConfig.load!()
-    :ok = ReyCode.Logging.install!(runtime_config.logging)
+    :ok = ReyCode.Logging.install!(runtime_config.logging, role)
+
+    case role do
+      :client ->
+        result =
+          Supervisor.start_link(
+            ReyCode.LocalEngine.client_children(runtime_config) ++ tui_children(runtime_config),
+            strategy: :rest_for_one,
+            name: ReyCode.Supervisor
+          )
+
+        if match?({:error, _}, result) do
+          Logger.error(
+            "Could not attach to the shared ReyCode engine. Build/settings mismatches require an explicit engine restart (reycode engine stop, or mix rey_code.engine stop). An older standalone instance must be quit once before shared startup; no database lock was bypassed."
+          )
+        end
+
+        result
+
+      role ->
+        start_engine(runtime_config, role)
+    end
+  end
+
+  defp start_engine(runtime_config, role) do
     event_store_options = event_store_options()
     :ok = event_store_options |> Keyword.fetch!(:path) |> Path.dirname() |> File.mkdir_p()
 
     children = [
+      {Registry, keys: :unique, name: ReyCode.LocalEngine.ProxyRegistry},
       {Registry, keys: :unique, name: ReyCode.AgentRegistry},
       {Registry, keys: :duplicate, name: ReyCode.EventRegistry},
       {ReyCode.EventStore, [config: runtime_config.persistence] ++ event_store_options},
       {Task.Supervisor, name: ReyCode.ProviderTaskSupervisor},
+      {Task.Supervisor, name: ReyCode.IPCTaskSupervisor, max_children: 64},
       {ReyCode.Provider.Credentials, []},
       {ReyCode.Provider.Catalog, [config: runtime_config]},
       ReyCode.ProcessHub,
       ReyCode.DebuggerHub,
       ReyCode.EvalHub,
+      {Registry, keys: :unique, name: ReyCode.ResourceRegistry},
+      ReyCode.ResourceScopes,
+      {DynamicSupervisor, strategy: :one_for_one, name: ReyCode.ResourceSupervisor},
       ReyCode.Memory.Store,
       {ReyCode.Orchestration.Supervisor, config: runtime_config}
     ]
 
     children =
       children ++
-        tui_children(runtime_config) ++
-        [
-          {ReyCode.Herdr,
-           task_supervisor: ReyCode.ProviderTaskSupervisor, engine: ReyCode.Orchestration.Engine}
-        ]
+        if(role == :standalone,
+          do:
+            tui_children(runtime_config) ++
+              [
+                {ReyCode.Herdr,
+                 task_supervisor: ReyCode.ProviderTaskSupervisor,
+                 engine: ReyCode.Orchestration.Engine}
+              ],
+          else: []
+        )
+
+    children =
+      if role == :engine,
+        do: children ++ [ReyCode.LocalEngine.server_child(runtime_config)],
+        else: children
 
     opts = [strategy: :rest_for_one, name: ReyCode.Supervisor]
     Supervisor.start_link(children, opts)
@@ -109,7 +151,7 @@ defmodule ReyCode.Application do
       nil ->
         %{
           database: Path.join(data_home(), "rey_code.sqlite3"),
-          legacy: Path.join([legacy_xdg_data_home(), "rey_code", "events-v2.ndjson"])
+          legacy: legacy_path()
         }
 
       path ->
@@ -127,8 +169,17 @@ defmodule ReyCode.Application do
     end
   end
 
-  defp data_home do
-    Application.get_env(:rey_code, :data_dir) || ReyCode.Paths.data_home()
+  @doc "Resolves the selected data directory at bootstrap, including not-yet-created suffixes."
+  def data_home do
+    (Application.get_env(:rey_code, :data_dir) || System.get_env("REYCODE_DATA_DIR") ||
+       ReyCode.Paths.data_home())
+    |> ReyCode.Paths.canonical_future()
+  end
+
+  defp legacy_path do
+    if data_home() == ReyCode.Paths.canonical_future(ReyCode.Paths.data_home()),
+      do: Path.join([legacy_xdg_data_home(), "rey_code", "events-v2.ndjson"]),
+      else: nil
   end
 
   # The retired NDJSON store only ever lived at the XDG data location; its

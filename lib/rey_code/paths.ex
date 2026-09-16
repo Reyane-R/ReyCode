@@ -11,6 +11,24 @@ defmodule ReyCode.Paths do
   """
 
   @type os_type :: {:unix, :darwin} | {atom(), atom()}
+  alias ReyCode.Security.CanonicalPath
+
+  @doc "Canonicalizes an existing ancestor plus a bounded not-yet-created suffix."
+  def canonical_future(path), do: canonical_future(Path.expand(path), 64)
+  defp canonical_future(_path, 0), do: raise(ArgumentError, "path exceeds 64 ancestor levels")
+
+  defp canonical_future(path, remaining) do
+    case CanonicalPath.resolve(path) do
+      {:ok, canonical} ->
+        canonical
+
+      {:error, :enoent} ->
+        Path.join(canonical_future(Path.dirname(path), remaining - 1), Path.basename(path))
+
+      {:error, reason} ->
+        raise ArgumentError, "invalid configured path: #{inspect(reason)}"
+    end
+  end
 
   @doc "Platform default home for durable application data."
   @spec data_home(os_type(), String.t()) :: String.t()

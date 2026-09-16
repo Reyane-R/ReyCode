@@ -12,12 +12,13 @@ defmodule ReyCode.Tool.Debug do
   @actions @read_actions ++ @write_actions
 
   @impl true
-  def run(%Request{arguments: arguments, workspace: workspace}, opts) do
+  def run(%Request{arguments: arguments, workspace: workspace} = request, opts) do
     %DebuggerPolicy{} = policy = Keyword.fetch!(opts, :policy)
 
     with {:ok, action} <- Support.require_arg(arguments, :action),
-         :ok <- known_action(action) do
-      execute(action, arguments, workspace, policy)
+         :ok <- known_action(action),
+         {:ok, hub} <- ReyCode.ResourceScopes.fetch(request, DebuggerHub) do
+      execute(action, arguments, workspace, {policy, hub})
     else
       {:error, reason} -> Result.error(reason)
     end
@@ -30,71 +31,87 @@ defmodule ReyCode.Tool.Debug do
   defp known_action(action),
     do: if(action in @actions, do: :ok, else: {:error, :unsupported_debug_action})
 
-  defp execute("start", arguments, workspace, policy) do
+  defp execute("start", arguments, workspace, {policy, hub}) do
     with {:ok, name} <- Support.require_arg(arguments, :name),
          {:ok, command} <- command(arguments, policy.command),
-         {:ok, snapshot} <- DebuggerHub.start(name, command, workspace, policy) do
+         {:ok, snapshot} <- DebuggerHub.start(name, command, workspace, policy, hub) do
       Result.ok(Jason.encode!(snapshot))
     else
       {:error, reason} -> Result.error(reason)
     end
   end
 
-  defp execute("launch", arguments, _workspace, _policy),
-    do: request(arguments, "launch", launch_arguments(arguments))
+  defp execute("launch", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "launch", launch_arguments(arguments), hub)
 
-  defp execute("attach", arguments, _workspace, _policy),
-    do: request(arguments, "attach", Map.drop(arguments, ["action", :action, "name"]))
+  defp execute("attach", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "attach", Map.drop(arguments, ["action", :action, "name"]), hub)
 
-  defp execute("disconnect", arguments, _workspace, _policy),
-    do: request(arguments, "disconnect", %{})
+  defp execute("disconnect", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "disconnect", %{}, hub)
 
-  defp execute("continue", arguments, _workspace, _policy),
-    do: request(arguments, "continue", %{"threadId" => integer(arguments, "thread_id", 1)})
+  defp execute("continue", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "continue", %{"threadId" => integer(arguments, "thread_id", 1)}, hub)
 
-  defp execute("next", arguments, _workspace, _policy),
-    do: request(arguments, "next", %{"threadId" => integer(arguments, "thread_id", 1)})
+  defp execute("next", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "next", %{"threadId" => integer(arguments, "thread_id", 1)}, hub)
 
-  defp execute("step_in", arguments, _workspace, _policy),
-    do: request(arguments, "stepIn", %{"threadId" => integer(arguments, "thread_id", 1)})
+  defp execute("step_in", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "stepIn", %{"threadId" => integer(arguments, "thread_id", 1)}, hub)
 
-  defp execute("step_out", arguments, _workspace, _policy),
-    do: request(arguments, "stepOut", %{"threadId" => integer(arguments, "thread_id", 1)})
+  defp execute("step_out", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "stepOut", %{"threadId" => integer(arguments, "thread_id", 1)}, hub)
 
-  defp execute("threads", arguments, _workspace, _policy), do: request(arguments, "threads", %{})
+  defp execute("threads", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "threads", %{}, hub)
 
-  defp execute("stack_trace", arguments, _workspace, _policy),
-    do: request(arguments, "stackTrace", %{"threadId" => integer(arguments, "thread_id", 1)})
+  defp execute("stack_trace", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "stackTrace", %{"threadId" => integer(arguments, "thread_id", 1)}, hub)
 
-  defp execute("scopes", arguments, _workspace, _policy),
-    do: request(arguments, "scopes", %{"frameId" => integer(arguments, "frame_id", 1)})
+  defp execute("scopes", arguments, _workspace, {_policy, hub}),
+    do: request(arguments, "scopes", %{"frameId" => integer(arguments, "frame_id", 1)}, hub)
 
-  defp execute("variables", arguments, _workspace, _policy),
+  defp execute("variables", arguments, _workspace, {_policy, hub}),
     do:
-      request(arguments, "variables", %{
-        "variablesReference" => integer(arguments, "variables_reference", 1)
-      })
+      request(
+        arguments,
+        "variables",
+        %{
+          "variablesReference" => integer(arguments, "variables_reference", 1)
+        },
+        hub
+      )
 
-  defp execute("evaluate", arguments, _workspace, _policy),
+  defp execute("evaluate", arguments, _workspace, {_policy, hub}),
     do:
-      request(arguments, "evaluate", %{
-        "expression" => value(arguments, "expression", ""),
-        "context" => value(arguments, "context", "repl")
-      })
+      request(
+        arguments,
+        "evaluate",
+        %{
+          "expression" => value(arguments, "expression", ""),
+          "context" => value(arguments, "context", "repl")
+        },
+        hub
+      )
 
-  defp execute("set_breakpoints", arguments, _workspace, _policy) do
+  defp execute("set_breakpoints", arguments, _workspace, {_policy, hub}) do
     source = value(arguments, "source", "")
     lines = arguments |> value("lines", []) |> List.wrap() |> Enum.map(&to_integer/1)
 
-    request(arguments, "setBreakpoints", %{
-      "source" => %{"path" => source},
-      "breakpoints" => Enum.map(lines, &%{"line" => &1})
-    })
+    request(
+      arguments,
+      "setBreakpoints",
+      %{
+        "source" => %{"path" => source},
+        "breakpoints" => Enum.map(lines, &%{"line" => &1})
+      },
+      hub
+    )
   end
 
-  defp request(arguments, method, params) do
+  defp request(arguments, method, params, hub) do
     with {:ok, name} <- Support.require_arg(arguments, :name),
-         {:ok, response} <- DebuggerHub.request(name, method, params) do
+         {:ok, response} <- DebuggerHub.request(name, method, params, hub) do
       Result.ok(Jason.encode!(response))
     else
       {:error, reason} -> Result.error(reason)

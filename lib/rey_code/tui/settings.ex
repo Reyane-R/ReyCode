@@ -421,23 +421,38 @@ defmodule ReyCode.TUI.Settings do
       %{id: id} = entry ->
         case Registry.fetch_api_profile(id) do
           {:ok, %{key_env: key_env}} when is_binary(key_env) ->
-            Credentials.remove(key_env, credentials(term))
-            Catalog.refresh(term.assigns.provider_catalog)
-
-            Component.assign(
-              term,
-              notice:
-                Notice.new(
-                  :info,
-                  "Stored #{entry.name} credential removed; environment keys are unaffected"
-                )
-            )
+            remove_credential(term, key_env, entry.name)
 
           _profile ->
             Component.assign(term, notice: Notice.new(:info, "This provider needs no API key"))
         end
     end
   end
+
+  defp remove_credential(term, key_env, name) do
+    case Credentials.remove(key_env, credentials(term)) do
+      :ok ->
+        Catalog.refresh(term.assigns.provider_catalog)
+
+        Component.assign(term,
+          notice:
+            Notice.new(
+              :info,
+              "Stored #{name} credential removed; environment keys are unaffected"
+            )
+        )
+
+      {:error, _reason} ->
+        credential_unavailable(term)
+    end
+  end
+
+  defp credential_unavailable(term),
+    do:
+      Component.assign(term,
+        notice:
+          Notice.new(:error, "Credential change was not confirmed; check the engine connection")
+      )
 
   defp open_key_step(term, id) do
     term
@@ -468,12 +483,15 @@ defmodule ReyCode.TUI.Settings do
 
       {:error, :unknown_provider} ->
         Component.assign(term, notice: Notice.new(:error, "Unknown provider runtime"))
+
+      {:error, _reason} ->
+        credential_unavailable(term)
     end
   end
 
   defp retry_without_persistence(term, provider, key, reason) do
-    with {:ok, %{name: name, key_env: key_env}} <- Registry.fetch_api_profile(provider) do
-      :ok = Credentials.remember(key_env, key, false, credentials(term))
+    with {:ok, %{name: name, key_env: key_env}} <- Registry.fetch_api_profile(provider),
+         :ok <- Credentials.remember(key_env, key, false, credentials(term)) do
       Catalog.refresh(term.assigns.provider_catalog)
 
       Component.assign(
@@ -484,6 +502,8 @@ defmodule ReyCode.TUI.Settings do
             "#{reason}; the #{name} key works for this run only. Checking connection"
           )
       )
+    else
+      {:error, _reason} -> credential_unavailable(term)
     end
   end
 

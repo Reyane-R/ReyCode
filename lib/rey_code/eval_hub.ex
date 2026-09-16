@@ -34,7 +34,10 @@ defmodule ReyCode.EvalHub do
   def list(server \\ __MODULE__), do: GenServer.call(server, :list)
 
   @impl true
-  def init(_opts), do: {:ok, %{kernels: %{}, ports: %{}}}
+  def init(_opts) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{kernels: %{}, ports: %{}}}
+  end
 
   @impl true
   def handle_call({:start, name, language, workspace, policy}, _from, state) do
@@ -144,6 +147,9 @@ defmodule ReyCode.EvalHub do
         {:noreply, state}
     end
   end
+
+  def handle_info({:EXIT, port, _reason}, state) when is_port(port),
+    do: handle_info({port, {:exit_status, :port_closed}}, state)
 
   def handle_info(_message, state), do: {:noreply, state}
 

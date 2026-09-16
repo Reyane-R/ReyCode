@@ -3,6 +3,9 @@ defmodule ReyCode.RuntimeConfigBoundaryTest do
 
   @bootstrap_files MapSet.new([
                      "lib/rey_code/application.ex",
+                     # Detached-host startup is a separate OS bootstrap boundary.
+                     "lib/rey_code/local_engine.ex",
+                     "lib/rey_code/local_engine/bootstrap.ex",
                      "lib/rey_code/runtime_config.ex"
                    ])
 
@@ -27,7 +30,9 @@ defmodule ReyCode.RuntimeConfigBoundaryTest do
       MapSet.new([
         "test/runtime_config_test.exs",
         "test/squad_mix_task_test.exs",
-        "test/application_boot_test.exs"
+        "test/application_boot_test.exs",
+        # These mutations occur only in isolated child VMs, before application startup.
+        "test/shared_engine_process_test.exs"
       ])
 
     violations =

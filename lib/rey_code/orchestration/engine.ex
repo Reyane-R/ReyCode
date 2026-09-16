@@ -4,6 +4,7 @@ defmodule ReyCode.Orchestration.Engine do
   use GenServer
 
   alias ReyCode.EventStore
+  alias ReyCode.LocalEngine.Proxy
   alias ReyCode.Memory.Store, as: MemoryStore
 
   alias ReyCode.Orchestration.{Challenge, Projector}
@@ -70,8 +71,11 @@ defmodule ReyCode.Orchestration.Engine do
   """
   @spec start_verified_change(term(), map(), GenServer.server()) ::
           {:ok, String.t()} | {:error, term()}
-  def start_verified_change(source_session_id, options, server \\ __MODULE__),
-    do: Interactive.start(source_session_id, options, server)
+  def start_verified_change(source_session_id, options, server \\ __MODULE__) do
+    if Proxy.remote_engine?(server),
+      do: GenServer.call(server, {:ui_start_verified_change, source_session_id, options}),
+      else: Interactive.start(source_session_id, options, server)
+  end
 
   @doc "Durably blocks a verified change before requesting owned execution shutdown, even between Turns."
   @spec cancel_verified_change(term(), GenServer.server()) :: :ok | {:error, term()}
@@ -157,15 +161,23 @@ defmodule ReyCode.Orchestration.Engine do
   @spec create_blank_session(term(), term(), GenServer.server()) ::
           {:ok, String.t()} | {:error, atom()}
   def create_blank_session(title, workspace \\ File.cwd!(), server \\ __MODULE__) do
-    GenServer.call(server, {:create_blank_session, title, workspace})
+    GenServer.call(server, {:create_blank_session, title, expand_workspace(workspace)})
   end
 
   @doc "Returns the newest Session rooted at a Workspace, creating a blank source Session when absent."
   @spec ensure_workspace_session(term(), GenServer.server()) ::
           {:ok, String.t()} | {:error, atom()}
   def ensure_workspace_session(workspace, server \\ __MODULE__) do
-    GenServer.call(server, {:ensure_workspace_session, workspace})
+    GenServer.call(server, {:ensure_workspace_session, expand_workspace(workspace)})
   end
+
+  defp expand_workspace(path) when is_binary(path) and path != "" do
+    Path.expand(path)
+  rescue
+    ArgumentError -> path
+  end
+
+  defp expand_workspace(path), do: path
 
   @doc "Creates a fresh durable session titled from its first input."
   @spec create_session(term(), term(), GenServer.server()) :: {:ok, String.t()} | {:error, atom()}
@@ -342,6 +354,7 @@ defmodule ReyCode.Orchestration.Engine do
   def init(opts) do
     event_store = Keyword.get(opts, :event_store, EventStore)
     config = Keyword.get_lazy(opts, :config, &RuntimeConfig.fresh/0)
+    config = RuntimeConfig.canonical_paths(config)
 
     {agent_delay_ms, simulator_opts} = simulator_policy(opts, config)
 
@@ -400,6 +413,11 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   @impl true
+  def handle_call({:client_request, request}, from, state) do
+    {:reply, result, next} = handle_call(request, from, state)
+    {:reply, {:engine_result, result, next.projection}, next}
+  end
+
   def handle_call(:snapshot, _from, state), do: {:reply, state.projection, state}
 
   def handle_call(:check_policy, _from, state), do: {:reply, state.config.tools.bash, state}

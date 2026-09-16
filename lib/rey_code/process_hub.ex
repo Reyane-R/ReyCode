@@ -54,7 +54,10 @@ defmodule ReyCode.ProcessHub do
   def restart(name, server \\ __MODULE__), do: GenServer.call(server, {:restart, name})
 
   @impl true
-  def init(_opts), do: {:ok, %{entries: %{}, ports: %{}}}
+  def init(_opts) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{entries: %{}, ports: %{}}}
+  end
 
   @impl true
   def handle_call({:start, name, command, workspace, policy}, _from, state) do
@@ -146,6 +149,9 @@ defmodule ReyCode.ProcessHub do
         {:noreply, next}
     end
   end
+
+  def handle_info({:EXIT, port, _reason}, state) when is_port(port),
+    do: handle_info({port, {:exit_status, nil}}, state)
 
   def handle_info(_message, state), do: {:noreply, state}
 

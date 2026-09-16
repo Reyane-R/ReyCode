@@ -147,6 +147,10 @@ defmodule ReyCode.TUI.Components.SettingsModal do
   end
 
   defp source_label(nil, _key_env), do: "no credential stored"
+
+  defp source_label(:unavailable, _key_env),
+    do: "credentials unavailable · check engine connection"
+
   defp source_label(:session, _key_env), do: "active key: this run"
   defp source_label(:environment, key_env), do: "active key: environment #{key_env}"
   defp source_label(:keychain, _key_env), do: "active key: system keychain"

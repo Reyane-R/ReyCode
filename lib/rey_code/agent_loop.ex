@@ -43,8 +43,8 @@ defmodule ReyCode.AgentLoop do
 
   defp handle_tool_action({:ok, :none}, state, request), do: provider_round(state, request)
 
-  defp handle_tool_action({:ok, {:execute, run}}, state, _request) do
-    Agent.execute_tool_run(state, run)
+  defp handle_tool_action({:ok, {:execute, run}}, state, request) do
+    Agent.execute_tool_run(Map.put(state, :session_id, request.session_id), run)
     run(state)
   end
 
@@ -159,6 +159,7 @@ defmodule ReyCode.AgentLoop do
   end
 
   defp execute_started_tool_run(state, run, tool_request) do
+    tool_request = %{tool_request | session_id: Map.get(state, :session_id)}
     config = state.config
     # Adapters retain their own (usually much shorter) deadlines. The caller's
     # one-hour envelope never kills a lease while subprocess cleanup is running.

@@ -1,5 +1,7 @@
 import Config
 
+config :rey_code, engine_role: :standalone
+
 config :rey_code,
   agent_delay_ms: 0,
   allow_simulator_provider: true,

@@ -891,7 +891,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
     roots =
       if context.workspace_roots == [],
-        do: Workspace.roots(state.config.workspace),
+        do: Workspace.roots_for(workspace, state.config.workspace),
         else: context.workspace_roots
 
     {workspace, roots}

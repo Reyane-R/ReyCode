@@ -20,6 +20,37 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D42 - Terminal clients share one local engine owner (Policy - 2026-09-16)
+
+The database lock belongs to a detached EngineHost, not each terminal. Normal
+launches attach through an owner-private Unix socket or start the same installation
+detached. The database lock still elects the winner of simultaneous startups.
+Clients keep drafts, session selection, terminal state, clipboard and Herdr pane
+reporting local; providers, credentials, memory, verification and tool execution
+belong to the engine. Headless verification is a coarse engine operation, not
+serialization of client closures or client-owned execution.
+
+This trades an extra local process and IPC cost for one durable scheduling truth.
+The transport accepts only enumerated service operations and bounded uncompressed
+ETF messages, decoded with the existing atom vocabulary. Socket directories are
+owner-only. It is a same-OS-user interface, not a multi-user or network service.
+Protocol, exact code build, canonical storage identity and effective engine policy
+must match; mismatches never silently select another database or restart active
+work. Configuration fingerprints use deterministic serialization across VMs.
+Startup transfers effective validated settings in a private one-use file so
+changing the launch cwd does not reinterpret relative roots or lose overrides.
+
+Projection/catalog polling is bounded and versioned; fresh snapshot reads also
+notify subscribers. Disconnects fail outstanding requests without replay. New
+connections obtain fresh snapshots. Normal client exit leaves engine work alive;
+engine shutdown is explicit and can interrupt active work.
+
+Each launcher selects its own canonical directory. Session execution roots derive
+from that Session, never the daemon cwd; explicit configured root restrictions
+still apply. Named process/debugger/evaluation hubs are scoped by workspace and
+Session. Their global hub limit is bounded, and unborrowed idle hubs can be
+reclaimed at capacity. These are ownership boundaries, not an OS filesystem sandbox.
+
 ### D41 - Strategic reviews freeze evidence and have no tools (Policy - 2026-09-10)
 
 `/advise strategy` reuses ordinary delegation and transcript persistence, but

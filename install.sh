@@ -65,8 +65,12 @@ download "$url" "${tmp}/${asset}"
 
 mkdir -p "$INSTALL_DIR" "$BIN_DIR"
 tar -xzf "${tmp}/${asset}" -C "$tmp"
-rm -rf "$INSTALL_DIR"
-mv "${tmp}/reycode-${VERSION#v}" "$INSTALL_DIR"
+# Keep runtime paths immutable: an attached engine may still be using the
+# previous installation's executables and native libraries during an update.
+mkdir -p "${INSTALL_DIR}/builds"
+build_dir=$(mktemp -d "${INSTALL_DIR}/builds/${VERSION#v}-${os}-${arch}.XXXXXX")
+mv "${tmp}/reycode-${VERSION#v}" "${build_dir}/runtime"
+runtime_dir="${build_dir}/runtime"
 
 cat > "${BIN_DIR}/reycode" <<EOF
 #!/bin/sh
@@ -82,14 +86,21 @@ if [ "\$1" = "update" ]; then
   rm -f "\$update_script"
   exit \$status
 fi
+if [ "\$1" = "engine" ]; then
+  shift
+  exec "${runtime_dir}/bin/rey_code" eval 'ReyCode.CLI.Engine.main(System.argv())' "\$@"
+fi
 if [ "\$1" = "run" ]; then
   shift
-  exec "${INSTALL_DIR}/bin/rey_code" eval 'ReyCode.CLI.Run.main(System.argv())' "\$@"
+  exec "${runtime_dir}/bin/rey_code" eval 'ReyCode.CLI.Run.main(System.argv())' "\$@"
+fi
+if [ "\$1" = "daemon" ]; then
+  export REYCODE_ENGINE_ROLE=engine
 fi
 if [ \$# -eq 0 ]; then
   set -- start
 fi
-exec "${INSTALL_DIR}/bin/rey_code" "\$@"
+exec "${runtime_dir}/bin/rey_code" "\$@"
 EOF
 chmod +x "${BIN_DIR}/reycode"
 case ":$PATH:" in

@@ -2,7 +2,7 @@ defmodule ReyCode.Tool.Request do
   @moduledoc "A normalized tool execution request emitted by a provider."
 
   @enforce_keys [:tool, :arguments, :workspace]
-  defstruct [:tool, :arguments, :workspace, :roots, :request_id, :verified_workspace]
+  defstruct [:tool, :arguments, :workspace, :roots, :request_id, :verified_workspace, :session_id]
 
   @type t :: %__MODULE__{
           tool: String.t() | atom(),
@@ -10,7 +10,8 @@ defmodule ReyCode.Tool.Request do
           workspace: String.t(),
           roots: [String.t()] | nil,
           request_id: String.t() | nil,
-          verified_workspace: String.t() | nil
+          verified_workspace: String.t() | nil,
+          session_id: String.t() | nil
         }
 
   @spec new(keyword()) :: t()
@@ -21,7 +22,8 @@ defmodule ReyCode.Tool.Request do
       workspace: Keyword.fetch!(opts, :workspace),
       roots: Keyword.get(opts, :roots),
       request_id: Keyword.get(opts, :request_id),
-      verified_workspace: Keyword.get(opts, :verified_workspace)
+      verified_workspace: Keyword.get(opts, :verified_workspace),
+      session_id: Keyword.get(opts, :session_id)
     }
   end
 

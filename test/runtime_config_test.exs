@@ -38,7 +38,9 @@ defmodule ReyCode.RuntimeConfigTest do
 
     assert config.tools.bash.timeout_ms == 1_234
     assert config.orchestration.global_concurrency == 7
-    assert config.workspace.roots == ["/tmp/a", "/tmp/b"]
+
+    assert config.workspace.roots ==
+             Enum.map(["/tmp/a", "/tmp/b"], &ReyCode.Paths.canonical_future/1)
   end
 
   test "assembles reduced-motion presentation policy" do

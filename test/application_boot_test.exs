@@ -11,7 +11,7 @@ defmodule ReyCode.ApplicationBootTest do
     assert %ReyCode.Orchestration.Projection{} = ReyCode.snapshot()
   end
 
-  test "storage_paths honors data_dir override and legacy XDG location" do
+  test "storage_paths isolates data overrides and imports legacy history only in the default profile" do
     previous_event_path = Application.get_env(:rey_code, :event_path)
     previous_data_dir = Application.get_env(:rey_code, :data_dir)
 
@@ -21,7 +21,15 @@ defmodule ReyCode.ApplicationBootTest do
 
       paths = ReyCode.Application.storage_paths()
 
-      assert paths.database == "/tmp/rey_code_data_test/rey_code.sqlite3"
+      assert paths.database ==
+               Path.join(
+                 ReyCode.Paths.canonical_future("/tmp/rey_code_data_test"),
+                 "rey_code.sqlite3"
+               )
+
+      assert paths.legacy == nil
+      Application.put_env(:rey_code, :data_dir, ReyCode.Paths.data_home())
+      paths = ReyCode.Application.storage_paths()
 
       assert paths.legacy ==
                Path.join([

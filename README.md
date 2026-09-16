@@ -125,10 +125,52 @@ it in the background).
 To build from source instead, run `MIX_ENV=prod mix release` in a checkout and
 point the launcher at `_build/prod/rel/rey_code/bin/rey_code`.
 
-The SQLite event store is single-writer: one live instance per data directory.
-A second instance fails closed and explains that another ReyCode instance is
-already running. Quit the first instance with `Ctrl+Q`, or run a throwaway
-instance in isolation by launching it under a different `$HOME`.
+### Multiple terminals and workspaces
+
+Run `reycode` in several terminals, including in different project directories.
+Each terminal attaches to one shared local engine for its data directory. The
+first launch starts the engine automatically; the database remains single-writer.
+Each terminal selects its own canonical launch directory and keeps its own draft,
+scroll position, and panels. Its first new conversation is independent; explicitly
+resume a conversation to share live updates with another terminal.
+
+Tools use their Session's workspace, not the engine's startup directory. Named
+background processes, debugger sessions, and evaluation kernels are scoped by
+workspace and Session, so two projects can both use a resource named `server`.
+Workspace memory and durable history remain shared through the engine.
+
+`Ctrl+Q` or `/quit` closes only that terminal. Work continues in the engine.
+Lifecycle controls are explicit:
+
+```sh
+reycode engine status
+reycode engine stop   # stops the shared engine and can interrupt active work
+# Source-checkout equivalents:
+mix rey_code.engine status
+mix rey_code.engine stop
+```
+
+Clients reconnect with a fresh snapshot after a connection loss. Unacknowledged
+commands are never automatically replayed: inspect history before retrying them.
+All clients must match the engine's protocol, exact code build, storage path,
+and engine settings. A mismatch reports the conflict; stop the old engine
+explicitly and relaunch when ready to change builds or configuration. Terminal
+display settings remain client-local. Install updates retain immutable runtime
+directories under `~/.reycode/builds`, so active engines do not lose their files;
+old builds may be removed after their engines have stopped.
+
+The first transition from an older standalone release requires quitting that
+old instance once. It cannot accept shared-engine connections. New releases do
+not bypass its database lock or terminate it automatically.
+
+`REYCODE_DATA_DIR` selects a separate engine/history when isolation is desired
+and is honored by source and release launches. Memory and artifacts follow that
+directory too. `REYCODE_ENGINE_ROLE=standalone` retains the single-process mode
+for tests and maintenance; it requires exclusive database ownership. The shared
+engine currently supports macOS/Linux Unix sockets, up to 32 attached clients,
+64 concurrent IPC operations, and 128 scoped resource hubs. Idle, unborrowed
+hubs can be reclaimed at capacity. These are local ownership boundaries, not
+an OS sandbox or a multi-user remote service.
 
 ### Herdr integration
 
@@ -444,7 +486,9 @@ before the final response: native reasoning and tool lifecycle events remain in
 provider frame order, while a tool's start/update/completion lifecycle collapses
 to one recognizable row such as `⠹ · Reading · lib/foo.ex`,
 `Running · mix test`, or `Delegating · Luna`. The ledger keeps the eight newest
-reasoning lines visible and reports older entries as `+k earlier thoughts`.
+reasoning previews visible and reports older entries as `+k earlier thoughts`.
+Each preview wraps to the available terminal width, including wide Unicode
+characters and long unbroken tokens, rather than disappearing past the right edge.
 
 Successful completed execution collapses to a tool-action count and a **Show
 details** control. Clicking it, or pressing Enter/Space while it is focused,
@@ -926,6 +970,12 @@ trusted Workspace roots where applicable. Read-only inspection runs after
 containment checks. Supported tools run directly by default; configured rules
 can require approval or deny execution. Unknown tools fail closed. See
 [Tool approval](#tool-approval) for the approval surface.
+
+The model receives explicit argument schemas for every advertised tool. Basic
+filesystem tools require `path` (`.` means the workspace root); `glob` and
+`grep` also require `pattern`, `bash` requires `command` with optional `cwd`,
+and `write` requires `content` as well as `path`. `read` accepts optional
+1-based `offset` and positive `limit` line counts.
 
 For editable files within the read byte limit, `read` returns a lowercase
 SHA-256 `source_hash`. `edit` requires that hash and one or more unique

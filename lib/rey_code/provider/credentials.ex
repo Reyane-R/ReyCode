@@ -29,7 +29,8 @@ defmodule ReyCode.Provider.Credentials do
   Returns the credential for one key environment name with its source, or
   `:error` when no source resolves. Blank environment values are missing.
   """
-  @spec fetch(String.t() | nil, GenServer.server()) :: {:ok, String.t(), source()} | :error
+  @spec fetch(String.t() | nil, GenServer.server()) ::
+          {:ok, String.t(), source()} | :error | {:error, term()}
   def fetch(key_env, server \\ __MODULE__)
 
   def fetch(nil, _server), do: :error
@@ -40,14 +41,16 @@ defmodule ReyCode.Provider.Credentials do
 
   @doc "Whether any source can currently resolve a credential for key_env."
   @spec known?(String.t() | nil, GenServer.server()) :: boolean()
-  def known?(key_env, server \\ __MODULE__), do: fetch(key_env, server) != :error
+  def known?(key_env, server \\ __MODULE__),
+    do: match?({:ok, _key, _source}, fetch(key_env, server))
 
-  @doc "Returns the source that currently resolves key_env, or nil."
-  @spec source(String.t() | nil, GenServer.server()) :: source() | nil
+  @doc "Returns the credential source, nil when missing, or :unavailable when the service cannot be reached."
+  @spec source(String.t() | nil, GenServer.server()) :: source() | nil | :unavailable
   def source(key_env, server \\ __MODULE__) do
     case fetch(key_env, server) do
       {:ok, _key, source} -> source
       :error -> nil
+      {:error, _reason} -> :unavailable
     end
   end
 
@@ -57,7 +60,7 @@ defmodule ReyCode.Provider.Credentials do
   persistence fails; the return reports the persistence outcome.
   """
   @spec remember(String.t(), String.t(), boolean(), GenServer.server()) ::
-          :ok | {:error, Keychain.error()}
+          :ok | {:error, Keychain.error() | atom()}
   def remember(key_env, key, persist? \\ true, server \\ __MODULE__)
       when is_binary(key_env) and key_env != "" and is_binary(key) do
     call(server, {:remember, key_env, key, persist?})
@@ -67,7 +70,7 @@ defmodule ReyCode.Provider.Credentials do
   Removes the session and stored credential for key_env. Idempotent; callers
   should refresh discovery afterwards.
   """
-  @spec remove(String.t(), GenServer.server()) :: :ok
+  @spec remove(String.t(), GenServer.server()) :: :ok | {:error, term()}
   def remove(key_env, server \\ __MODULE__) when is_binary(key_env) and key_env != "",
     do: call(server, {:remove, key_env})
 

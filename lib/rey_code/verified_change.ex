@@ -10,6 +10,7 @@ defmodule ReyCode.VerifiedChange do
   Worktrees isolate edits, not host execution of owner-supplied commands.
   """
 
+  alias ReyCode.LocalEngine.{Protocol, Proxy}
   alias ReyCode.OneShot
   alias ReyCode.Orchestration.{Engine, VerifiedChangeContext}
   alias ReyCode.Orchestration.Engine.SourceTask
@@ -99,9 +100,40 @@ defmodule ReyCode.VerifiedChange do
   @doc "Runs one isolated change and at most three repairs; all checks are harness-owned."
   @spec run(map(), GenServer.server()) :: {:ok | :error, map()}
   def run(options, engine \\ Engine) do
+    options = expand_workspace(options)
+
     case validate_options(options) do
-      :ok -> start(options, engine)
-      {:error, reason} -> early_error(reason)
+      :ok ->
+        if Proxy.remote_engine?(engine),
+          do: run_remote(options, engine),
+          else: start(options, engine)
+
+      {:error, reason} ->
+        early_error(reason)
+    end
+  end
+
+  defp expand_workspace(%{workspace: workspace} = options)
+       when is_binary(workspace) and workspace != "" do
+    %{options | workspace: Path.expand(workspace)}
+  rescue
+    ArgumentError -> options
+  end
+
+  defp expand_workspace(options), do: options
+
+  defp run_remote(options, engine) do
+    request = {:ui_verified_change_run, options}
+    timeout_ms = Protocol.request_timeout_ms(:engine, request) + 1_000
+
+    case GenServer.call(engine, request, timeout_ms) do
+      {status, report} when status in [:ok, :error] and is_map(report) ->
+        {status, report}
+
+      {:error, reason} ->
+        early_error(
+          "Shared engine result unavailable: #{inspect(reason)}; inspect history before retrying"
+        )
     end
   end
 

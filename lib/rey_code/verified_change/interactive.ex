@@ -20,6 +20,19 @@ defmodule ReyCode.VerifiedChange.Interactive do
 
   @spec start(term(), term(), GenServer.server()) :: {:ok, String.t()} | {:error, term()}
   def start(source_session_id, options, engine) when is_map(options) do
+    prepare_and_start(source_session_id, options, engine, :plain)
+  end
+
+  def start(_source_session_id, _options, _engine), do: {:error, :invalid_verified_change_options}
+
+  @doc "Returns the durable receipt and its atomic projection for a remote terminal."
+  def start_receipt(source_session_id, options, engine) when is_map(options),
+    do: prepare_and_start(source_session_id, options, engine, :receipt)
+
+  def start_receipt(_source_session_id, _options, _engine),
+    do: {:error, :invalid_verified_change_options}
+
+  defp prepare_and_start(source_session_id, options, engine, mode) do
     started_ms = System.monotonic_time(:millisecond)
     source = Map.get(Engine.snapshot(engine).sessions, source_session_id)
 
@@ -27,21 +40,23 @@ defmodule ReyCode.VerifiedChange.Interactive do
          options = Map.put(options, :workspace, source_workspace(source)),
          :ok <- Runner.validate_options(options),
          {:ok, directory} <- prepare_directory() do
-      result =
-        GenServer.call(
-          engine,
-          {:start_verified_change, source_session_id, options, directory, started_ms}
-        )
+      request = {:start_verified_change, source_session_id, options, directory, started_ms}
+      request = if mode == :receipt, do: {:client_request, request}, else: request
+      result = GenServer.call(engine, request)
 
-      if match?({:error, _}, result), do: File.rmdir(directory)
+      response =
+        case result do
+          {:engine_result, response, _projection} -> response
+          response -> response
+        end
+
+      if match?({:error, _}, response), do: File.rmdir(directory)
       result
     else
       nil -> {:error, :session_not_found}
       {:error, _reason} = error -> error
     end
   end
-
-  def start(_source_session_id, _options, _engine), do: {:error, :invalid_verified_change_options}
 
   defp prepare_directory do
     directory = Path.join(System.tmp_dir!(), Identity.new_id("verified"))

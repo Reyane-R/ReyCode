@@ -10,6 +10,28 @@ If you want the domain vocabulary (what a "Turn" or "Invocation" means), read
 [`CONTEXT.md`](../CONTEXT.md) first. This guide explains the *code*, not the
 concepts.
 
+### Process boundary: terminal clients and one engine
+
+Normal launches are TerminalClients. `ReyCode.LocalEngine.Connection` attaches
+to an owner-private Unix socket, starting a detached EngineHost from the same
+installation if needed. `LocalEngine.Proxy` preserves the existing Engine,
+Catalog, Credentials and Memory service APIs inside each client. Commands cross
+the socket through an enumerated dispatcher; model calls, tools and verification
+run only in the engine. The engine still owns the sole SQLite writer.
+
+The launch directory is captured by each TUI and passed explicitly when selecting
+its Workspace. Shared snapshots do not share drafts, selection, panels, or scroll
+state. Client subscriptions are fed by bounded, versioned polling, and snapshot
+reads also publish newer projections. A closed connection does not replay commands
+or stop engine work. Closing the terminal stops the client VM; engine shutdown is
+an explicit lifecycle command. Incompatible builds/configuration cannot attach.
+
+`ResourceScopes` owns process/debugger/evaluation hubs by canonical Workspace and
+Session so names cannot collide across projects or independent conversations.
+`REYCODE_ENGINE_ROLE=standalone` keeps the original in-process stack for tests and
+exclusive maintenance. The in-process orchestration tour below describes that
+same stack inside the shared EngineHost.
+
 ## Before you read: what the program looks like
 
 When you run `mix run --no-halt`, ReyCode starts at a clean session home:

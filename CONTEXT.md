@@ -6,6 +6,12 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Workspace** — Canonical filesystem directory in which a Session's work is scoped.
 
+**TerminalClient** — One Operator interface with its own selected Session, draft, viewport, and transient panels. Multiple TerminalClients may observe the same Session; disconnecting one does not cancel its work or change another client's selection.
+
+**EngineHost** — The single running owner of a data directory's durable orchestration and execution, shared by its attached TerminalClients.
+
+**ResourceScope** — Workspace-and-Session ownership boundary for named background processes, evaluation kernels, and debugger sessions. The same local resource name in a different scope denotes a different resource.
+
 **Session** — Durable workspace-rooted conversation aggregate owning one title, Workspace, Participant roster, ordered Messages and Turns, context-compaction state, and active/queued Turn scheduling.
 
 **SessionFork** — Session whose inherited transcript references completed Messages from one parent Session through a recorded durable sequence; later Messages belong only to the fork.

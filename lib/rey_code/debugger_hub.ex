@@ -36,7 +36,10 @@ defmodule ReyCode.DebuggerHub do
   def list(server \\ __MODULE__), do: GenServer.call(server, :list)
 
   @impl true
-  def init(_opts), do: {:ok, %{sessions: %{}, ports: %{}}}
+  def init(_opts) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{sessions: %{}, ports: %{}}}
+  end
 
   @impl true
   def handle_call({:start, name, command, workspace, policy}, _from, state) do
@@ -145,6 +148,11 @@ defmodule ReyCode.DebuggerHub do
         {:noreply, state}
     end
   end
+
+  # A trapped Port exit may follow exit_status (already removed) or an explicit
+  # close. If no status arrived, preserve that uncertainty rather than a fake code.
+  def handle_info({:EXIT, port, _reason}, state) when is_port(port),
+    do: handle_info({port, {:exit_status, :port_closed}}, state)
 
   @impl true
   def terminate(_reason, state) do

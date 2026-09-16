@@ -56,7 +56,8 @@ defmodule ReyCode.TUI.Clipboard do
         additional_names: ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"]
       )
 
-    with {:ok, process} <- Exile.Process.start_link([wrapper | args], env: env, stderr: :disable) do
+    with {:ok, process} <-
+           Exile.Process.start_link([wrapper | args], env: Map.to_list(env), stderr: :disable) do
       written =
         with :ok <- Exile.Process.write(process, text), do: Exile.Process.close_stdin(process)
 

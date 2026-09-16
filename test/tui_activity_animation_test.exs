@@ -216,7 +216,7 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
        config: config}
     )
 
-    session_id = Engine.snapshot(@engine).session_order |> List.last()
+    {:ok, session_id} = Engine.ensure_workspace_session(workspace, @engine)
     primary = Engine.snapshot(@engine).sessions[session_id].participants |> List.first()
     assert :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
 
@@ -233,7 +233,7 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
       true
     end
 
-    %{catalog: catalog, config: config, schedule: schedule, cancel: cancel}
+    %{catalog: catalog, config: config, schedule: schedule, cancel: cancel, workspace: workspace}
   end
 
   defp start_session(stack) do
@@ -245,6 +245,7 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
         engine: @engine,
         provider_catalog: stack.catalog,
         config: stack.config,
+        workspace: stack.workspace,
         animation_schedule: stack.schedule,
         animation_style: :unicode,
         animation_cancel: stack.cancel

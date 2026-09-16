@@ -437,8 +437,32 @@ defmodule ReyCode.TUI do
     {:noreply, assign(term, update_notice: Notice.new(:info, message))}
   end
 
+  def handle_info({:engine_connection, :disconnected}, term),
+    do:
+      {:noreply,
+       assign(term,
+         notice:
+           Notice.new(
+             :warning,
+             "Engine disconnected · reconnecting; unacknowledged actions are not retried"
+           )
+       )}
+
+  def handle_info({:engine_connection, :connected}, term),
+    do: {:noreply, assign(term, notice: Notice.new(:info, "Engine reconnected"))}
+
+  def handle_info({:engine_reconnected, projection}, term),
+    do: {:noreply, State.engine_reconnected(term, projection)}
+
+  def handle_info({:engine_connection_error, reason}, term) do
+    message =
+      "Shared engine unavailable: #{inspect(reason)}. For a build/settings mismatch, restart the engine explicitly."
+
+    {:noreply, assign(term, notice: Notice.new(:warning, message))}
+  end
+
   def handle_info({:projection_snapshot, projection}, term) do
-    ReyCode.Herdr.report_projection(projection)
+    ReyCode.Herdr.report_session(projection, term.assigns.selected_session_id)
 
     if projection.sequence > term.assigns.projection.sequence do
       :ok = Attention.notify(term.assigns.projection, projection)

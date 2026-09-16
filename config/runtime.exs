@@ -1,6 +1,6 @@
 import Config
 
-if config_env() == :prod do
+if config_env() != :test do
   parse_integer = fn name, default, minimum ->
     case System.get_env(name) do
       nil ->
@@ -33,9 +33,9 @@ if config_env() == :prod do
 
   data_dir =
     System.get_env("REYCODE_DATA_DIR") ||
-      Path.expand("~/Library/Application Support/ReyCode")
+      ReyCode.Paths.data_home()
 
-  log_dir = System.get_env("REYCODE_LOG_DIR") || Path.expand("~/Library/Logs/ReyCode")
+  log_dir = System.get_env("REYCODE_LOG_DIR") || ReyCode.Paths.log_home()
   mode = System.get_env("REYCODE_MODE", "local")
 
   if mode != "local" do

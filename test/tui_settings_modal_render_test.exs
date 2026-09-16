@@ -9,6 +9,9 @@ defmodule ReyCode.TUI.SettingsModalRenderTest do
     @impl true
     def init(source), do: {:ok, source}
     @impl true
+    def handle_call({:fetch, "ZAI_API_KEY"}, _from, :offline),
+      do: {:reply, {:error, :engine_disconnected}, :offline}
+
     def handle_call({:fetch, "ZAI_API_KEY"}, _from, source) do
       reply = if source, do: {:ok, "test-secret-not-for-display", source}, else: :error
       {:reply, reply, source}
@@ -27,7 +30,7 @@ defmodule ReyCode.TUI.SettingsModalRenderTest do
   end
 
   test "key entry renders flat assigns and uses the injected credential server without exposing secrets" do
-    for source <- [nil, :session, :environment, :keychain] do
+    for source <- [nil, :session, :environment, :keychain, :offline] do
       server = start_supervised!({CredentialServer, source}, id: source)
 
       view =
@@ -50,7 +53,15 @@ defmodule ReyCode.TUI.SettingsModalRenderTest do
       screen = Breeze.Test.render!(view)
       assert screen =~ "Z.ai API key"
       assert screen =~ "this run only"
-      assert screen =~ if(source, do: "active key:", else: "no credential stored")
+
+      label =
+        case source do
+          nil -> "no credential stored"
+          :offline -> "credentials unavailable"
+          _ -> "active key:"
+        end
+
+      assert screen =~ label
       refute screen =~ "typed-secret-not-for-display"
       refute screen =~ "test-secret-not-for-display"
     end

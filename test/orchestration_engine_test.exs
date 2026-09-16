@@ -1153,7 +1153,17 @@ defmodule ReyCode.Orchestration.EngineTest do
 
       assert :ok = Engine.cancel_turn(turn_id, "owner stop", engine)
 
-      assert [snapshot] = new_snapshots()
+      # A streamed frame may arrive between draining the mailbox and cancelling.
+      # Assert atomic cancellation, rather than forbidding unrelated live output.
+      cancellations =
+        Enum.filter(new_snapshots(), fn snapshot ->
+          turn = snapshot.turns[turn_id]
+
+          turn.outcome == :cancelled or
+            Enum.any?(turn.invocation_order, &(snapshot.invocations[&1].status == :cancelled))
+        end)
+
+      assert [snapshot] = cancellations
       turn = snapshot.turns[turn_id]
 
       assert turn.status == :terminal

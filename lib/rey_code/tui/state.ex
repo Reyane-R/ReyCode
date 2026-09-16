@@ -49,7 +49,7 @@ defmodule ReyCode.TUI.State do
     selected_session_id = ensure_workspace_session!(engine, workspace)
     projection = Engine.subscribe(engine)
 
-    ReyCode.Herdr.report_projection(projection)
+    ReyCode.Herdr.report_session(projection, selected_session_id)
     catalog_snapshot = Catalog.subscribe(provider_catalog)
     keybindings = ReyCode.TUI.resolved_keybindings(config)
 
@@ -476,6 +476,9 @@ defmodule ReyCode.TUI.State do
   mailbox. Snapshots at or below the current `sequence` are ignored.
   """
   @spec projection_updated(map(), map()) :: map()
+  def projection_updated(%{assigns: %{engine_workspace_missing?: true}} = term, _projection),
+    do: term
+
   def projection_updated(term, %{sequence: sequence} = projection) do
     term =
       if Map.has_key?(term.assigns, :projection) and
@@ -493,6 +496,45 @@ defmodule ReyCode.TUI.State do
       end
 
     reconcile_animation(term)
+  end
+
+  @doc "Accepts a fresh engine epoch, including a restored history with a lower sequence."
+  def engine_reconnected(term, projection) do
+    id = term.assigns.selected_session_id
+
+    if Map.has_key?(projection.sessions, id) do
+      term
+      |> Component.assign(projection: projection, engine_workspace_missing?: false)
+      |> reconcile_animation()
+    else
+      previous = term.assigns.projection.sessions[id]
+      workspace = if previous, do: previous.workspace, else: File.cwd!()
+
+      case Engine.ensure_workspace_session(workspace, term.assigns.engine) do
+        {:ok, selected} ->
+          snapshot = Engine.snapshot(term.assigns.engine)
+
+          term
+          |> Component.assign(
+            projection: snapshot,
+            selected_session_id: selected,
+            home: true,
+            modal: nil,
+            engine_workspace_missing?: false
+          )
+          |> reconcile_animation()
+
+        {:error, _reason} ->
+          Component.assign(term,
+            engine_workspace_missing?: true,
+            notice:
+              Notice.new(
+                :warning,
+                "The previous workspace is unavailable; select a workspace to continue"
+              )
+          )
+      end
+    end
   end
 
   @doc "Applies a catalog snapshot unless its generation is not newer."
@@ -552,7 +594,12 @@ defmodule ReyCode.TUI.State do
   @spec select_session(map(), String.t(), boolean()) :: map()
   def select_session(term, session_id, home? \\ false) do
     term
-    |> Component.assign(selected_session_id: session_id, home: home?, expanded_message_ids: [])
+    |> Component.assign(
+      selected_session_id: session_id,
+      home: home?,
+      expanded_message_ids: [],
+      engine_workspace_missing?: false
+    )
     |> reconcile_animation()
   end
 

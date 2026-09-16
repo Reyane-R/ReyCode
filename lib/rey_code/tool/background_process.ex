@@ -11,12 +11,13 @@ defmodule ReyCode.Tool.BackgroundProcess do
   @mutating_actions ~w(start stop restart)
 
   @impl true
-  def run(%Request{arguments: arguments, workspace: workspace}, opts) do
+  def run(%Request{arguments: arguments, workspace: workspace} = request, opts) do
     %ProcessPolicy{} = policy = Keyword.fetch!(opts, :policy)
 
     with {:ok, action} <- Support.require_arg(arguments, :action),
-         true <- action in @actions do
-      execute(action, arguments, workspace, policy)
+         true <- action in @actions,
+         {:ok, hub} <- ReyCode.ResourceScopes.fetch(request, ProcessHub) do
+      execute(action, arguments, workspace, policy, hub)
     else
       false -> Result.error(:unsupported_process_action)
       {:error, reason} -> Result.error(reason)
@@ -27,19 +28,19 @@ defmodule ReyCode.Tool.BackgroundProcess do
   @spec mutating_action?(term()) :: boolean()
   def mutating_action?(action), do: action in @mutating_actions
 
-  defp execute("start", arguments, workspace, policy) do
+  defp execute("start", arguments, workspace, policy, hub) do
     with {:ok, name} <- Support.require_arg(arguments, :name),
          {:ok, command} <- require_command(arguments),
-         {:ok, snapshot} <- ProcessHub.start(name, command, workspace, policy) do
+         {:ok, snapshot} <- ProcessHub.start(name, command, workspace, policy, hub) do
       Result.ok("started #{name}", metadata: wire_snapshot(snapshot))
     else
       {:error, reason} -> Result.error(reason)
     end
   end
 
-  defp execute("logs", arguments, _workspace, _policy) do
+  defp execute("logs", arguments, _workspace, _policy, hub) do
     with {:ok, name} <- Support.require_arg(arguments, :name),
-         {:ok, logs} <- ProcessHub.logs(name) do
+         {:ok, logs} <- ProcessHub.logs(name, hub) do
       Result.ok(Jason.encode!(logs),
         truncated: logs["truncated"],
         metadata: %{"name" => name, "output_bytes" => logs["output_bytes"]}
@@ -49,20 +50,20 @@ defmodule ReyCode.Tool.BackgroundProcess do
     end
   end
 
-  defp execute("list", _arguments, _workspace, _policy) do
-    ProcessHub.list()
+  defp execute("list", _arguments, _workspace, _policy, hub) do
+    ProcessHub.list(hub)
     |> Enum.map(&wire_snapshot/1)
     |> Jason.encode!()
     |> Result.ok()
   end
 
-  defp execute("wait", arguments, _workspace, policy) do
+  defp execute("wait", arguments, _workspace, policy, hub) do
     with {:ok, name} <- Support.require_arg(arguments, :name),
          {:ok, pattern} <- Support.require_arg(arguments, :pattern),
          {:ok, timeout_ms} <-
            Support.integer_arg(arguments, :timeout_ms, policy.stop_timeout_ms),
          true <- timeout_ms > 0,
-         {:ok, logs} <- ProcessHub.await(name, pattern, timeout_ms) do
+         {:ok, logs} <- ProcessHub.await(name, pattern, timeout_ms, hub) do
       Result.ok(Jason.encode!(logs),
         truncated: logs["truncated"],
         metadata: %{"name" => name, "output_bytes" => logs["output_bytes"]}
@@ -73,18 +74,18 @@ defmodule ReyCode.Tool.BackgroundProcess do
     end
   end
 
-  defp execute("stop", arguments, _workspace, _policy) do
+  defp execute("stop", arguments, _workspace, _policy, hub) do
     with {:ok, name} <- Support.require_arg(arguments, :name),
-         :ok <- ProcessHub.stop(name) do
+         :ok <- ProcessHub.stop(name, hub) do
       Result.ok("stopped #{name}", metadata: %{"name" => name})
     else
       {:error, reason} -> Result.error(reason)
     end
   end
 
-  defp execute("restart", arguments, _workspace, _policy) do
+  defp execute("restart", arguments, _workspace, _policy, hub) do
     with {:ok, name} <- Support.require_arg(arguments, :name),
-         {:ok, snapshot} <- ProcessHub.restart(name) do
+         {:ok, snapshot} <- ProcessHub.restart(name, hub) do
       Result.ok("restarted #{name}", metadata: wire_snapshot(snapshot))
     else
       {:error, reason} -> Result.error(reason)

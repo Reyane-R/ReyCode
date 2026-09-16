@@ -63,7 +63,9 @@ defmodule ReyCode.Memory.Store do
 
   @impl true
   def init(opts) do
-    path = Keyword.get(opts, :path, Path.join(ReyCode.Paths.data_home(), "memory.sqlite3"))
+    path =
+      Keyword.get(opts, :path, Path.join(ReyCode.Application.data_home(), "memory.sqlite3"))
+
     :ok = path |> Path.dirname() |> File.mkdir_p()
 
     with {:ok, connection} <- Sqlite3.open(path),

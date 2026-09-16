@@ -79,8 +79,18 @@ defmodule ReyCode.RuntimeConfig do
   """
   @spec load!() :: t()
   def load! do
-    load(&Application.get_env(:rey_code, &1, &2), &System.get_env/1)
+    load(&application_setting/2, &System.get_env/1)
   end
+
+  defp application_setting(:artifact_root, _default),
+    do:
+      Application.get_env(
+        :rey_code,
+        :artifact_root,
+        Path.join(ReyCode.Application.data_home(), "artifacts")
+      )
+
+  defp application_setting(key, default), do: Application.get_env(:rey_code, key, default)
 
   @doc """
   Loads configuration from an explicit settings source — the injection seam
@@ -92,6 +102,19 @@ defmodule ReyCode.RuntimeConfig do
     source
     |> Schema.load(env)
     |> assemble()
+    |> canonical_paths()
+  end
+
+  @doc "Freezes filesystem identities once at an engine or connection bootstrap boundary."
+  def canonical_paths(config) do
+    %{
+      config
+      | workspace: %{config.workspace | roots: canonical_roots(config.workspace.roots)},
+        artifacts: %{
+          config.artifacts
+          | root: ReyCode.Paths.canonical_future(config.artifacts.root)
+        }
+    }
   end
 
   @doc "Validates configuration for side-effectful startup, returning `:ok`."
@@ -238,5 +261,11 @@ defmodule ReyCode.RuntimeConfig do
       workspace: %Workspace{roots: values.workspace_roots},
       logging: %Logging{enabled?: values.file_logging, log_dir: values.log_dir}
     }
+  end
+
+  defp canonical_roots(nil), do: nil
+
+  defp canonical_roots(roots) do
+    Enum.map(roots, &ReyCode.Paths.canonical_future/1)
   end
 end

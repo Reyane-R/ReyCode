@@ -78,7 +78,7 @@ defmodule ReyCode.Orchestration.Engine.OwnerCommand do
       tool: "bash",
       arguments: %{"command" => command},
       workspace: workspace,
-      roots: Workspace.roots(config.workspace)
+      roots: Workspace.roots_for(workspace, config.workspace)
     }
 
     Bash.run(request, policy: config.tools.bash)

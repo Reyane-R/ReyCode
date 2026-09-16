@@ -24,6 +24,25 @@ Historical provider activity remains readable, bounded to the newest 256 events
 per Invocation. New model API calls return text and ToolCalls; tool activity is
 recorded through ReyCode's durable ToolRun lifecycle.
 
+## Local engine transport
+
+| Dimension | Envelope |
+|---|---|
+| Attached terminal clients | 32 per engine |
+| Engine IPC workers | 64 concurrent, supervised |
+| Pending calls | 32 per server peer; 64 per client connection |
+| Uncompressed wire packet | 67,108,864 bytes |
+| Normal projection/catalog polling | 100 ms, versioned; no command replay |
+| Connection handshake | 5,000 ms per attempt |
+| Detached startup polling | 30,000 ms plus the final bounded connection attempt |
+| Default command deadline | 4,500 ms; catalog waits 20,000 ms; cancel/merge 30,000 ms |
+| Headless verification deadline | Owner timeout plus 5,000 ms, at most 3,605,000 ms |
+| Scoped resource hubs | 128; unborrowed idle hubs reclaimed at capacity |
+
+Provider chunks are persisted before acknowledgement; a remote terminal can add
+one polling interval plus IPC/rendering work to their visibility. Large histories
+must fit the wire bound; this is not a paginated or multi-user network API.
+
 ## Event storage and replay
 
 | Dimension | Envelope |
@@ -89,7 +108,7 @@ Design intent: every cycle either advances, consumes rework budget, or terminate
 | TUI render input | Current full Projection, presentation windows selected during rendering |
 | Agent-note trail | Newest 100 notes per Invocation (`@max_invocation_notes` in Projector) |
 | Provider activity trail | Newest 256 native note/tool events per Invocation (`@max_provider_activity_events_count` in Projector) |
-| TUI reasoning lines visible | 8 per message behind a `+k earlier thoughts` collapse |
+| TUI reasoning previews visible | 8 logical previews per message behind a `+k earlier thoughts` collapse; previews wrap by terminal-cell width |
 | Terminal dimensions | Runtime terminal size; tests include 50x20 through 160x32 |
 
 The total Projection has no retention bound. Before long-lived multi-user operation, choose one of archival, pagination/windowed projection, or explicit memory/database capacity limits.

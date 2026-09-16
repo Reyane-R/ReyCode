@@ -86,6 +86,14 @@ defmodule ReyCode.Security.Workspace do
     |> then(&policy_roots(roots: &1))
   end
 
+  @doc "Resolves execution roots from the Session workspace, never the engine's process cwd."
+  def roots_for(workspace, %WorkspacePolicy{roots: nil}), do: policy_roots(roots: [workspace])
+  def roots_for(_workspace, policy), do: roots(policy)
+
+  @doc "An Owner's explicit workspace selection grants that directory when no root policy is configured."
+  def selection_options(workspace, %WorkspacePolicy{roots: nil}), do: [roots: [workspace]]
+  def selection_options(_workspace, policy), do: [policy: policy]
+
   @doc """
   Resolves `path`'s real identity and confirms it lies within the trusted roots.
 

@@ -2,6 +2,7 @@ defmodule ReyCode.Orchestration.Engine.Sessions do
   @moduledoc "Handles session creation and runtime configuration commands for the Engine."
 
   alias ReyCode.Orchestration.{EventEntries, ModelTier, Projection, Validation, VerifiedChange}
+  alias ReyCode.Security.Workspace
 
   alias ReyCode.Orchestration.Engine.{
     Configuration,
@@ -36,7 +37,11 @@ defmodule ReyCode.Orchestration.Engine.Sessions do
   @doc "Returns the newest Session for a canonical Workspace or creates its blank source Session."
   @spec ensure_workspace(map(), term()) :: response()
   def ensure_workspace(state, raw_workspace) do
-    case Validation.session(@workspace_session_title, raw_workspace, config: state.config) do
+    case Validation.session(
+           @workspace_session_title,
+           raw_workspace,
+           Workspace.selection_options(raw_workspace, state.config.workspace)
+         ) do
       {:ok, title, workspace} ->
         case Projection.newest_session_id_for_workspace(state.projection, workspace) do
           nil -> create_valid(state, title, workspace)
@@ -51,7 +56,11 @@ defmodule ReyCode.Orchestration.Engine.Sessions do
   @doc "Validates and creates one durable blank session."
   @spec create(map(), term(), term()) :: response()
   def create(state, raw_title, workspace) do
-    case Validation.session(raw_title, workspace, config: state.config) do
+    case Validation.session(
+           raw_title,
+           workspace,
+           Workspace.selection_options(workspace, state.config.workspace)
+         ) do
       {:ok, title, workspace} -> create_valid(state, title, workspace)
       {:error, reason} -> {:reply, {:error, reason}, state}
     end

@@ -39,6 +39,19 @@ defmodule ReyCode.Herdr do
     end
   end
 
+  @doc "Reports only the conversation selected in the current terminal."
+  def report_session(projection, session_id) do
+    scoped = %{
+      projection
+      | invocations:
+          Map.filter(projection.invocations, fn {_id, invocation} ->
+            invocation.session_id == session_id
+          end)
+    }
+
+    report_projection(scoped)
+  end
+
   @doc "Reports one Herdr lifecycle state without affecting ReyCode execution."
   @spec report(lifecycle_state(), String.t() | nil, GenServer.server()) :: :ok
   def report(state, message \\ nil, server \\ __MODULE__)
