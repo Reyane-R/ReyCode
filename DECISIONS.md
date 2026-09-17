@@ -20,6 +20,18 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D44 - Session spend is a display-time list-price estimate (Policy - 2026-09-17)
+
+Show what reported usage would cost at per-model list prices, computed at
+display time from a built-in table overridable by `pricing.json` in the data
+home. Money is never persisted as an event: durable history keeps
+provider-reported tokens, and changing rates reprices historical Sessions by
+design. Estimation fails closed — an unknown model or a usage record without
+an input/output split leaves the aggregate unavailable rather than guessing.
+Built-in rates favor conservative published list prices (Z.ai list, DeepSeek
+peak) and model no cache discount; users override locally when their plan or
+pricing differs.
+
 ### D43 - Report token usage without a cumulative task cap (Policy - 2026-09-17)
 
 Remove the tier-derived cumulative TokenBudget admission check and the `/tier`

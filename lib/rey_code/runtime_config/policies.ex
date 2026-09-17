@@ -413,12 +413,13 @@ end
 defmodule ReyCode.RuntimeConfig.TUI do
   @moduledoc "Terminal presentation and accessibility policy."
 
-  @enforce_keys [:reduced_motion?, :update_check_enabled?, :keybindings_path]
+  @enforce_keys [:reduced_motion?, :update_check_enabled?, :keybindings_path, :pricing_path]
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
           reduced_motion?: boolean(),
           update_check_enabled?: boolean(),
-          keybindings_path: String.t()
+          keybindings_path: String.t(),
+          pricing_path: String.t()
         }
 end

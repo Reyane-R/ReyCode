@@ -280,6 +280,7 @@ defmodule ReyCode.RuntimeConfigTest do
       document_read_timeout_ms: config.tools.research.document_timeout_ms,
       tui_reduced_motion: config.tui.reduced_motion?,
       tui_keybindings_path: config.tui.keybindings_path,
+      tui_pricing_path: config.tui.pricing_path,
       tui_update_check: config.tui.update_check_enabled?,
       workspace_roots: config.workspace.roots,
       file_logging: config.logging.enabled?,

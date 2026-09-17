@@ -3,7 +3,7 @@ defmodule ReyCode.TUI.State do
 
   alias Breeze.{Component, View}
   alias ReyCode.Memory.Store, as: MemoryStore
-  alias ReyCode.Orchestration.{Engine, ModelTier}
+  alias ReyCode.Orchestration.{Engine, ModelTier, Spend}
   alias ReyCode.Provider.{Catalog, Presentation, Registry}
   alias ReyCode.RuntimeConfig
   alias ReyCode.Update
@@ -51,6 +51,7 @@ defmodule ReyCode.TUI.State do
     ReyCode.Herdr.report_session(projection, selected_session_id)
     catalog_snapshot = Catalog.subscribe(provider_catalog)
     keybindings = ReyCode.TUI.resolved_keybindings(config)
+    spend_rates = Spend.resolve(config.tui.pricing_path)
 
     maybe_check_updates(self(), config)
 
@@ -104,6 +105,7 @@ defmodule ReyCode.TUI.State do
         animation_now_ms: now_ms,
         animation_style: Keyword.get(opts, :animation_style, Spinner.style()),
         keybindings: keybindings,
+        spend_rates: spend_rates,
         update_notice: nil,
         notice: nil
       )
@@ -176,7 +178,12 @@ defmodule ReyCode.TUI.State do
       draft: Map.get(assigns.drafts, assigns.selected_session_id, ""),
       git_branch: git_branch(session && session.workspace),
       question_label: question_label(session, assigns.projection),
-      token_label: token_label(session, assigns.projection),
+      token_label:
+        token_label(
+          session,
+          assigns.projection,
+          Map.get(assigns, :spend_rates, Spend.built_in())
+        ),
       token_label_class: "pl-2 text-muted",
       composer_status: composer_status(session, assigns.providers),
       message_width: message_width,
@@ -245,17 +252,28 @@ defmodule ReyCode.TUI.State do
     end
   end
 
-  defp token_label(session, projection) do
-    usages =
+  defp token_label(session, projection, rates) do
+    invocations =
       projection.invocations
       |> Map.values()
       |> Enum.filter(&(&1.session_id == session.id))
+
+    usages =
+      invocations
       |> Enum.map(&ModelTier.used_tokens/1)
       |> Enum.reject(&is_nil/1)
 
     case usages do
-      [] -> "usage —"
-      known -> "reported #{format_tokens(Enum.sum(known))} tok · session"
+      [] ->
+        "usage —"
+
+      known ->
+        base = "reported #{format_tokens(Enum.sum(known))} tok"
+
+        case Spend.session_cost_usd(invocations, rates) do
+          {:ok, usd} -> "#{base} · $#{Spend.format_usd(usd)} session"
+          :unavailable -> "#{base} · session"
+        end
     end
   end
 

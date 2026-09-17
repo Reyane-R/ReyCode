@@ -1182,6 +1182,24 @@ quota, and there is no cumulative per-task token cap. The budget-tier picker and
 readable without limiting new execution. Context bounds, request deadlines, output
 limits, and the separate provider-round limit still apply.
 
+The header and the Agent Hub inspector also estimate spend in USD — what the
+reported tokens would cost at per-model list prices. Z.ai and DeepSeek list
+rates are built in, and a bounded `pricing.json` in the ReyCode data directory
+(`~/Library/Application Support/ReyCode` on macOS) overrides or adds models by
+id:
+
+```json
+{
+  "glm-4.6": { "input_per_mtok": 0.6, "output_per_mtok": 2.2 }
+}
+```
+
+Estimates assume no cache discount and never consult subscription plans. When a
+model has no rate, or a usage record lacks an input/output token split, the
+spend shows as unavailable instead of a guess. Costs are computed at display
+time from current rates and are not stored in history, so editing
+`pricing.json` reprices past Sessions.
+
 ## Diagnostics
 
 Inspect production readiness with the doctor task:

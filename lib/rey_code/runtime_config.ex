@@ -256,7 +256,8 @@ defmodule ReyCode.RuntimeConfig do
       tui: %TUI{
         reduced_motion?: values.tui_reduced_motion,
         update_check_enabled?: values.tui_update_check,
-        keybindings_path: values.tui_keybindings_path
+        keybindings_path: values.tui_keybindings_path,
+        pricing_path: values.tui_pricing_path
       },
       workspace: %Workspace{roots: values.workspace_roots},
       logging: %Logging{enabled?: values.file_logging, log_dir: values.log_dir}

@@ -4,7 +4,7 @@ defmodule ReyCode.TUI.AgentHub do
   use Breeze.Component
 
   alias Breeze.{Component, View}
-  alias ReyCode.Orchestration.{Engine, Invocation, ModelTier, Projection}
+  alias ReyCode.Orchestration.{Engine, Invocation, ModelTier, Projection, Spend}
   alias ReyCode.Provider.TextBuffer
   alias ReyCode.TUI.{MergeReview, Notice, SlashPalette}
 
@@ -244,6 +244,7 @@ defmodule ReyCode.TUI.AgentHub do
       "Parent      #{if(parent, do: parent.participant.name, else: "main")}",
       "Children    #{child_count(term, child.id)}",
       "Reported tokens (all rounds)  #{usage || "—"}",
+      "Estimated spend  #{Spend.label([child], Map.get(assigns, :spend_rates, Spend.built_in()))}",
       "Tool        #{tool_label(run)}",
       "Arguments   #{argument_label(run)}",
       "Messages    #{peer_count(child)} peer",

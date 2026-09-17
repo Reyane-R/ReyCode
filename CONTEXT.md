@@ -116,6 +116,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **TokenBudget** — Historical per-Invocation cumulative-token limit retained in old records. It is no longer enforced; provider-reported usage is informational.
 
+**Spend** — Display-time estimate of what reported usage would cost at per-model list prices (USD per million input/output tokens). Computed from current rates at render time and never persisted; unavailable when a model has no rate or a usage record lacks an input/output split.
+
 **spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant.
 
 **Delegation (agent-initiated)** — Durable parent/child handoff via `spawn_task`: the parent Invocation suspends (`:awaiting_delegation`) with zero provider rounds until the child terminates; the child's report re-enters the parent conversation as the ToolRun result.

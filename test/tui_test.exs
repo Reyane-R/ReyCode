@@ -1272,6 +1272,46 @@ defmodule ReyCode.TUITest do
     assert assigns.token_label == "reported 25k tok · session"
   end
 
+  test "header estimates session spend at configured list prices" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "reycode-tui-pricing-#{System.unique_integer([:positive])}.json"
+      )
+
+    on_exit(fn -> File.rm(path) end)
+
+    File.write!(
+      path,
+      Jason.encode!(%{"glm-4.6" => %{"input_per_mtok" => 2.0, "output_per_mtok" => 3.0}})
+    )
+
+    %{engine: engine} = start_isolated_stack(tui_pricing_path: path)
+    config = RuntimeConfig.fresh(tui_pricing_path: path)
+    session = start_session({120, 32}, engine: engine, config: config)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection =
+      session
+      |> long_response_projection()
+      |> update_in([:invocations, "inv-layout", :participant], &%{&1 | model: "GLM-4.6"})
+      |> put_in([:invocations, "inv-layout", :usage], %{
+        "prompt_tokens" => 1_000_000,
+        "completion_tokens" => 500_000
+      })
+
+    push_projection(session, projection)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+    assert assigns.token_label == "reported 1500k tok · $3.50 session"
+
+    unpriced =
+      update_in(projection, [:invocations, "inv-layout", :participant], &%{&1 | model: "mystery"})
+
+    push_projection(session, unpriced)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+    assert assigns.token_label == "reported 1500k tok · session"
+  end
+
   test "approval and queued presentation stay static and event-invariant across stale ticks" do
     %{engine: tui_engine_activity_static} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_activity_static)
@@ -1582,6 +1622,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Luna · running · 2 peer · integration task"
     assert screen =~ "Invocation  child-wave"
     assert screen =~ "Reported tokens"
+    assert screen =~ "Estimated spend"
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "T")
     assert Breeze.Test.render!(session) =~ "1 delegated · tree"
 

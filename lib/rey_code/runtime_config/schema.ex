@@ -20,6 +20,8 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:tui_update_check, fn -> true end, :boolean},
       {:tui_keybindings_path, fn -> Path.join(ReyCode.Paths.data_home(), "keybindings.json") end,
        :string},
+      {:tui_pricing_path, fn -> Path.join(ReyCode.Paths.data_home(), "pricing.json") end,
+       :string},
       # Tool-output artifact policy
       {:artifact_root, fn -> Path.join(ReyCode.Paths.data_home(), "artifacts") end, :string},
       {:artifact_spool_threshold_bytes, fn -> 16_384 end, {:integer, 1}},
