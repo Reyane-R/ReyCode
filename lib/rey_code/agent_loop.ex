@@ -66,25 +66,11 @@ defmodule ReyCode.AgentLoop do
   end
 
   defp provider_round(state, request) do
-    cond do
-      request.used_tokens != nil and request.used_tokens >= request.token_budget_tokens ->
-        Agent.fail(
-          state,
-          Failure.new(
-            :token_budget_exceeded,
-            "Token budget exhausted: #{request.used_tokens}/#{request.token_budget_tokens}",
-            false
-          )
-        )
-
-        {:stop, state}
-
-      request.round_index >= @max_rounds ->
-        Agent.fail(state, internal_error("tool loop exceeded #{@max_rounds} provider rounds"))
-        {:stop, state}
-
-      true ->
-        stream_round(state, request)
+    if request.round_index >= @max_rounds do
+      Agent.fail(state, internal_error("tool loop exceeded #{@max_rounds} provider rounds"))
+      {:stop, state}
+    else
+      stream_round(state, request)
     end
   end
 

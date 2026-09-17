@@ -20,6 +20,20 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D43 - Report token usage without a cumulative task cap (Policy - 2026-09-17)
+
+Remove the tier-derived cumulative TokenBudget admission check and the `/tier`
+picker. Repeated prompt tokens across provider rounds describe processed usage,
+not context occupancy or remaining provider quota. A local 100k default routinely
+stopped ordinary multi-tool work despite ample model context and subscription
+quota, so it is no longer an execution policy. Usage remains visible as a
+reported Session total without a denominator or exhaustion warning.
+
+New Invocation events omit the retired budget; readers preserve explicit legacy
+values and historical failures. Context, round-count, duration and output bounds
+remain independent. This supersedes D31's budget enforcement and D33's budget
+warning presentation without rewriting historical events.
+
 ### D42 - Terminal clients share one local engine owner (Policy - 2026-09-16)
 
 The database lock belongs to a detached EngineHost, not each terminal. Normal

@@ -420,7 +420,6 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/history` or `Ctrl+R`: search prior Operator prompts and restore one to the composer
 - `/hotkeys`: show effective named action bindings and their configuration source
 - `/plan`: inspect the newest Invocation WorkPlan
-- `/tier`: configure Participant `smol`/`default`/`slow` tiers and future Invocation budgets
 - `/steer <correction>`: queue a correction for the active Invocation's next provider-round boundary
 - `/retry`: create a new Turn linked to the newest failed terminal Turn
 - `/dequeue`: cancel the newest queued FollowUp and return its body to the composer
@@ -1175,18 +1174,13 @@ ordered phases and unique item names; later actions are `start`, `done`,
 When none is running, the earliest pending item auto-promotes. `/plan` renders
 the newest WorkPlan without changing it.
 
-Each Participant has a ModelTier:
-
-- `smol`: 32,000 provider-reported tokens per Invocation
-- `default`: 100,000 tokens
-- `slow`: 200,000 tokens
-
-Task Participants default to `smol`; the Primary Participant defaults to
-`default`. `/tier` changes the tier for future Invocations. The concrete
-provider/model remains the one explicitly configured for that Participant.
-Tier and TokenBudget freeze when an Invocation opens. After known cumulative
-usage reaches the budget, tools from the recorded round still drain, but the
-Engine fails the Invocation before starting another ProviderRound.
+Token usage is informational. The header shows provider-reported tokens summed
+across the Session's recorded rounds, including repeated input sent on successive
+requests. This is neither context-window occupancy nor your provider subscription
+quota, and there is no cumulative per-task token cap. The budget-tier picker and
+`/tier` command have been retired. Older tier, budget, and failure records remain
+readable without limiting new execution. Context bounds, request deadlines, output
+limits, and the separate provider-round limit still apply.
 
 ## Diagnostics
 

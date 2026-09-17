@@ -379,7 +379,6 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "project_instruction_digest" => nil,
                  "project_instruction_sources" => [],
                  "model_tier" => "default",
-                 "token_budget_tokens" => 100_000,
                  "output_schema" => nil,
                  "workspace" => "",
                  "workspace_roots" => [],

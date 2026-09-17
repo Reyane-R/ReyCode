@@ -7,6 +7,8 @@ defmodule ReyCode.Orchestration.ProjectorTest do
   @max_provider_activity_events_count 256
 
   alias ReyCode.Event
+  alias ReyCode.EventStore.SQLite.Checkpoint
+  alias ReyCode.{Failure, Hashing}
   alias ReyCode.TUI.Activity
 
   alias ReyCode.Orchestration.{
@@ -793,6 +795,67 @@ defmodule ReyCode.Orchestration.ProjectorTest do
 
       assert [%Retry{attempt: 3, kind: "provider_retry", reason: "rate_limit"}] = run.retries
     end
+  end
+
+  test "legacy token budgets and exhaustion failures survive event and checkpoint replay" do
+    legacy =
+      Enum.map(opened_invocation_events(), fn
+        %Event{type: :assistant_message_opened} = opened ->
+          %{
+            opened
+            | data:
+                Map.merge(opened.data, %{"model_tier" => "smol", "token_budget_tokens" => 32_000})
+          }
+
+        event ->
+          event
+      end)
+
+    failure = Failure.new(:token_budget_exceeded, "Token budget exhausted: 102345/32000")
+
+    events =
+      legacy ++
+        [
+          event(5, :turn_started, :turn, "turn-1", %{"room_id" => "room-1", "turn_id" => "turn-1"}),
+          event(6, :invocation_started, :invocation, "inv-1", %{
+            "invocation_id" => "inv-1",
+            "message_id" => "msg-assistant"
+          }),
+          event(7, :provider_frame_recorded, :invocation, "inv-1", %{
+            "invocation_id" => "inv-1",
+            "message_id" => "msg-assistant",
+            "frame_sequence" => 1,
+            "kind" => "usage",
+            "data" => %{"usage" => %{"total_tokens" => 102_345}}
+          }),
+          event(8, :invocation_failed, :invocation, "inv-1", %{
+            "invocation_id" => "inv-1",
+            "message_id" => "msg-assistant",
+            "error" => Failure.to_wire(failure)
+          }),
+          event(9, :turn_completed, :turn, "turn-1", %{
+            "room_id" => "room-1",
+            "turn_id" => "turn-1",
+            "outcome" => "failed"
+          })
+        ]
+
+    projection = Projector.replay(events)
+    assert projection.invocations["inv-1"].execution_context.token_budget_tokens == 32_000
+    assert projection.invocations["inv-1"].usage == %{"total_tokens" => 102_345}
+    assert projection.invocations["inv-1"].error.category == :token_budget_exceeded
+    encoded = projection |> Checkpoint.encode_term() |> Jason.encode!()
+
+    assert {:ok, decoded} =
+             Checkpoint.decode(
+               encoded,
+               Checkpoint.projection_version(),
+               projection.sequence,
+               Hashing.sha256_hex(encoded),
+               1_000_000
+             )
+
+    assert Projector.replay([], decoded) == projection
   end
 
   defp seed_events do

@@ -1,12 +1,11 @@
 defmodule ReyCode.Orchestration.ModelTier do
-  @moduledoc "Closed Participant ModelTier and frozen Invocation TokenBudget policy."
+  @moduledoc "Legacy Participant tier normalization and informational provider usage accounting."
 
   @tiers [:smol, :default, :slow]
-  @budgets %{smol: 32_000, default: 100_000, slow: 200_000}
 
   @type t :: :smol | :default | :slow
 
-  @doc "Returns every supported tier in ascending capability/cost order."
+  @doc "Returns the recognized legacy tier labels."
   @spec all() :: [t()]
   def all, do: @tiers
 
@@ -23,10 +22,6 @@ defmodule ReyCode.Orchestration.ModelTier do
   def default(:task), do: :smol
   def default(_kind), do: :default
 
-  @doc "Returns the frozen token budget for one tier."
-  @spec budget_tokens(t()) :: pos_integer()
-  def budget_tokens(tier), do: Map.fetch!(@budgets, tier)
-
   @doc "Sums known provider-reported tokens across recorded rounds."
   @spec used_tokens(map()) :: non_neg_integer() | nil
   def used_tokens(invocation) do
@@ -39,21 +34,6 @@ defmodule ReyCode.Orchestration.ModelTier do
     case usages do
       [] -> usage_tokens(Map.get(invocation, :usage))
       present -> sum_known(Enum.map(present, &usage_tokens/1))
-    end
-  end
-
-  @doc "Checks whether another ProviderRound may start."
-  @spec admit_round?(map()) :: boolean()
-  def admit_round?(invocation) do
-    budget =
-      case Map.get(invocation, :execution_context) do
-        %{token_budget_tokens: value} -> value
-        _other -> Map.get(invocation, :token_budget_tokens, @budgets.default)
-      end
-
-    case used_tokens(invocation) do
-      nil -> true
-      used -> used < budget
     end
   end
 
@@ -71,10 +51,8 @@ defmodule ReyCode.Orchestration.ModelTier do
       value(usage, "total") ||
       nested_total(nested) ||
       sum_known([
-        value(usage, "prompt_tokens"),
-        value(usage, "completion_tokens"),
-        value(usage, "input_tokens"),
-        value(usage, "output_tokens")
+        value(usage, "prompt_tokens") || value(usage, "input_tokens"),
+        value(usage, "completion_tokens") || value(usage, "output_tokens")
       ])
   end
 

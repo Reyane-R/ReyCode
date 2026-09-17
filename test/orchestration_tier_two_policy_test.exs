@@ -133,11 +133,8 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
              WorkPlan.transition(nil, %{"action" => "done", "item" => "missing"}, "now")
   end
 
-  test "ModelTier freezes budgets and sums common provider usage shapes" do
+  test "legacy tiers remain readable and provider usage is informational" do
     assert ModelTier.all() == [:smol, :default, :slow]
-    assert ModelTier.budget_tokens(:smol) == 32_000
-    assert ModelTier.budget_tokens(:default) == 100_000
-    assert ModelTier.budget_tokens(:slow) == 200_000
 
     invocation = %{
       token_budget_tokens: 32_000,
@@ -148,7 +145,15 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
     }
 
     assert ModelTier.used_tokens(invocation) == 32_000
-    refute ModelTier.admit_round?(invocation)
+
+    assert ModelTier.used_tokens(%{
+             usage: %{
+               "prompt_tokens" => 100,
+               "input_tokens" => 100,
+               "completion_tokens" => 20,
+               "output_tokens" => 20
+             }
+           }) == 120
   end
 
   defp statuses(plan) do

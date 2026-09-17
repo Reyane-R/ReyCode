@@ -5,7 +5,6 @@ defmodule ReyCode.Orchestration.InvocationRequest do
 
   alias ReyCode.Orchestration.{
     Invocation,
-    ModelTier,
     Projection,
     Steering,
     StrategicReview,
@@ -53,8 +52,6 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       cycle: invocation.cycle,
       logical_work_id: invocation.logical_work_id,
       model_tier: invocation.execution_context.model_tier,
-      token_budget_tokens: invocation.execution_context.token_budget_tokens,
-      used_tokens: ModelTier.used_tokens(invocation),
       agent_delay_ms: request_policy.agent_delay_ms,
       simulator_opts: request_policy.simulator_opts,
       dependencies: invocation.dependencies,

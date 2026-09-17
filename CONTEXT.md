@@ -112,9 +112,9 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **PlanItem** — Uniquely named bounded unit of work inside one PlanPhase. Its status is pending, in progress, blocked, completed, or dropped.
 
-**ModelTier** — Participant model-cost/capability designation: smol, default, or slow. The tier freezes a TokenBudget when an Invocation opens; it never changes that Invocation's provider/model identity.
+**ModelTier** — Legacy Participant label: smol, default, or slow. Retained for historical compatibility; it neither limits execution nor selects a provider/model.
 
-**TokenBudget** — Maximum provider-reported token count admitted for one Invocation. Unknown usage remains unknown; the TUI presents a soft warning at 80 percent, and once known usage reaches the budget no further ProviderRound starts. In code it is not a struct: the frozen budget is `ReyCode.Orchestration.ModelTier` policy state carried on the Invocation's execution context (`token_budget_tokens`, `used_tokens`).
+**TokenBudget** — Historical per-Invocation cumulative-token limit retained in old records. It is no longer enforced; provider-reported usage is informational.
 
 **spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant.
 

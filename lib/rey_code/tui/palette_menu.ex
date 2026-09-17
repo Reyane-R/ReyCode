@@ -16,7 +16,7 @@ defmodule ReyCode.TUI.PaletteMenu do
       "/artifacts",
       "/context"
     ],
-    settings: ["/agents", "/workspace", "/theme", "/tier", "/hotkeys", "/help"]
+    settings: ["/agents", "/workspace", "/theme", "/hotkeys", "/help"]
   }
   @group_labels %{
     root: "← Main menu",
@@ -45,7 +45,6 @@ defmodule ReyCode.TUI.PaletteMenu do
     "/context" => {"Inspect model context", "summary compaction"},
     "/workspace" => {"Choose workspace", "project folder directory"},
     "/theme" => {"Choose theme", "appearance colors"},
-    "/tier" => {"Configure model tiers", "model budget cost"},
     "/hotkeys" => {"Inspect keyboard shortcuts", "keys keybindings"},
     "/help" => {"Help & all commands", "help capabilities"},
     "/export" => {"Export conversation", "save markdown html"},

@@ -761,7 +761,7 @@ defmodule ReyCode.TUITest do
     refute Enum.any?(lines, &String.contains?(&1, "│ You"))
     assert assistant_line - user_line <= 2
 
-    assert screen =~ "12.4k/200k"
+    assert screen =~ "reported 12.4k tok"
     assert screen =~ "⑂"
     assert screen =~ "Thinking"
     assert screen =~ ~r/\d+s/
@@ -1235,7 +1235,7 @@ defmodule ReyCode.TUITest do
     assert Enum.all?(String.split(screen, "\n"), &(String.length(&1) <= 72))
   end
 
-  test "warns in the header and composer after eighty percent of an invocation budget" do
+  test "usage is cumulative and informational even when historical budget metadata is present" do
     %{engine: engine} = start_isolated_stack([])
     session = start_session({120, 32}, engine: engine)
     on_exit(fn -> Breeze.Test.stop(session) end)
@@ -1252,8 +1252,24 @@ defmodule ReyCode.TUITest do
     push_projection(session, projection)
     assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
 
-    assert assigns.token_label =~ "Ⅱ tok standard 12.4k/15k"
-    assert %Notice{severity: :warning} = assigns.budget_notice
+    assert assigns.token_label == "reported 12.4k tok · session"
+    refute Map.has_key?(assigns, :budget_notice)
+    refute assigns.token_label_class =~ "warning"
+
+    projection =
+      put_in(projection, [:invocations, "inv-layout", :rounds], [
+        %{usage: %{"total_tokens" => 10_000}},
+        %{usage: %{"total_tokens" => 15_000}}
+      ])
+
+    push_projection(session, projection)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+    assert assigns.token_label == "reported 25k tok · session"
+
+    projection = put_in(projection, [:invocations, "inv-layout", :status], :completed)
+    push_projection(session, projection)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+    assert assigns.token_label == "reported 25k tok · session"
   end
 
   test "approval and queued presentation stay static and event-invariant across stale ticks" do
@@ -1400,7 +1416,7 @@ defmodule ReyCode.TUITest do
     type(session, "/resume")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
-    assert plain(Breeze.Test.render!(session)) =~ "16.6k/200k"
+    assert plain(Breeze.Test.render!(session)) =~ "reported 16.6k tok"
 
     split_projection =
       put_in(
@@ -1411,14 +1427,14 @@ defmodule ReyCode.TUITest do
 
     assert %{sequence: _split} = push_projection(session, split_projection)
 
-    assert plain(Breeze.Test.render!(session)) =~ "105/200k"
+    assert plain(Breeze.Test.render!(session)) =~ "reported 105 tok"
 
     total_projection =
       put_in(split_projection, [:invocations, "inv-layout", :usage], %{"total_tokens" => 42})
 
     assert %{sequence: _total} = push_projection(session, total_projection)
 
-    assert plain(Breeze.Test.render!(session)) =~ "42/200k"
+    assert plain(Breeze.Test.render!(session)) =~ "reported 42 tok"
   end
 
   test "@path attaches file content into the posted message body" do
@@ -1565,7 +1581,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Agent Hub"
     assert screen =~ "Luna · running · 2 peer · integration task"
     assert screen =~ "Invocation  child-wave"
-    assert screen =~ "Tokens"
+    assert screen =~ "Reported tokens"
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "T")
     assert Breeze.Test.render!(session) =~ "1 delegated · tree"
 
@@ -1692,23 +1708,7 @@ defmodule ReyCode.TUITest do
     assert plan_screen =~ "○ Test"
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
 
-    type(session, "/tier")
-    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
-    assert Breeze.Test.render!(session) =~ "Model tiers"
-    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
-    tier_screen = Breeze.Test.render!(session)
-    assert tier_screen =~ "smol · 32000 tokens"
-    assert tier_screen =~ "default · 100000 tokens"
-    assert tier_screen =~ "slow · 200000 tokens"
-
-    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowUp")
-    assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
-
-    configured_primary =
-      Engine.snapshot(engine).sessions[session_id].participants
-      |> Enum.find(&(&1.id == primary.id))
-
-    assert configured_primary.model_tier == :smol
+    refute Enum.any?(ReyCode.Capabilities.commands(), &(&1.command == "/tier"))
   end
 
   test "an unknown slash command is never posted to the session" do

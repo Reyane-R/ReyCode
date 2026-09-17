@@ -19,7 +19,6 @@ defmodule ReyCode.TUI.State do
     Hotkeys,
     MergeReview,
     ModelPicker,
-    ModelTiers,
     Notice,
     OperatorQuestion,
     PaletteMenu,
@@ -94,7 +93,6 @@ defmodule ReyCode.TUI.State do
         prompt_recall: PromptHistory.recall_initial(),
         work_plan_invocation_id: nil,
         merge_review: MergeReview.initial(),
-        model_tiers: ModelTiers.initial(),
         session_tree: SessionTree.initial(),
         slash: nil,
         model_picker: ModelPicker.initial(),
@@ -154,8 +152,6 @@ defmodule ReyCode.TUI.State do
         assigns.animation_style
       )
 
-    budget = invocation_budget(session, assigns.projection)
-
     Component.assign(assigns,
       session: session,
       sessions: Enum.map(assigns.projection.session_order, &assigns.projection.sessions[&1]),
@@ -180,9 +176,8 @@ defmodule ReyCode.TUI.State do
       draft: Map.get(assigns.drafts, assigns.selected_session_id, ""),
       git_branch: git_branch(session && session.workspace),
       question_label: question_label(session, assigns.projection),
-      token_label: token_label(session, assigns.projection, assigns.config, budget),
-      token_label_class: token_label_class(budget),
-      budget_notice: budget_notice(budget),
+      token_label: token_label(session, assigns.projection),
+      token_label_class: "pl-2 text-muted",
       composer_status: composer_status(session, assigns.providers),
       message_width: message_width,
       timeline_id: timeline_id(session.id),
@@ -250,62 +245,19 @@ defmodule ReyCode.TUI.State do
     end
   end
 
-  defp token_label(session, projection, config, nil) do
-    tokens = token_usage(session, projection)
+  defp token_label(session, projection) do
+    usages =
+      projection.invocations
+      |> Map.values()
+      |> Enum.filter(&(&1.session_id == session.id))
+      |> Enum.map(&ModelTier.used_tokens/1)
+      |> Enum.reject(&is_nil/1)
 
-    "#{meter_bar(session, projection, config)}  tok #{format_tokens(tokens)}/#{format_tokens(config.orchestration.context_budget_tokens)}"
-  end
-
-  defp token_label(_session, _projection, _config, budget), do: invocation_budget_label(budget)
-
-  defp invocation_budget(nil, _projection), do: nil
-
-  defp invocation_budget(session, projection) do
-    invocation =
-      session.message_order
-      |> Enum.map(&projection.messages[&1])
-      |> Enum.filter(&(&1 && &1.invocation_id))
-      |> Enum.map(&projection.invocations[&1.invocation_id])
-      |> Enum.find(&(&1 && &1.status not in [:completed, :failed, :cancelled]))
-
-    case invocation && Map.get(invocation, :execution_context) do
-      %{token_budget_tokens: limit, model_tier: tier} ->
-        used = ModelTier.used_tokens(invocation)
-
-        %{
-          participant: invocation.participant.name,
-          tier: tier,
-          used: used,
-          limit: limit,
-          ratio: if(is_number(used) and limit > 0, do: used / limit, else: nil)
-        }
-
-      _missing_budget ->
-        nil
+    case usages do
+      [] -> "usage —"
+      known -> "reported #{format_tokens(Enum.sum(known))} tok · session"
     end
   end
-
-  defp invocation_budget_label(budget) do
-    used = if is_number(budget.used), do: format_tokens(budget.used), else: "?"
-    warning = if is_number(budget.ratio) and budget.ratio >= 0.8, do: "Ⅱ ", else: ""
-    "#{warning}tok #{budget.tier} #{used}/#{format_tokens(budget.limit)}"
-  end
-
-  defp token_label_class(%{ratio: ratio}) when is_number(ratio) and ratio >= 0.8,
-    do: "pl-2 text-warning"
-
-  defp token_label_class(_budget), do: "pl-2 text-muted"
-
-  defp budget_notice(%{ratio: ratio} = budget) when is_number(ratio) and ratio >= 0.8 do
-    percent = round(ratio * 100)
-
-    Notice.new(
-      :warning,
-      "#{budget.participant} has used #{percent}% of its #{budget.tier} token budget"
-    )
-  end
-
-  defp budget_notice(_budget), do: nil
 
   @doc """
   Classifies composer readiness from the Primary Participant and catalog.
@@ -376,62 +328,6 @@ defmodule ReyCode.TUI.State do
   end
 
   defp connect_status, do: %{label: "Connect a model — /connect", class: "text-warning"}
-
-  defp meter_bar(session, projection, config) do
-    used = token_usage(session, projection)
-    budget = config.orchestration.context_budget_tokens
-    ratio = if budget > 0, do: used / budget, else: 0.0
-    cells = 5
-    filled = round(ratio * cells) |> min(cells) |> max(0)
-    String.duplicate("■", filled) <> String.duplicate("□", cells - filled)
-  end
-
-  defp token_usage(session, projection) do
-    Enum.reduce(projection.invocations, 0, fn {_id, invocation}, acc ->
-      if invocation.session_id == session.id,
-        do: acc + usage_tokens(invocation.usage),
-        else: acc
-    end)
-  end
-
-  defp usage_tokens(nil), do: 0
-
-  defp usage_tokens(usage) when is_map(usage) do
-    tokens = usage_value(usage, :tokens)
-
-    cond do
-      is_number(usage_number(usage, :total_tokens)) -> usage_number(usage, :total_tokens)
-      is_number(tokens) -> tokens
-      is_map(tokens) -> nested_token_total(tokens)
-      true -> split_token_total(usage)
-    end
-    |> trunc()
-  end
-
-  defp usage_tokens(_other), do: 0
-
-  defp nested_token_total(tokens) do
-    usage_number(tokens, :total) ||
-      (usage_number(tokens, :input) || 0) + (usage_number(tokens, :output) || 0)
-  end
-
-  defp split_token_total(usage) do
-    prompt = usage_number(usage, :prompt_tokens) || usage_number(usage, :input_tokens) || 0
-
-    completion =
-      usage_number(usage, :completion_tokens) || usage_number(usage, :output_tokens) || 0
-
-    prompt + completion
-  end
-
-  defp usage_number(usage, key) do
-    case usage_value(usage, key) do
-      value when is_number(value) -> value
-      _other -> nil
-    end
-  end
-
-  defp usage_value(usage, key), do: Map.get(usage, key, Map.get(usage, Atom.to_string(key)))
 
   defp format_tokens(value) when value >= 1_000 do
     text = :erlang.float_to_binary(value / 1_000.0, [{:decimals, 1}])

@@ -34,7 +34,6 @@ defmodule ReyCode.TUI.Render do
       terminal_height={@breeze.terminal.height}
       draft={@draft}
       notice={@notice}
-      budget_notice={@budget_notice}
       composer_status={@composer_status}
       slash={@slash}
     />

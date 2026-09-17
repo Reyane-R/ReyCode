@@ -188,7 +188,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     root = SlashPalette.open(term(draft: "Keep my question"))
     {:noreply, settings} = root |> SlashPalette.move(5) |> SlashPalette.execute_selected()
     assert settings.assigns.slash.group == :settings
-    {:noreply, help} = settings |> SlashPalette.move(5) |> SlashPalette.execute_selected()
+    {:noreply, help} = settings |> SlashPalette.move(4) |> SlashPalette.execute_selected()
     assert help.assigns.modal == :help
     assert help.assigns.slash == nil
     assert help.assigns.drafts["room-1"] == "Keep my question"

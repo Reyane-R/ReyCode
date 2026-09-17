@@ -22,7 +22,6 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :message_width, :integer, required: true
   attr :draft, :string, required: true
   attr :notice, :any, required: true
-  attr :budget_notice, :any, required: true
   attr :composer_status, :map, required: true
   attr :token_label_class, :string, required: true
   attr :update_notice, :any, required: true
@@ -69,7 +68,6 @@ defmodule ReyCode.TUI.Components.MainScreen do
           session={@session}
           draft={@draft}
           notice={@notice}
-          budget_notice={@budget_notice}
           composer_status={@composer_status}
         />
         <.slash_palette
@@ -261,7 +259,6 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   attr :draft, :string, required: true
   attr :notice, :any, required: true
-  attr :budget_notice, :any, required: true
   attr :composer_status, :map, required: true
 
   defp composer(assigns) do
@@ -278,20 +275,11 @@ defmodule ReyCode.TUI.Components.MainScreen do
     >
       <box class="inline w-full">
         <box class="font-bold text-primary">Message Assistant</box>
-        <box
-          :if={is_nil(@notice) and is_nil(@budget_notice)}
-          class={"w-full text-right " <> @composer_status.class}
-        >
+        <box :if={is_nil(@notice)} class={"w-full text-right " <> @composer_status.class}>
           {@composer_status.label}
         </box>
         <box :if={not is_nil(@notice)} class={"w-full text-right " <> Notice.text_class(@notice)}>
           {Notice.label(@notice)}
-        </box>
-        <box
-          :if={is_nil(@notice) and not is_nil(@budget_notice)}
-          class="w-full text-right text-warning"
-        >
-          {Notice.label(@budget_notice)}
         </box>
       </box>
       <.textarea
@@ -303,17 +291,11 @@ defmodule ReyCode.TUI.Components.MainScreen do
         br-submit="prompt_submitted"
         class={"w-full h-#{@input_height} border focus:border-primary bg-surface"}
       />
-      <box :if={is_nil(@notice) and is_nil(@budget_notice)} class="text-muted">
+      <box :if={is_nil(@notice)} class="text-muted">
         Enter {State.send_label(@session)} · /steer · Shift+Enter new line · ↑↓ history
       </box>
       <box :if={not is_nil(@notice)} class={Notice.text_class(@notice)}>
         {Notice.label(@notice)} · {@notice.message}
-      </box>
-      <box
-        :if={is_nil(@notice) and not is_nil(@budget_notice)}
-        class={Notice.text_class(@budget_notice)}
-      >
-        {Notice.label(@budget_notice)} · {@budget_notice.message}
       </box>
     </box>
     """

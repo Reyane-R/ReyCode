@@ -76,7 +76,7 @@ The active transcript shows only useful execution context:
 
 │
 - **Header:** a two-line workbench. The first line carries
-  `Assistant · runtime · Workspace · branch` and the token budget. The second is
+  `Assistant · runtime · Workspace · branch` and informational token usage. The second is
   a persistent, Projection-derived work pulse such as
   `⠹ · Reading · lib/foo.ex · 5s`. Its bounded target identifies the file,
   command, approval, or delegated work without exposing event telemetry.

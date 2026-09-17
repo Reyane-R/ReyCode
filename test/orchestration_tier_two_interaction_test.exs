@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.{Engine, WorkPlan}
+  alias ReyCode.Orchestration.{Engine, ModelTier, WorkPlan}
   alias ReyCode.Provider.{Frame, Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
   alias ReyCode.TUI.Notice
@@ -58,6 +58,12 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
 
         {"budget", 0} ->
           budget_consuming_round()
+
+        {"budget", 1} ->
+          :ok = emit.(Frame.text_delta(request.resume_from + 1, "Finished beyond the old cap"))
+
+          {:ok,
+           Response.new(text: "Finished beyond the old cap", usage: %{"total_tokens" => 300_000})}
 
         other ->
           {:error, ReyCode.Failure.new(:internal, "unexpected Tier Two round #{inspect(other)}")}
@@ -133,7 +139,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
              "phases" => [%{"name" => "Budget", "items" => ["One"]}]
            })
          ],
-         usage: %{"total_tokens" => 32_000}
+         usage: %{"total_tokens" => 250_000}
        )}
     end
 
@@ -253,7 +259,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     assert final.coordination.work_plan.updated_at != ""
   end
 
-  test "smol tier freezes a 32k budget and stops before another provider round", %{
+  test "usage beyond all former tier caps does not stop another provider round", %{
     session_id: session_id,
     primary_id: primary_id
   } do
@@ -266,11 +272,12 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     invocation = projection.invocations[invocation_id]
 
     assert invocation.execution_context.model_tier == :smol
-    assert invocation.execution_context.token_budget_tokens == 32_000
-    assert invocation.status == :failed
-    assert invocation.error.category == :token_budget_exceeded
+    assert invocation.execution_context.token_budget_tokens == nil
+    assert invocation.status == :completed
+    assert invocation.error == nil
     assert_receive {:provider_round, ^invocation_id, 0}, 5_000
-    refute_receive {:provider_round, ^invocation_id, 1}, 50
+    assert_receive {:provider_round, ^invocation_id, 1}, 5_000
+    assert ModelTier.used_tokens(invocation) == 550_000
   end
 
   defp statuses(plan) do

@@ -916,11 +916,7 @@ defmodule ReyCode.Orchestration.Projector do
         workspace_roots: value_or(data["workspace_roots"], []),
         isolation: data["isolation"],
         model_tier: invocation_tier(data),
-        token_budget_tokens:
-          value_or(
-            data["token_budget_tokens"],
-            ModelTier.budget_tokens(invocation_tier(data))
-          )
+        token_budget_tokens: data["token_budget_tokens"]
       },
       coordination: %InvocationCoordination{},
       status: :queued,

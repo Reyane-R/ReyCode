@@ -18,7 +18,8 @@ defmodule ReyCode.Orchestration.InvocationExecution do
             isolation: nil,
             merge_decision: nil,
             model_tier: :default,
-            token_budget_tokens: 100_000
+            # Retained only for decoding historical events/checkpoints; never enforced.
+            token_budget_tokens: nil
 
   @type t :: %__MODULE__{
           workspace: String.t() | nil,
@@ -27,7 +28,7 @@ defmodule ReyCode.Orchestration.InvocationExecution do
           isolation: map() | nil,
           merge_decision: :apply | :discard | nil,
           model_tier: ModelTier.t(),
-          token_budget_tokens: pos_integer()
+          token_budget_tokens: pos_integer() | nil
         }
 
   @spec from_map(t() | map() | nil) :: t()

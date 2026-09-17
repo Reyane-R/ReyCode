@@ -23,7 +23,6 @@ defmodule ReyCode.TUI.Components.Modals do
     Hotkeys,
     MergeReview,
     ModelPicker,
-    ModelTiers,
     OperatorQuestion,
     PromptHistory,
     SessionPicker,
@@ -51,7 +50,6 @@ defmodule ReyCode.TUI.Components.Modals do
     model_picker: ModelPicker,
     merge_review: MergeReview,
     hotkeys: Hotkeys,
-    model_tiers: ModelTiers,
     operator_question: OperatorQuestion,
     session_picker: SessionPicker,
     prompt_history: PromptHistory,
@@ -94,7 +92,6 @@ defmodule ReyCode.TUI.Components.Modals do
   defp dispatch(:hotkeys, assigns), do: Hotkeys.modal(assigns)
   defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)
   defp dispatch(:merge_review, assigns), do: MergeReview.modal(assigns)
-  defp dispatch(:model_tiers, assigns), do: ModelTiers.modal(assigns)
   defp dispatch(:operator_question, assigns), do: OperatorQuestion.modal(assigns)
   defp dispatch(:prompt_history, assigns), do: PromptHistory.modal(assigns)
   defp dispatch(:session_picker, assigns), do: SessionPicker.modal(assigns)

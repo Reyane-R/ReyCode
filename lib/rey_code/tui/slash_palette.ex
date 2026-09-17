@@ -23,7 +23,6 @@ defmodule ReyCode.TUI.SlashPalette do
     Help,
     Hotkeys,
     ModelPicker,
-    ModelTiers,
     Notice,
     OperatorQuestion,
     PaletteMenu,
@@ -472,7 +471,6 @@ defmodule ReyCode.TUI.SlashPalette do
   defp run_action(term, :session_tree, nil), do: {:noreply, SessionTree.open(term)}
   defp run_action(term, :tool_inspector, nil), do: {:noreply, ToolInspector.open(term)}
 
-  defp run_action(term, :model_tiers, nil), do: {:noreply, ModelTiers.open(term)}
   defp run_action(term, :operator_question, nil), do: {:noreply, OperatorQuestion.open(term)}
   defp run_action(term, :work_plan, nil), do: {:noreply, WorkPlan.open(term)}
 

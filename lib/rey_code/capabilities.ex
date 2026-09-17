@@ -94,7 +94,6 @@ defmodule ReyCode.Capabilities do
       argument: :participant
     },
     %{command: "/theme", description: "Change theme", action: :theme},
-    %{command: "/tier", description: "Configure Participant model tiers", action: :model_tiers},
     %{command: "/tools", description: "Review a pending tool request", action: :tool_review},
     %{command: "/tree", description: "Navigate the SessionFork tree", action: :session_tree},
     %{

@@ -991,9 +991,6 @@ defmodule ReyCode.Orchestration.EventEntries do
 
     model_tier = Map.get(spec, :model_tier, Map.get(participant, :model_tier, :default))
 
-    token_budget_tokens =
-      Map.get(spec, :token_budget_tokens, ModelTier.budget_tokens(model_tier))
-
     invocation_event(
       :assistant_message_opened,
       %{
@@ -1014,7 +1011,6 @@ defmodule ReyCode.Orchestration.EventEntries do
         "project_instruction_sources" => Map.get(spec, :project_instruction_sources, []),
         "attempt" => Map.get(spec, :attempt, 1),
         "model_tier" => Atom.to_string(model_tier),
-        "token_budget_tokens" => token_budget_tokens,
         "output_schema" => Map.get(spec, :output_schema),
         "workspace" => Map.get(spec, :workspace) || Map.get(session, :workspace) || "",
         "workspace_roots" => Map.get(spec, :workspace_roots, []),
