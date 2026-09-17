@@ -1272,6 +1272,204 @@ defmodule ReyCode.TUITest do
     assert assigns.token_label == "reported 25k tok · session"
   end
 
+  test "plain drag copies transcript text even when release crosses into the composer" do
+    %{engine: engine} = start_isolated_stack([])
+    owner = self()
+
+    copy = fn text ->
+      send(owner, {:selection_copied, text})
+      :ok
+    end
+
+    session = start_session({120, 32}, engine: engine, selection_copy: copy)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection =
+      session
+      |> long_response_projection()
+      |> put_in([:messages, "msg-layout-assistant", :body], "Hello wide 世界 and friends")
+
+    push_projection(session, projection)
+    open_first_session(session)
+    Breeze.Test.render!(session)
+    layouts = Breeze.ChildServer.layout_snapshot(session.pid).elements
+    line = Map.fetch!(layouts, "selection-msg-layout-assistant-0")
+
+    mouse = fn action, x, y ->
+      Breeze.Test.input(session, %{
+        "mouse" => %{"button" => "left", "action" => action, "x" => x, "y" => y}
+      })
+    end
+
+    mouse.("press", line.left, line.top)
+    Breeze.Test.render!(session)
+    mouse.("move", line.left + 5, line.top)
+    screen = Breeze.Test.render!(session)
+    assert screen =~ "Hello"
+    assert Breeze.Test.metadata(session).assigns.text_selection.moved?
+    mouse.("release", line.left + 5, line.top)
+    assert_receive {:selection_copied, "Hello"}
+    mouse.("release", line.left + 5, line.top)
+    refute_receive {:selection_copied, _}
+
+    Breeze.Test.render!(session)
+
+    line =
+      Map.fetch!(
+        Breeze.ChildServer.layout_snapshot(session.pid).elements,
+        "selection-msg-layout-assistant-0"
+      )
+
+    mouse.("press", line.left + 15, line.top)
+    assert Breeze.Test.metadata(session).assigns.text_selection
+    Breeze.Test.render!(session)
+    mouse.("move", line.left + 11, line.top)
+    assert Breeze.Test.metadata(session).assigns.text_selection.moved?
+    mouse.("release", line.left + 11, line.top)
+    assert_receive {:selection_copied, "世界"}
+
+    mouse.("press", line.left, line.top)
+    Breeze.Test.render!(session)
+    mouse.("move", 110, 30)
+    Breeze.Test.render!(session)
+    mouse.("release", 110, 30)
+    assert_receive {:selection_copied, "Hello wide 世界 and friends"}
+    Breeze.Test.input(session, "Escape")
+    assert is_nil(Breeze.Test.metadata(session).assigns.text_selection)
+  end
+
+  test "selection freezes streamed text, cancels cleanly, and retains failed copies" do
+    %{engine: engine} = start_isolated_stack([])
+
+    session =
+      start_session({120, 32},
+        engine: engine,
+        selection_copy: fn _ -> {:error, :clipboard_unavailable} end
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection =
+      session
+      |> long_response_projection()
+      |> put_in([:messages, "msg-layout-assistant", :body], "stable answer")
+
+    push_projection(session, projection)
+    open_first_session(session)
+    Breeze.Test.render!(session)
+
+    line =
+      Map.fetch!(
+        Breeze.ChildServer.layout_snapshot(session.pid).elements,
+        "selection-msg-layout-assistant-0"
+      )
+
+    selection_mouse(session, "press", line.left, line.top)
+    Breeze.Test.render!(session)
+    selection_mouse(session, "move", line.left + 6, line.top)
+    token = Breeze.Test.metadata(session).assigns.text_selection.token
+
+    push_projection(
+      session,
+      put_in(projection, [:messages, "msg-layout-assistant", :body], "replacement answer")
+    )
+
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "stable answer"
+    refute screen =~ "replacement answer"
+    selection_mouse(session, "release", line.left + 6, line.top)
+    assigns = Breeze.Test.metadata(session).assigns
+    assert assigns.notice.message =~ "Could not copy selection"
+    refute assigns.text_selection.dragging?
+    assert session |> Breeze.Test.render!() |> plain() =~ "replacement answer"
+    Breeze.Test.input(session, "Escape")
+    Breeze.Test.info(session, {:selection_edge, token})
+    assert is_nil(Breeze.Test.metadata(session).assigns.text_selection)
+
+    Breeze.Test.render!(session)
+    selection_mouse(session, "press", line.left, line.top)
+    Breeze.Test.info(session, :resize)
+    assert is_nil(Breeze.Test.metadata(session).assigns.text_selection)
+  end
+
+  test "dragging at a transcript edge scrolls while preserving the anchored range" do
+    %{engine: engine} = start_isolated_stack([])
+    owner = self()
+
+    session =
+      start_session({100, 24},
+        engine: engine,
+        selection_copy: fn text ->
+          send(owner, {:edge_copy, text})
+          :ok
+        end
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    body = Enum.map_join(1..60, "\n\n", &"Line #{&1}")
+
+    projection =
+      session
+      |> long_response_projection()
+      |> put_in([:messages, "msg-layout-assistant", :body], body)
+
+    push_projection(session, projection)
+    open_first_session(session)
+    Breeze.Test.render!(session)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+
+    viewport =
+      Map.fetch!(Breeze.ChildServer.layout_snapshot(session.pid).elements, assigns.timeline_id)
+
+    for _ <- 1..8 do
+      Breeze.Test.input(session, %{
+        "mouse" => %{
+          "button" => "wheel_up",
+          "action" => "press",
+          "x" => 6,
+          "y" => viewport.top + 2
+        }
+      })
+
+      Breeze.Test.render!(session)
+    end
+
+    layouts = Breeze.ChildServer.layout_snapshot(session.pid).elements
+
+    {_id, line} =
+      layouts
+      |> Enum.filter(fn {id, box} ->
+        String.starts_with?(id, "selection-msg-layout-assistant-") and
+          box.top >= viewport.top and box.top < viewport.top + viewport.height
+      end)
+      |> Enum.min_by(fn {_id, box} -> box.top end)
+
+    selection_mouse(session, "press", line.left, line.top)
+    Breeze.Test.render!(session)
+    initial = Breeze.Test.metadata(session).assigns.text_selection
+    selection_mouse(session, "move", 70, viewport.top + viewport.height + 2)
+
+    for _ <- 1..5 do
+      Breeze.Test.info(session, {:selection_edge, initial.token})
+      Breeze.Test.render!(session)
+    end
+
+    assert Breeze.Test.metadata(session).assigns.text_selection.scroll_offset >
+             initial.scroll_offset
+
+    selection_mouse(session, "release", 70, viewport.top + viewport.height + 2)
+    assert_receive {:edge_copy, text}
+    assert text =~ "Line"
+    refute text =~ "Copy"
+  end
+
+  defp selection_mouse(session, action, x, y) do
+    code = if action == "move", do: 32, else: 0
+    suffix = if action == "release", do: "m", else: "M"
+    assert {:ok, mouse} = Breeze.Mouse.decode("\e[<#{code};#{x + 1};#{y + 1}#{suffix}")
+    Breeze.Test.input(session, %{"mouse" => mouse})
+  end
+
   test "header estimates session spend at configured list prices" do
     path =
       Path.join(
@@ -1925,7 +2123,8 @@ defmodule ReyCode.TUITest do
       size: size,
       theme: ReyCode.Theme.default(),
       global_keybindings: ReyCode.TUI.global_keybindings(),
-      start_opts: Keyword.take(opts, [:engine, :config, :memory_store, :workspace])
+      start_opts:
+        Keyword.take(opts, [:engine, :config, :memory_store, :workspace, :selection_copy])
     )
   end
 

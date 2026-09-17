@@ -25,6 +25,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :composer_status, :map, required: true
   attr :token_label_class, :string, required: true
   attr :update_notice, :any, required: true
+  attr :text_selection, :any, default: nil
 
   attr :terminal_width, :integer, required: true
   attr :terminal_height, :integer, required: true
@@ -61,6 +62,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           activity_frame={@activity_frame}
           terminal_height={@terminal_height}
           challenge_enabled={is_nil(@session.verified_change)}
+          text_selection={@text_selection}
         />
         <.composer
           modal={@modal}

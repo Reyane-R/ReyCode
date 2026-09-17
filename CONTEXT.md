@@ -229,6 +229,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - Squad Leaders may recommend or resolve gates according to ReleaseAuthority.
 - Provider output never grants authority by itself; it requests transitions that ReyCode validates.
 
+**TextSelection** — A transient range of displayed chat text chosen by dragging the pointer. Releasing the pointer copies that range; it does not change the conversation.
+
 ## Precise usage
 
 **Agent** — Use only in user-facing prose where the distinction is irrelevant. Code uses Participant, Role, Seat, InvocationWorker, or AgentLoop.

@@ -13,6 +13,7 @@ defmodule ReyCode.TUI.State do
     AgentProfile,
     AnimationClock,
     Artifacts,
+    Clipboard,
     ContextBoundary,
     Decisions,
     Delegation,
@@ -28,6 +29,7 @@ defmodule ReyCode.TUI.State do
     Settings,
     SlashPalette,
     Spinner,
+    TextSelection,
     TimeAgo,
     ToolInspector,
     ToolReview
@@ -78,6 +80,8 @@ defmodule ReyCode.TUI.State do
         selected_session_id: selected_session_id,
         drafts: %{},
         expanded_message_ids: [],
+        text_selection: nil,
+        selection_copy: Keyword.get(opts, :selection_copy, &Clipboard.copy/1),
         mode: :direct,
         home: true,
         modal: nil,
@@ -194,6 +198,7 @@ defmodule ReyCode.TUI.State do
       slash_empty_label: SlashPalette.empty_label(assigns),
       tool_review_options: ToolReview.options()
     )
+    |> TextSelection.prepare()
   end
 
   defp recent_session_rows(assigns) do

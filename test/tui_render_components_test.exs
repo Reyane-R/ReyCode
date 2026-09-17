@@ -36,6 +36,12 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     mouse_action(session, "/verify  Verify an isolated change", "release")
     assert Breeze.Test.metadata(session).assigns.modal == nil
     mouse_action(session, "/verify  Verify an isolated change")
+    mouse_action(session, "/verify  Verify an isolated change", "move", 3)
+    mouse_action(session, "/verify  Verify an isolated change", "release", 3)
+    assert Breeze.Test.metadata(session).assigns.modal == nil
+    mouse_action(session, "/verify  Verify an isolated change")
+    assert Breeze.Test.metadata(session).assigns.modal == nil
+    mouse_action(session, "/verify  Verify an isolated change", "release")
     assert Breeze.Test.metadata(session).assigns.modal == :verification
     assert Breeze.Test.metadata(session).focused == "verify-goal"
     assert Breeze.Test.metadata(session).assigns.verification.goal == "keep this draft"
@@ -632,7 +638,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
       )
   end
 
-  defp mouse_action(session, label, action \\ "press") do
+  defp mouse_action(session, label, action \\ "press", offset \\ 0) do
     {line, y} =
       session
       |> Breeze.Test.render!()
@@ -645,7 +651,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     x = line |> binary_part(0, index) |> String.length()
 
     Breeze.Test.input(session, %{
-      "mouse" => %{"button" => "left", "action" => action, "x" => x, "y" => y}
+      "mouse" => %{"button" => "left", "action" => action, "x" => x + offset, "y" => y}
     })
   end
 

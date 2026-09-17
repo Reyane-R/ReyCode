@@ -4,11 +4,11 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   use Breeze.Component
   import Breeze.Blocks
 
-  alias BackBreeze.{TextSpan, Ucwidth}
+  alias BackBreeze.Ucwidth
   alias ReyCode.Failure
   alias ReyCode.Orchestration.StrategicReview
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.{Activity, MermaidASCII}
+  alias ReyCode.TUI.{Activity, MermaidASCII, TextSelection}
 
   @max_visible_notes 8
 
@@ -52,6 +52,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   attr :activity_frame, :string, required: true
   attr :terminal_height, :integer
   attr :challenge_enabled, :boolean
+  attr :text_selection, :any, default: nil
 
   def timeline(assigns) do
     assigns = Map.put_new(assigns, :terminal_height, 40)
@@ -135,10 +136,14 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
             </box>
             <box :if={item.body != ""} class={body_section_class(item, @terminal_height)}>
               <box
-                :for={line <- render_message(item, @message_width)}
+                :for={line <- selection_lines(item, @message_width, @text_selection)}
                 class="pl-2 w-full overflow-hidden"
               >
-                <box>{message_line(item, line)}</box>
+                <box :if={item.role == :user} class="inline">
+                  <box>│ </box>
+                  <box id={line.id}>{line.spans}</box>
+                </box>
+                <box :if={item.role != :user} id={line.id}>{line.spans}</box>
               </box>
             </box>
             <box :if={show_placeholder?(item)} class="pl-2 w-full text-muted">
@@ -160,14 +165,16 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     |> String.slice(0, 120)
   end
 
-  defp render_message(message, width) do
+  @doc "Rendered transcript lines with stable IDs and explicit copy separators."
+  def selection_lines(message, width, selection) do
     width = if message.role == :user, do: max(width - 2, 1), else: width
 
     message
     |> answer_text()
     |> MermaidASCII.expand()
-    |> Breeze.Markdown.render(width)
-    |> split_lines()
+    |> Breeze.Markdown.render_lines(width)
+    |> TextSelection.wrap_lines(width)
+    |> TextSelection.decorate(message.id, selection)
   end
 
   @doc "Returns the displayed answer's Markdown source, without activity or UI decoration."
@@ -223,9 +230,6 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     do: "w-full pt-2 overflow-hidden"
 
   defp message_class(_message, _index, _height), do: "w-full pt-1 overflow-hidden"
-
-  defp message_line(%{role: :user}, line), do: [%TextSpan{text: "│ ", style: %{}} | line]
-  defp message_line(_message, line), do: line
 
   defp author_name_class(%{role: :user}), do: "font-bold text-secondary"
   defp author_name_class(%{author: %{id: "builder"}}), do: "font-bold text-primary"
@@ -383,25 +387,6 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   defp active_message?(%{activity: %Activity.Item{active?: true}}), do: true
   defp active_message?(%{status: status}), do: status in [:queued, :streaming]
-
-  defp split_lines(spans) do
-    {lines, current} = Enum.reduce(spans, {[], []}, &split_span/2)
-    Enum.reverse([Enum.reverse(current) | lines])
-  end
-
-  defp split_span(span, {lines, current}) do
-    span.text
-    |> String.split("\n", trim: false)
-    |> add_span_parts(span, lines, current)
-  end
-
-  defp add_span_parts([part], span, lines, current),
-    do: {lines, [%{span | text: part} | current]}
-
-  defp add_span_parts([part | rest], span, lines, current) do
-    line = Enum.reverse([%{span | text: part} | current])
-    add_span_parts(rest, span, [line | lines], [])
-  end
 
   defp timestamp(value) do
     case DateTime.from_iso8601(value) do

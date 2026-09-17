@@ -1174,6 +1174,21 @@ ordered phases and unique item names; later actions are `start`, `done`,
 When none is running, the earliest pending item auto-promotes. `/plan` renders
 the newest WorkPlan without changing it.
 
+### Selecting and copying chat text
+
+Left-click and drag across chat text to highlight it. Release the mouse to copy
+the selection automatically—no Shift or copy shortcut is needed. Selection
+works in either direction, across messages, and with code blocks and Unicode
+text. Soft-wrapped lines copy without artificial newlines; code indentation and
+logical line breaks are preserved. Chat labels and controls are excluded.
+
+While dragging, the displayed messages stay stable even if the answer is still
+streaming. Move to a transcript edge to scroll farther, or use the mouse wheel.
+Escape cancels a selection; resizing or switching Sessions cancels it too.
+Ordinary controls activate on click release, not when starting a drag. A failed
+clipboard write shows an error rather than a success notice. Selection uses the
+same platform clipboard support as the existing whole-answer **Copy** action.
+
 Token usage is informational. The header shows provider-reported tokens summed
 across the Session's recorded rounds, including repeated input sent on successive
 requests. This is neither context-window occupancy nor your provider subscription

@@ -20,6 +20,25 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D45 - Own plain-drag transcript selection with a maintained Breeze extension (UI - 2026-09-17)
+
+Plain left-drag highlights transcript text and copies on release. Relying on
+terminal-native selection would require a modifier while mouse reporting is
+enabled, and cannot guarantee copy-on-release. Breeze 0.5.0 routes pointer
+events to whichever child is currently underneath them; it exposes no capture
+callback. Carry its MIT-licensed source in `vendor/breeze` with an optional
+pre-routing input interceptor and read-only layout/scroll accessors. Unhandled
+events retain ordinary routing. Return to the published dependency once an
+equivalent tested interface is available upstream.
+
+The selection belongs to the terminal client, never durable history. Freeze
+its displayed message snapshot during the gesture while continuing to ingest
+provider events. Keep copy separators alongside rendered lines so soft wrapping
+does not insert newlines into copied code or prose. Delay ordinary pointer
+click actions until release to distinguish clicks from drags. Bound selection
+size, edge-scroll cadence and abandoned-gesture lifetime; cancel on resize,
+session changes or Escape.
+
 ### D44 - Session spend is a display-time list-price estimate (Policy - 2026-09-17)
 
 Show what reported usage would cost at per-model list prices, computed at

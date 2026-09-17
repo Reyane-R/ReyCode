@@ -30,6 +30,7 @@ defmodule ReyCode.TUI do
     Settings,
     SlashPalette,
     State,
+    TextSelection,
     ToolInspector,
     ToolReview,
     Verification
@@ -335,6 +336,9 @@ defmodule ReyCode.TUI do
   def render(assigns), do: assigns |> State.prepare_render() |> Render.render()
 
   @impl true
+  def intercept_input(event, term), do: TextSelection.intercept(event, term)
+
+  @impl true
   def handle_event(:input, %{"key" => key}, %{assigns: %{modal: modal}} = term)
       when not is_nil(modal) do
     Modals.module!(modal).handle_input(key, term)
@@ -497,7 +501,11 @@ defmodule ReyCode.TUI do
   `assigns.breeze.terminal` on every render — so preserving assigns keeps the
   draft, focus, and modal state intact.
   """
-  def handle_info(:resize, term), do: {:noreply, State.reconcile_animation(term)}
+  def handle_info({:selection_edge, token}, term),
+    do: {:noreply, TextSelection.tick(term, token)}
+
+  def handle_info(:resize, term),
+    do: {:noreply, term |> TextSelection.clear() |> State.reconcile_animation()}
 
   # The terminal delivers frames ReyCode does not interpret (bracketed paste
   # handshakes, focus events). Dropping them beats crashing the session.

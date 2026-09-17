@@ -89,7 +89,7 @@ defmodule ReyCode.Application do
        start_opts: [config: runtime_config, workspace: File.cwd!()],
        theme: ReyCode.Theme.default(),
        logger: :replace,
-       mouse: true,
+       mouse: [mode: :drag],
        global_keybindings: ReyCode.TUI.global_keybindings(runtime_config)},
       restart: :transient
     )
