@@ -4,7 +4,7 @@ defmodule ReyCode.MixProject do
   def project do
     [
       app: :rey_code,
-      version: "0.12.0",
+      version: "0.13.0",
       licenses: ["MIT"],
       elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -33,7 +33,7 @@ defmodule ReyCode.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:breeze, "~> 0.5.0"},
+      {:breeze, path: "vendor/breeze"},
       {:exqlite, "~> 0.39"},
       {:exile, "~> 0.14"},
       {:jason, "~> 1.4"},
