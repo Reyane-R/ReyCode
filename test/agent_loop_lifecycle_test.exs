@@ -356,4 +356,27 @@ defmodule ReyCode.AgentLoopLifecycleTest do
     message = snapshot.messages[snapshot.invocations[invocation_id].message_id]
     assert message.body =~ "after 2 tool results"
   end
+
+  test "tool work can complete after more than sixteen provider rounds", %{workspace: workspace} do
+    request = %{tool: "read", arguments: %{"path" => "hello.txt"}}
+    %{store: store} = start_engine(workspace, tool_requests: List.duplicate(request, 17))
+
+    assert {:ok, session_id} = Engine.create_blank_session("Long Tool Loop", workspace, @engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Inspect thoroughly", :compare, @engine)
+
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+
+    [invocation_rounds] =
+      store
+      |> events_of_type(:provider_round_recorded)
+      |> per_invocation()
+      |> Map.values()
+
+    assert length(invocation_rounds) == 18
+    assert Enum.count(invocation_rounds, &(&1.data["tool_calls"] != [])) == 17
+    assert List.last(invocation_rounds).data["tool_calls"] == []
+    assert length(events_of_type(store, :tool_run_completed)) == 17
+  end
 end

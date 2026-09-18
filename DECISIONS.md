@@ -20,6 +20,21 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D46 - Provider/tool loops have no local round-count quota (Policy - 2026-09-18)
+
+Remove the 16-provider-round failure from ordinary Invocations. A round count is
+durable progress metadata, not evidence that an assistant is looping: normal
+codebase investigation can require more than 16 sequential tool continuations.
+Execution ends when the provider returns no tool calls, the Operator cancels, or
+a real provider/tool failure occurs. Context bounds, per-request deadlines,
+bounded outputs, and orchestration admission limits remain independent.
+
+This accepts that useful Invocations can run for a long time rather than
+misclassifying them as failed. The visible execution ledger and explicit
+cancellation remain the Operator controls. Historical round-limit failures stay
+readable without limiting retries or new work. This supersedes the round-count
+bound retained by D43 and the original D22 delivery plan.
+
 ### D45 - Own plain-drag transcript selection with a maintained Breeze extension (UI - 2026-09-17)
 
 Plain left-drag highlights transcript text and copies on release. Relying on
@@ -61,9 +76,10 @@ quota, so it is no longer an execution policy. Usage remains visible as a
 reported Session total without a denominator or exhaustion warning.
 
 New Invocation events omit the retired budget; readers preserve explicit legacy
-values and historical failures. Context, round-count, duration and output bounds
-remain independent. This supersedes D31's budget enforcement and D33's budget
-warning presentation without rewriting historical events.
+values and historical failures. Context, duration and output bounds remain
+independent; D46 later retires the round-count bound. This supersedes D31's
+budget enforcement and D33's budget warning presentation without rewriting
+historical events.
 
 ### D42 - Terminal clients share one local engine owner (Policy - 2026-09-16)
 

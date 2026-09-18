@@ -1201,8 +1201,10 @@ across the Session's recorded rounds, including repeated input sent on successiv
 requests. This is neither context-window occupancy nor your provider subscription
 quota, and there is no cumulative per-task token cap. The budget-tier picker and
 `/tier` command have been retired. Older tier, budget, and failure records remain
-readable without limiting new execution. Context bounds, request deadlines, output
-limits, and the separate provider-round limit still apply.
+readable without limiting new execution. Provider-round counts are also
+informational: there is no local round cap. Work continues until the provider
+finishes, the Operator cancels, or a real provider/tool failure occurs. Context
+bounds, per-request deadlines, and output limits still apply.
 
 The header and the Agent Hub inspector also estimate spend in USD — what the
 reported tokens would cost at per-model list prices. Z.ai and DeepSeek list

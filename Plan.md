@@ -101,8 +101,8 @@ rounds.
    Remove `continue_after_stream/2`, `apply_tool_completion/4`, and
    provider-local recursive state. SSE should assemble normalized ToolCalls
    and return them. Add tests using the real provider interface, including
-   multiple rounds, malformed arguments, parallel call batches processed
-   sequentially, and an explicit round-limit failure.
+   multiple rounds, malformed arguments, and parallel call batches processed
+   sequentially. D46 later retired the original explicit round-limit failure.
 
 9. **Make OpenCode capability differences explicit.**
    Add provider capabilities such as `:reycode_tools` and

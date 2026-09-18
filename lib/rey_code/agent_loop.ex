@@ -18,7 +18,6 @@ defmodule ReyCode.AgentLoop do
   alias ReyCode.Tool.{Request, Result}
   alias ReyCode.ToolRegistry
 
-  @max_rounds 16
   @max_tool_wait_ms 3_610_000
 
   @spec run(Agent.state()) :: Agent.step()
@@ -41,7 +40,7 @@ defmodule ReyCode.AgentLoop do
     |> handle_tool_action(state, request)
   end
 
-  defp handle_tool_action({:ok, :none}, state, request), do: provider_round(state, request)
+  defp handle_tool_action({:ok, :none}, state, request), do: stream_round(state, request)
 
   defp handle_tool_action({:ok, {:execute, run}}, state, request) do
     Agent.execute_tool_run(Map.put(state, :session_id, request.session_id), run)
@@ -63,15 +62,6 @@ defmodule ReyCode.AgentLoop do
   defp handle_tool_action({:error, reason}, state, _request) do
     Agent.fail(state, internal_error("tool run rejected: " <> inspect(reason)))
     {:stop, state}
-  end
-
-  defp provider_round(state, request) do
-    if request.round_index >= @max_rounds do
-      Agent.fail(state, internal_error("tool loop exceeded #{@max_rounds} provider rounds"))
-      {:stop, state}
-    else
-      stream_round(state, request)
-    end
   end
 
   defp stream_round(state, request) do
