@@ -6,7 +6,6 @@ defmodule Breeze.Markdown do
   import BackBreeze.Utils, only: [string_length: 1]
 
   @reset "\e[0m"
-  @heading "\e[30;43m"
   @code "\e[36m"
   @bold "\e[1m"
   @bullets [?*, ?-, ?+]
@@ -101,13 +100,11 @@ defmodule Breeze.Markdown do
 
   defp write_heading(heading, {width, soft_break}) do
     heading
-    |> handle_inline()
+    |> String.replace(~r/^#+\s*/, "")
+    |> handle_heading_inline()
     |> String.split()
     |> wrap_words(width)
-    |> Enum.map(fn line ->
-      padding = String.duplicate(" ", max(width - string_length(line), 0))
-      @heading <> line <> padding <> @reset
-    end)
+    |> Enum.map(&(@bold <> &1 <> @reset))
     |> Enum.join(soft_break)
     |> Kernel.<>("\n\n")
   end
@@ -200,9 +197,18 @@ defmodule Breeze.Markdown do
     |> apply_inline(~r/\*\*(.+?)\*\*/, @bold)
   end
 
+  defp handle_heading_inline(text) do
+    text
+    |> remove_links()
+    |> remove_inline(~r/`([^`]+)`/)
+    |> remove_inline(~r/\*\*(.+?)\*\*/)
+  end
+
   defp apply_inline(text, pattern, color) do
     Regex.replace(pattern, text, fn _, inner -> color <> inner <> @reset end)
   end
+
+  defp remove_inline(text, pattern), do: Regex.replace(pattern, text, "\\1")
 
   defp remove_links(text) do
     Regex.replace(~r{\[([^\]]*?)\]\((.*?)\)}, text, "\\1 (\\2)")
@@ -214,9 +220,6 @@ defmodule Breeze.Markdown do
     |> Enum.reduce({[], %{}}, fn
       @reset, {spans, _style} ->
         {spans, %{}}
-
-      @heading, {spans, style} ->
-        {spans, Map.merge(style, %{foreground_color: 0, background_color: 3})}
 
       @code, {spans, style} ->
         {spans, Map.put(style, :foreground_color, 6)}

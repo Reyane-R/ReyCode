@@ -13,6 +13,8 @@ Local changes:
 - Read-only `element_layouts/1` and `scroll_offset_y/2` for hit testing.
 - `Breeze.Markdown.render_lines/2`: styled lines with explicit soft-wrap copy
   separators; long code wrapping belongs to ReyCode's selection renderer.
+- Markdown headings render as marker-free bold text without a background fill,
+  so inline code cannot reset the heading style or create low-contrast spans.
 - Pin BackBreeze to 0.4.2, matching ReyCode's pre-extension lockfile.
 
 Integration coverage lives in `test/tui_test.exs`,

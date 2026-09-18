@@ -49,6 +49,38 @@ defmodule ReyCode.TUI.TextSelectionTest do
     assert text |> rows(12) |> copy_all() == text
   end
 
+  test "Markdown headings stay readable around inline code" do
+    [heading, blank, subheading] =
+      Breeze.Markdown.render_lines(
+        "## The pipeline\n\n### 1. CLI (`src/cli.ts`, ~50 lines)",
+        80
+      )
+
+    assert Enum.map_join(heading.spans, & &1.text) == "The pipeline"
+    assert blank.spans == []
+    assert Enum.map_join(subheading.spans, & &1.text) == "1. CLI (src/cli.ts, ~50 lines)"
+
+    for row <- [heading, subheading], span <- row.spans do
+      assert span.style.bold
+      refute Map.has_key?(span.style, :background_color)
+      refute Map.has_key?(span.style, :foreground_color)
+    end
+  end
+
+  test "wrapped Markdown headings keep one readable style and copy as prose" do
+    rows = Breeze.Markdown.render_lines("### Project discovery (`src/project.ts`)", 18)
+
+    assert Enum.map_join(rows, fn row ->
+             Enum.map_join(row.spans, & &1.text) <> row.separator
+           end) == "Project discovery (src/project.ts)"
+
+    assert length(rows) > 1
+
+    assert Enum.all?(rows, fn row ->
+             Enum.all?(row.spans, &(&1.style == %{bold: true}))
+           end)
+  end
+
   test "missing and obsolete edge timers do not change the view" do
     term = %{assigns: %{text_selection: nil}}
     assert TextSelection.tick(term, make_ref()) == term
