@@ -41,7 +41,8 @@ defmodule ReyCode.LocalEngine.Server do
     engine: Engine,
     catalog: Catalog,
     memory: ReyCode.Memory.Store,
-    credentials: ReyCode.Provider.Credentials
+    credentials: ReyCode.Provider.Credentials,
+    resource_scopes: ReyCode.ResourceScopes
   }
 
   def start_link(opts),
@@ -63,7 +64,8 @@ defmodule ReyCode.LocalEngine.Server do
         path: path,
         identity: identity,
         clients: %{},
-        services: Keyword.get(opts, :services, @services)
+        services: Keyword.get(opts, :services, @services),
+        shutdown: Keyword.get(opts, :shutdown, &:init.stop/0)
       }
 
       send(self(), :accept)
@@ -129,7 +131,7 @@ defmodule ReyCode.LocalEngine.Server do
     {pid, ref} =
       spawn_monitor(fn ->
         receive do
-          :ready -> serve(socket, state.identity, state.services)
+          :ready -> serve(socket, state.identity, state.services, state.shutdown)
         after
           5_000 -> :gen_tcp.close(socket)
         end
@@ -140,7 +142,7 @@ defmodule ReyCode.LocalEngine.Server do
     %{state | clients: Map.put(state.clients, ref, pid)}
   end
 
-  defp serve(socket, identity, services) do
+  defp serve(socket, identity, services, shutdown) do
     try do
       case Protocol.recv(socket) do
         {:ok, {:hello, ^identity}} ->
@@ -150,12 +152,8 @@ defmodule ReyCode.LocalEngine.Server do
         {:ok, {:hello, other}} ->
           Protocol.send(socket, {:error, incompatibility(identity, other)})
 
-        {:ok, {:control, :status}} ->
-          Protocol.send(socket, {:ok, identity})
-
-        {:ok, {:control, :stop}} ->
-          Protocol.send(socket, :ok)
-          :init.stop()
+        {:ok, {:control, action}} ->
+          control(socket, action, identity, services, shutdown)
 
         _ ->
           :ok
@@ -192,6 +190,41 @@ defmodule ReyCode.LocalEngine.Server do
   end
 
   defp incompatibility(_identity, _other), do: :invalid_engine_handshake
+
+  defp control(socket, :status, identity, _services, _shutdown),
+    do: Protocol.send(socket, {:ok, identity})
+
+  defp control(socket, :stop, _identity, _services, shutdown) do
+    Protocol.send(socket, :ok)
+    shutdown.()
+  end
+
+  defp control(socket, :restart_if_idle, _identity, services, shutdown) do
+    case prepare_restart(services) do
+      :ok ->
+        Protocol.send(socket, :ok)
+        shutdown.()
+
+      {:error, reason} ->
+        Protocol.send(socket, {:error, reason})
+    end
+  end
+
+  defp control(_socket, _action, _identity, _services, _shutdown), do: :ok
+
+  defp prepare_restart(services) do
+    case resources_idle(services) do
+      :ok -> Engine.prepare_restart(services.engine)
+      {:error, reason} -> {:error, reason}
+    end
+  catch
+    :exit, _reason -> {:error, :engine_restart_check_failed}
+  end
+
+  defp resources_idle(%{resource_scopes: resource_scopes}),
+    do: ReyCode.ResourceScopes.idle(resource_scopes)
+
+  defp resources_idle(_services), do: :ok
 
   defp serve_calls(socket, services) do
     :ok = :inet.setopts(socket, active: :once)

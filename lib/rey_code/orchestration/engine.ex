@@ -98,6 +98,10 @@ defmodule ReyCode.Orchestration.Engine do
   @spec snapshot(GenServer.server()) :: Projector.state()
   def snapshot(server \\ __MODULE__), do: GenServer.call(server, :snapshot)
 
+  @doc "Closes client admission only when no live or draining Engine work remains."
+  @spec prepare_restart(GenServer.server()) :: :ok | {:error, :engine_busy}
+  def prepare_restart(server \\ __MODULE__), do: GenServer.call(server, :prepare_restart)
+
   @doc "Returns the configured shell check policy without journaling; exits after a five-second timeout."
   @spec check_policy(GenServer.server()) :: RuntimeConfig.Tools.Bash.t()
   def check_policy(server \\ __MODULE__), do: GenServer.call(server, :check_policy, 5_000)
@@ -378,7 +382,8 @@ defmodule ReyCode.Orchestration.Engine do
       agent_delay_ms: agent_delay_ms,
       simulator_opts: simulator_opts,
       config: config,
-      name: Keyword.get(opts, :name, __MODULE__)
+      name: Keyword.get(opts, :name, __MODULE__),
+      accepting_clients?: true
     }
 
     state = state |> Lifecycle.ensure_default_session() |> Lifecycle.ensure_primary_participants()
@@ -413,12 +418,22 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   @impl true
+  def handle_call({:client_request, _request}, _from, %{accepting_clients?: false} = state),
+    do: {:reply, {:engine_result, {:error, :engine_restarting}, state.projection}, state}
+
   def handle_call({:client_request, request}, from, state) do
     {:reply, result, next} = handle_call(request, from, state)
     {:reply, {:engine_result, result, next.projection}, next}
   end
 
   def handle_call(:snapshot, _from, state), do: {:reply, state.projection, state}
+
+  def handle_call(:prepare_restart, _from, state) do
+    case VerifiedChangeResolution.idle(state) do
+      :ok -> {:reply, :ok, %{state | accepting_clients?: false}}
+      {:error, :verified_change_busy} -> {:reply, {:error, :engine_busy}, state}
+    end
+  end
 
   def handle_call(:check_policy, _from, state), do: {:reply, state.config.tools.bash, state}
   def handle_call(:event_registry, _from, state), do: {:reply, state.event_registry, state}

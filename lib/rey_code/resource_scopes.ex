@@ -9,6 +9,10 @@ defmodule ReyCode.ResourceScopes do
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
+  @doc "Reports whether every global and scoped process/debugger/evaluation hub is idle."
+  @spec idle(GenServer.server()) :: :ok | {:error, :resource_work_active}
+  def idle(server \\ __MODULE__), do: GenServer.call(server, :idle, 2_000)
+
   @spec fetch(Request.t(), module()) :: {:ok, pid() | module()} | {:error, term()}
   def fetch(%Request{session_id: nil}, module) when module in @hubs, do: {:ok, module}
 
@@ -38,6 +42,28 @@ defmodule ReyCode.ResourceScopes do
       {:reply, {:ok, pid}, next} -> {:reply, {:ok, pid}, borrow(next, key, owner)}
       other -> other
     end
+  end
+
+  def handle_call(:idle, _from, state) do
+    pids =
+      @hubs
+      |> Enum.map(&Process.whereis/1)
+      |> Enum.concat(Map.values(state.hubs))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    idle? =
+      pids
+      |> Task.async_stream(&hub_idle?/1,
+        max_concurrency: 16,
+        ordered: false,
+        timeout: 100,
+        on_timeout: :kill_task
+      )
+      |> Enum.all?(&(&1 == {:ok, true}))
+
+    reply = if idle?, do: :ok, else: {:error, :resource_work_active}
+    {:reply, reply, state}
   end
 
   defp start_hub({_workspace, _session, module} = key, state) do
@@ -98,7 +124,7 @@ defmodule ReyCode.ResourceScopes do
           scope == key and Process.alive?(owner)
         end)
 
-      if not borrowed? and idle?(pid) do
+      if not borrowed? and hub_idle?(pid) do
         DynamicSupervisor.terminate_child(ReyCode.ResourceSupervisor, pid)
         drop_hub(acc, key)
       else
@@ -107,7 +133,7 @@ defmodule ReyCode.ResourceScopes do
     end)
   end
 
-  defp idle?(pid) do
+  defp hub_idle?(pid) do
     GenServer.call(pid, :list, 50) |> Enum.all?(&(&1.status != :running))
   catch
     :exit, _ -> not Process.alive?(pid)

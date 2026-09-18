@@ -2,28 +2,47 @@ defmodule ReyCode.LocalEngine.Launcher do
   @moduledoc "Attaches to, or starts, a detached engine using the current installation."
   alias ReyCode.LocalEngine.{Bootstrap, Protocol}
   @startup_timeout_ms 30_000
+  @shutdown_timeout_ms 5_000
 
   def attach(path, identity, start? \\ true, config \\ nil) do
     case handshake(path, identity) do
       {:error, reason} when reason in [:enoent, :econnrefused] and start? ->
-        with {:ok, manifest} <- Bootstrap.write(config) do
-          try do
-            with :ok <- launch(manifest),
-                 do:
-                   await(
-                     path,
-                     identity,
-                     System.monotonic_time(:millisecond) + @startup_timeout_ms
-                   )
-          after
-            File.rm(manifest)
-          end
-        end
+        start_engine(path, identity, config)
+
+      {:error, {:engine_build_mismatch, version}} when start? ->
+        with :ok <- replace_idle_engine(path, version),
+             do: start_engine(path, identity, config)
 
       result ->
         result
     end
   end
+
+  @doc "Checks startup compatibility and replaces an incompatible idle engine."
+  @spec prepare(String.t(), map()) :: :ok | {:error, term()}
+  def prepare(path, identity) do
+    Protocol.load_types()
+
+    case handshake(path, identity) do
+      {:ok, socket, _snapshots} ->
+        :gen_tcp.close(socket)
+        :ok
+
+      {:error, reason} when reason in [:enoent, :econnrefused] ->
+        :ok
+
+      {:error, {:engine_build_mismatch, version}} ->
+        replace_idle_engine(path, version)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc "Waits a bounded interval for an explicitly stopped engine to release its socket."
+  @spec await_stopped(String.t()) :: :ok | {:error, :engine_stop_timeout}
+  def await_stopped(path),
+    do: await_stopped(path, System.monotonic_time(:millisecond) + @shutdown_timeout_ms)
 
   defp handshake(path, identity) do
     with {:ok, socket} <- Protocol.connect(path) do
@@ -61,6 +80,63 @@ defmodule ReyCode.LocalEngine.Launcher do
 
         result ->
           result
+      end
+    end
+  end
+
+  defp start_engine(path, identity, config) do
+    with {:ok, manifest} <- Bootstrap.write(config) do
+      try do
+        with :ok <- launch(manifest),
+             do:
+               await(
+                 path,
+                 identity,
+                 System.monotonic_time(:millisecond) + @startup_timeout_ms
+               )
+      after
+        File.rm(manifest)
+      end
+    end
+  end
+
+  defp replace_idle_engine(path, version) do
+    with {:ok, socket} <- Protocol.connect(path) do
+      result =
+        with :ok <- Protocol.send(socket, {:control, :restart_if_idle}),
+             do: Protocol.recv(socket)
+
+      :gen_tcp.close(socket)
+
+      case result do
+        {:ok, :ok} -> await_stopped(path)
+        {:ok, {:error, reason}} -> {:error, reason}
+        _ -> {:error, {:engine_upgrade_required, version}}
+      end
+    end
+  end
+
+  defp await_stopped(path, deadline) do
+    case Protocol.connect(path) do
+      {:error, reason} when reason in [:enoent, :econnrefused] ->
+        :ok
+
+      {:ok, socket} ->
+        :gen_tcp.close(socket)
+        continue_await_stopped(path, deadline)
+
+      {:error, _reason} ->
+        continue_await_stopped(path, deadline)
+    end
+  end
+
+  defp continue_await_stopped(path, deadline) do
+    if System.monotonic_time(:millisecond) >= deadline do
+      {:error, :engine_stop_timeout}
+    else
+      receive do
+      after
+        50 -> await_stopped(path, deadline)
       end
     end
   end

@@ -35,7 +35,20 @@ defmodule ReyCode.LocalEngine.Protocol do
       send_timeout_close: true
     ]
 
-  def connect(path), do: :gen_tcp.connect({:local, path}, 0, socket_options(), @timeout_ms)
+  def connect(path) do
+    :gen_tcp.connect({:local, path}, 0, socket_options(), @timeout_ms)
+  catch
+    :exit, :badarg -> missing_socket_error(path)
+  end
+
+  defp missing_socket_error(path) do
+    case File.lstat(Path.dirname(path)) do
+      {:error, :enoent} -> {:error, :enoent}
+      {:ok, %{type: :directory}} -> {:error, :invalid_engine_socket}
+      {:ok, _stat} -> {:error, :unsafe_engine_directory}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   def send(socket, term) do
     if :erlang.external_size(term) <= @max_packet_bytes,

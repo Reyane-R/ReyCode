@@ -80,8 +80,13 @@ The transport accepts only enumerated service operations and bounded uncompresse
 ETF messages, decoded with the existing atom vocabulary. Socket directories are
 owner-only. It is a same-OS-user interface, not a multi-user or network service.
 Protocol, exact code build, canonical storage identity and effective engine policy
-must match; mismatches never silently select another database or restart active
-work. Configuration fingerprints use deterministic serialization across VMs.
+must match. A build mismatch may restart an EngineHost only after scoped resources
+are idle and the orchestration owner atomically closes client admission. Active or
+uncertain work is never interrupted by ordinary startup. The explicit update path
+may stop a legacy EngineHost that cannot answer the readiness command; this is the
+one compatibility exception and is announced as potentially interrupting work.
+Other mismatches never silently select another database or restart the owner.
+Configuration fingerprints use deterministic serialization across VMs.
 Startup transfers effective validated settings in a private one-use file so
 changing the launch cwd does not reinterpret relative roots or lose overrides.
 

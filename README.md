@@ -109,7 +109,11 @@ curl -fsSL https://raw.githubusercontent.com/Reyane-R/ReyCode/main/install.sh | 
 
 This downloads the release for your OS and architecture (macOS arm64/x86_64,
 Linux x86_64/arm64), extracts it to `~/.reycode`, and puts a `reycode` launcher
-in `~/.local/bin`. Pin or relocate with environment variables:
+in `~/.local/bin`. An update replaces an idle shared engine before switching the
+launcher. It refuses to interrupt active work; wait for completion or stop the
+engine explicitly. A legacy engine that cannot report readiness is stopped only
+by this explicit update path, which can interrupt its work. Pin or relocate with
+environment variables:
 
 ```sh
 REYCODE_VERSION=v0.2.4 REYCODE_INSTALL_DIR=~/.reycode REYCODE_BIN_DIR=~/.local/bin \
@@ -153,11 +157,14 @@ mix rey_code.engine stop
 Clients reconnect with a fresh snapshot after a connection loss. Unacknowledged
 commands are never automatically replayed: inspect history before retrying them.
 All clients must match the engine's protocol, exact code build, storage path,
-and engine settings. A mismatch reports the conflict; stop the old engine
-explicitly and relaunch when ready to change builds or configuration. Terminal
-display settings remain client-local. Install updates retain immutable runtime
-directories under `~/.reycode/builds`, so active engines do not lose their files;
-old builds may be removed after their engines have stopped.
+and engine settings. A new build automatically replaces an idle compatible
+engine after closing new-work admission. Active work and unverifiable legacy
+engines fail with a normal diagnostic instead of a VM crash; stop those engines
+explicitly when interruption is safe. Configuration, protocol, and storage
+mismatches remain explicit failures. Terminal display settings remain
+client-local. Install updates retain immutable runtime directories under
+`~/.reycode/builds`, so active engines do not lose their files; old builds may be
+removed after their engines have stopped.
 
 The first transition from an older standalone release requires quitting that
 old instance once. It cannot accept shared-engine connections. New releases do

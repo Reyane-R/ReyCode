@@ -1,7 +1,7 @@
 defmodule ReyCode.LocalEngineTest do
   use ExUnit.Case, async: false
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.LocalEngine.{Connection, Protocol, Proxy, Server}
+  alias ReyCode.LocalEngine.{Connection, Launcher, Protocol, Proxy, Server}
   alias ReyCode.Orchestration.Engine
   alias ReyCode.Provider.Catalog, as: ProviderCatalog
   alias ReyCode.Provider.Catalog.Snapshot
@@ -120,6 +120,56 @@ defmodule ReyCode.LocalEngineTest do
     :ok = Protocol.send(socket, {:hello, %{identity | policy: "different"}})
     assert {:ok, {:error, {:engine_configuration_mismatch, _fields}}} = Protocol.recv(socket)
     :gen_tcp.close(socket)
+  end
+
+  test "startup preflight accepts a missing engine directory", context do
+    socket = Path.join([context.tmp_dir, "not-created", ".engine", "socket"])
+    assert :ok = Launcher.prepare(socket, Protocol.identity(context.config))
+    refute File.exists?(Path.dirname(socket))
+  end
+
+  test "an idle engine hands off to a mismatched build before client startup", context do
+    socket = Path.expand(".reycode/upgrade-test-#{System.unique_integer([:positive])}/socket")
+    server_name = Module.concat(__MODULE__, UpgradeServer)
+
+    on_exit(fn -> File.rm_rf!(Path.dirname(socket)) end)
+
+    start_supervised!(%{
+      id: server_name,
+      restart: :temporary,
+      start:
+        {Server, :start_link,
+         [
+           [
+             name: server_name,
+             path: socket,
+             config: context.config,
+             services: context.services,
+             shutdown: fn -> GenServer.stop(server_name, :normal) end
+           ]
+         ]}
+    })
+
+    identity = %{Protocol.identity(context.config) | build: "new-build"}
+    assert :ok = Launcher.prepare(socket, identity)
+    assert {:error, :enoent} = Protocol.connect(socket)
+  end
+
+  test "a mismatched build does not interrupt active engine work", context do
+    {:ok, session_id} = Engine.ensure_workspace_session(context.tmp_dir, context.engine)
+    assert :ok = Engine.run_owner_command(session_id, "sleep 2", context.engine)
+
+    socket = Path.expand(".reycode/busy-upgrade-#{System.unique_integer([:positive])}/socket")
+    server_name = Module.concat(__MODULE__, BusyUpgradeServer)
+    test_pid = self()
+    on_exit(fn -> File.rm_rf!(Path.dirname(socket)) end)
+
+    start_upgrade_server(server_name, socket, context, fn -> send(test_pid, :shutdown) end)
+
+    identity = %{Protocol.identity(context.config) | build: "new-build"}
+    assert {:error, :engine_busy} = Launcher.prepare(socket, identity)
+    refute_receive :shutdown
+    assert Process.alive?(context.engine)
   end
 
   test "wire decoding rejects compressed and invalid data" do
@@ -382,5 +432,23 @@ defmodule ReyCode.LocalEngineTest do
       credentials: credentials,
       memory: memory
     }
+  end
+
+  defp start_upgrade_server(name, socket, context, shutdown) do
+    start_supervised!(%{
+      id: name,
+      restart: :temporary,
+      start:
+        {Server, :start_link,
+         [
+           [
+             name: name,
+             path: socket,
+             config: context.config,
+             services: context.services,
+             shutdown: shutdown
+           ]
+         ]}
+    })
   end
 end

@@ -72,6 +72,10 @@ build_dir=$(mktemp -d "${INSTALL_DIR}/builds/${VERSION#v}-${os}-${arch}.XXXXXX")
 mv "${tmp}/reycode-${VERSION#v}" "${build_dir}/runtime"
 runtime_dir="${build_dir}/runtime"
 
+if [ -x "${BIN_DIR}/reycode" ]; then
+  "${runtime_dir}/bin/rey_code" eval 'ReyCode.CLI.Start.main(["--update"])' || exit $?
+fi
+
 cat > "${BIN_DIR}/reycode" <<EOF
 #!/bin/sh
 if [ "\$1" = "update" ]; then
@@ -99,6 +103,9 @@ if [ "\$1" = "daemon" ]; then
 fi
 if [ \$# -eq 0 ]; then
   set -- start
+fi
+if [ "\$1" = "start" ]; then
+  "${runtime_dir}/bin/rey_code" eval 'ReyCode.CLI.Start.main([])' || exit \$?
 fi
 exec "${runtime_dir}/bin/rey_code" "\$@"
 EOF

@@ -131,4 +131,34 @@ defmodule ReyCode.ResourceScopesTest do
 
     assert Jason.decode!(output)["value"] == "11"
   end
+
+  @tag :tmp_dir
+  test "restart readiness fails closed while a scoped process is running", %{tmp_dir: dir} do
+    config = RuntimeConfig.fresh(workspace_roots: [dir])
+
+    request =
+      Request.new(
+        tool: "process",
+        workspace: dir,
+        session_id: "restart-check",
+        arguments: %{
+          "action" => "start",
+          "name" => "server",
+          "command" => ["sh", "-c", "read line"]
+        }
+      )
+
+    assert {:ok, %{ok: true}} = ToolRegistry.dispatch(request, config)
+    {:ok, hub} = ResourceScopes.fetch(request, ReyCode.ProcessHub)
+    on_exit(fn -> DynamicSupervisor.terminate_child(ReyCode.ResourceSupervisor, hub) end)
+    assert {:error, :resource_work_active} = ResourceScopes.idle()
+
+    assert {:ok, %{ok: true}} =
+             ToolRegistry.dispatch(
+               %{request | arguments: %{"action" => "stop", "name" => "server"}},
+               config
+             )
+
+    assert :ok = ResourceScopes.idle()
+  end
 end
