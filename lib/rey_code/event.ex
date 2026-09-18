@@ -2,7 +2,14 @@ defmodule ReyCode.Event do
   @moduledoc "A versioned durable fact stored in global sequence order."
 
   alias ReyCode.{Failure, JSON}
-  alias ReyCode.Orchestration.{StrategicReview, Turn, VerifiedChange, VerifiedChangeResolution}
+
+  alias ReyCode.Orchestration.{
+    OperatorQuestions,
+    StrategicReview,
+    Turn,
+    VerifiedChange,
+    VerifiedChangeResolution
+  }
 
   @schema_version 2
 
@@ -55,7 +62,8 @@ defmodule ReyCode.Event do
     provider_round_recorded tool_run_requested tool_run_approval_resolved tool_run_started
     tool_run_completed tool_run_failed tool_run_interrupted delegation_opened
     delegation_merge_requested delegation_merge_resolved peer_message_sent
-    operator_question_asked operator_question_answered invocation_plan_updated participant_tier_configured
+    operator_question_asked operator_question_answered operator_question_rejected
+    invocation_plan_updated participant_tier_configured
   )a
   @type type ::
           unquote(
@@ -263,7 +271,8 @@ defmodule ReyCode.Event do
       optional: %{
         "recommended_id" => :nullable_text,
         "multi" => :boolean,
-        "allow_other" => :boolean
+        "allow_other" => :boolean,
+        "questions" => :map_list
       }
     },
     operator_question_answered: %{
@@ -278,8 +287,18 @@ defmodule ReyCode.Event do
       optional: %{
         "selected_ids" => :text_list,
         "selected_labels" => :text_list,
-        "other" => :nullable_text
+        "other" => :nullable_text,
+        "answers" => :map_list
       }
+    },
+    operator_question_rejected: %{
+      required:
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
+        |> Map.merge(%{
+          "request_id" => :id,
+          "tool_run_id" => :id
+        }),
+      optional: %{}
     },
     invocation_plan_updated: %{
       required:
@@ -680,6 +699,37 @@ defmodule ReyCode.Event do
   end
 
   # Sibling-dependent rules that single-field rules cannot express.
+  defp cross_field_rules(:operator_question_asked, data) do
+    envelope = %{
+      id: data["question_id"],
+      tool_run_id: data["tool_run_id"],
+      questions: Map.get(data, "questions", []),
+      question: data["question"],
+      options: data["options"],
+      recommended_id: data["recommended_id"],
+      multi?: data["multi"] == true,
+      allow_other?: data["allow_other"] == true,
+      asked_at: "event"
+    }
+
+    restore =
+      if Map.get(data, "questions") in [nil, []],
+        do: OperatorQuestions.restore(envelope),
+        else: OperatorQuestions.restore_grouped(envelope)
+
+    case restore do
+      {:ok, _question} -> :ok
+      {:error, :invalid_question_arguments} -> {:error, "invalid OperatorQuestion envelope"}
+    end
+  end
+
+  defp cross_field_rules(:operator_question_answered, %{"answers" => answers}) do
+    case OperatorQuestions.validate_answer_wire(answers) do
+      :ok -> :ok
+      {:error, :invalid_question_selection} -> {:error, "invalid OperatorQuestion answers"}
+    end
+  end
+
   defp cross_field_rules(:turn_queued, %{"strategy_review" => packet} = data) do
     packet = StrategicReview.from_map(packet)
 

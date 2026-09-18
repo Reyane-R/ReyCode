@@ -3,77 +3,214 @@ defmodule ReyCode.TUI.AdvancedComponentsTest do
 
   alias ReyCode.ArtifactStore
   alias ReyCode.Orchestration.{Engine, InvocationCoordination, OperatorQuestion}
+  alias ReyCode.Orchestration.OperatorQuestion.Item
   alias ReyCode.RuntimeConfig.Artifacts, as: ArtifactPolicy
   alias ReyCode.Tool.Result
   alias ReyCode.TUI.{Artifacts, MergeReview, Notice}
-  alias ReyCode.TUI.OperatorQuestion, as: QuestionModal
+  alias ReyCode.TUI.OperatorQuestion, as: QuestionPanel
 
-  test "rich question navigation toggles selections and edits Other without resolving" do
-    question = %OperatorQuestion{
-      id: "question-1",
-      tool_run_id: "run-1",
-      question: "Which paths?",
-      options: [
-        %{id: "option-0", label: "Safe", description: "Conservative", preview: "safe preview"},
-        %{id: "option-1", label: "Fast", description: "Aggressive", preview: ""}
-      ],
-      recommended_id: "option-0",
-      multi?: true,
-      allow_other?: true,
-      asked_at: "now"
+  test "compact grouped question navigation keeps answers through tabs and request switches" do
+    question = grouped_question("request-1", "run-1")
+
+    second_question = %{
+      question
+      | id: "request-2",
+        tool_run_id: "run-2",
+        questions: [hd(question.questions)]
     }
 
     invocation = %{
-      id: "inv-question",
+      id: "inv-question-1",
+      participant: %{name: "Builder"},
       coordination: %InvocationCoordination{pending_question: question}
+    }
+
+    second_invocation = %{
+      id: "inv-question-2",
+      participant: %{name: "Reviewer"},
+      coordination: %InvocationCoordination{pending_question: second_question}
     }
 
     term = %Breeze.Term{
       assigns: %{
         engine: Engine,
-        modal: :operator_question,
+        modal: nil,
         notice: nil,
-        operator_question: %{
-          QuestionModal.initial()
-          | invocation_id: invocation.id,
-            question_id: question.id
-        },
-        projection: %{invocations: %{invocation.id => invocation}}
+        operator_question: QuestionPanel.initial(),
+        selected_session_id: "session",
+        slash: nil,
+        drafts: %{"session" => "preserved draft"},
+        projection: %{
+          sessions: %{"session" => %{message_order: ["message-1", "message-2"]}},
+          messages: %{
+            "message-1" => %{invocation_id: invocation.id},
+            "message-2" => %{invocation_id: second_invocation.id}
+          },
+          invocations: %{
+            invocation.id => invocation,
+            second_invocation.id => second_invocation
+          }
+        }
       }
     }
 
-    assert QuestionModal.focus(term) == term
-    assert {:noreply, selected} = QuestionModal.handle_input(" ", term)
-    assert selected.assigns.operator_question.selected_ids == ["option-0"]
+    opened = QuestionPanel.open(term)
+    assert opened.assigns.modal == :operator_question
+    assert opened.assigns.operator_question.request_id == question.id
+    assert opened.assigns.drafts["session"] == "preserved draft"
 
-    assert {:noreply, second} = QuestionModal.handle_input("ArrowDown", selected)
-    assert second.assigns.operator_question.index == 1
-    assert {:noreply, first} = QuestionModal.handle_input("k", second)
-    assert first.assigns.operator_question.index == 0
+    assert {:noreply, second_tab} = QuestionPanel.handle_input("1", opened)
+    assert second_tab.assigns.operator_question.tab_index == 1
 
-    assert {:noreply, other_row} = QuestionModal.handle_input("ArrowUp", first)
-    assert other_row.assigns.operator_question.index == 2
-    assert {:noreply, other_step} = QuestionModal.handle_input(" ", other_row)
+    assert {:noreply, selected} = QuestionPanel.handle_input(" ", second_tab)
+
+    assert selected.assigns.operator_question.answers["question-1"].option_ids == [
+             "option-0"
+           ]
+
+    assert {:noreply, third_tab} = QuestionPanel.handle_input("Enter", selected)
+    assert third_tab.assigns.operator_question.tab_index == 2
+
+    assert {:noreply, mouse_other} =
+             QuestionPanel.handle_event("question_option_2", %{}, third_tab)
+
+    assert mouse_other.assigns.operator_question.step == :other
+    assert mouse_other.focused == "question-other"
+
+    assert {:noreply, other_row} = QuestionPanel.handle_input("ArrowUp", third_tab)
+    assert other_row.assigns.operator_question.option_index == 2
+    assert {:noreply, other_step} = QuestionPanel.handle_input("Enter", other_row)
     assert other_step.assigns.operator_question.step == :other
-    # Free-text answers require the question's own textarea to own focus.
     assert other_step.focused == "question-other"
 
     assert {:noreply, edited} =
-             QuestionModal.handle_event(
+             QuestionPanel.handle_event(
                "question_other_changed",
                %{value: "rollback"},
                other_step
              )
 
-    assert edited.assigns.operator_question.other == "rollback"
-    assert QuestionModal.handle_event("unknown", %{}, edited) == :unhandled
-    assert {:noreply, options} = QuestionModal.handle_input("Escape", edited)
+    assert edited.assigns.operator_question.answers["question-2"].other == "rollback"
+    assert QuestionPanel.handle_event("unknown", %{}, edited) == :unhandled
+    assert {:noreply, options} = QuestionPanel.handle_input("Escape", edited)
     assert options.assigns.operator_question.step == :options
     assert options.focused == "prompt"
 
-    assert {:noreply, closed} = QuestionModal.handle_input("Escape", options)
+    assert {:noreply, review} =
+             QuestionPanel.handle_event(
+               "question_other_submitted",
+               %{value: "rollback"},
+               other_step
+             )
+
+    assert review.assigns.operator_question.tab_index == 3
+
+    assert {:noreply, previous} =
+             QuestionPanel.handle_input(%{"key" => "Tab", "shiftKey" => true}, review)
+
+    assert previous.assigns.operator_question.tab_index == 2
+
+    assert {:noreply, switched} = QuestionPanel.handle_input("]", previous)
+    assert switched.assigns.operator_question.request_id == second_question.id
+    assert {:noreply, answered_second} = QuestionPanel.handle_input("1", switched)
+
+    assert answered_second.assigns.operator_question.answers["question-0"].option_ids == [
+             "option-0"
+           ]
+
+    assert {:noreply, restored} = QuestionPanel.handle_input("[", answered_second)
+
+    assert restored.assigns.operator_question.answers ==
+             previous.assigns.operator_question.answers
+
+    replacement = %{question | id: "request-3", questions: [hd(question.questions)]}
+
+    replaced_projection =
+      put_in(
+        restored.assigns.projection,
+        [:invocations, invocation.id, :coordination, Access.key(:pending_question)],
+        replacement
+      )
+
+    replaced =
+      QuestionPanel.reconcile(%{
+        restored
+        | assigns: %{restored.assigns | projection: replaced_projection}
+      })
+
+    assert replaced.assigns.operator_question.request_id == replacement.id
+    assert replaced.assigns.operator_question.answers == %{}
+    assert replaced.assigns.operator_question.tab_index == 0
+    assert replaced.assigns.notice.message =~ "answers reset"
+
+    first_resolved =
+      put_in(
+        replaced.assigns.projection,
+        [:invocations, invocation.id, :coordination, Access.key(:pending_question)],
+        nil
+      )
+
+    reconciled =
+      QuestionPanel.reconcile(%{
+        replaced
+        | assigns: %{replaced.assigns | projection: first_resolved}
+      })
+
+    assert reconciled.assigns.operator_question.request_id == second_question.id
+    assert reconciled.assigns.operator_question.answers["question-0"].option_ids == ["option-0"]
+    assert reconciled.assigns.notice.message =~ "resolved elsewhere"
+
+    all_resolved =
+      put_in(
+        first_resolved,
+        [:invocations, second_invocation.id, :coordination, Access.key(:pending_question)],
+        nil
+      )
+
+    closed =
+      QuestionPanel.reconcile(%{
+        reconciled
+        | assigns: %{reconciled.assigns | projection: all_resolved}
+      })
+
     assert closed.assigns.modal == nil
-    assert closed.focused == "prompt"
+    assert closed.assigns.operator_question.request_states == %{}
+    assert closed.assigns.notice.message =~ "another terminal"
+  end
+
+  defp grouped_question(id, tool_run_id) do
+    questions = [
+      item("question-0", "Database", "Which database?", false, false),
+      item("question-1", "Features", "Which features?", true, false),
+      item("question-2", "Region", "Which region?", false, true)
+    ]
+
+    first = hd(questions)
+
+    %OperatorQuestion{
+      id: id,
+      tool_run_id: tool_run_id,
+      questions: questions,
+      question: first.question,
+      options: first.options,
+      recommended_id: first.recommended_id,
+      asked_at: "now"
+    }
+  end
+
+  defp item(id, header, question, multi?, allow_other?) do
+    %Item{
+      id: id,
+      header: header,
+      question: question,
+      options: [
+        %{id: "option-0", label: "First", description: "Primary", preview: ""},
+        %{id: "option-1", label: "Second", description: "Alternate", preview: ""}
+      ],
+      recommended_id: "option-0",
+      multi?: multi?,
+      allow_other?: allow_other?
+    }
   end
 
   test "artifact list and detail controls page retained output and close cleanly" do

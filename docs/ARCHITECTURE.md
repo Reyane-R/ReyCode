@@ -91,7 +91,9 @@ The active transcript shows only useful execution context:
   opens the command palette. `@path` and `#path` tokens attach a Workspace
   file's content to the Message (expanded by `ReyCode.TUI.Mentions` before
   posting — Workspace-contained paths only, 512 KB per file, 2 MB total;
-  failures surface as a composer notice).
+  failures surface as a composer notice). A pending OperatorQuestion temporarily
+  replaces this control with a compact grouped picker; the transcript remains
+  visible and the TerminalClient keeps the unsent composer draft unchanged.
 - **Focus:** Tab moves directly between prompt and transcript.
 
 `Session` is the sole durable conversation aggregate and the user-facing TUI

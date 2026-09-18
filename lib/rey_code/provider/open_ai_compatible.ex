@@ -392,8 +392,9 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   defp wire_tool_description("ask_operator") do
-    "Pause this Invocation for one bounded multiple-choice OperatorQuestion. " <>
-      "Use only when materially different options require human judgment."
+    "Pause this Invocation for one bounded envelope of one to four ordered " <>
+      "multiple-choice OperatorQuestions. Use only when materially different options " <>
+      "require human judgment."
   end
 
   defp wire_tool_description("update_plan") do
@@ -504,40 +505,58 @@ defmodule ReyCode.Provider.OpenAICompatible do
   defp tool_schema("ask_operator") do
     object_schema(
       %{
-        "question" => %{"type" => "string"},
-        "options" => %{
+        "questions" => %{
           "type" => "array",
-          "minItems" => 2,
-          "maxItems" => 5,
+          "minItems" => 1,
+          "maxItems" => 4,
           "items" =>
             object_schema(
               %{
-                "label" => %{"type" => "string"},
-                "description" => %{"type" => "string"},
-                "preview" => %{
-                  "type" => "string",
-                  "description" => "Optional bounded diff or file snippet shown only in the TUI"
+                "header" => %{"type" => "string", "minLength" => 1, "maxLength" => 80},
+                "question" => %{"type" => "string", "minLength" => 1, "maxLength" => 4_096},
+                "options" => %{
+                  "type" => "array",
+                  "minItems" => 2,
+                  "maxItems" => 5,
+                  "items" =>
+                    object_schema(
+                      %{
+                        "label" => %{
+                          "type" => "string",
+                          "minLength" => 1,
+                          "maxLength" => 160
+                        },
+                        "description" => %{"type" => "string", "maxLength" => 1_024},
+                        "preview" => %{
+                          "type" => "string",
+                          "maxLength" => 8_192,
+                          "description" =>
+                            "Optional bounded diff or file snippet shown only in the TUI"
+                        }
+                      },
+                      ["label"]
+                    )
+                },
+                "recommended" => %{
+                  "type" => "integer",
+                  "minimum" => 0,
+                  "maximum" => 4,
+                  "description" => "Optional zero-based recommended option"
+                },
+                "multi" => %{
+                  "type" => "boolean",
+                  "description" => "Allow several option IDs in one answer"
+                },
+                "allow_other" => %{
+                  "type" => "boolean",
+                  "description" => "Offer one bounded free-text Other answer"
                 }
               },
-              ["label"]
+              ["header", "question", "options"]
             )
-        },
-        "recommended" => %{
-          "type" => "integer",
-          "minimum" => 0,
-          "maximum" => 4,
-          "description" => "Optional zero-based recommended option"
-        },
-        "multi" => %{
-          "type" => "boolean",
-          "description" => "Allow several option IDs in one answer"
-        },
-        "allow_other" => %{
-          "type" => "boolean",
-          "description" => "Offer one bounded free-text Other answer"
         }
       },
-      ["question", "options"]
+      ["questions"]
     )
   end
 

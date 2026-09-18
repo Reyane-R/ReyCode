@@ -60,7 +60,9 @@ defmodule ReyCode.TUI.TextSelection do
     case Map.get(term.assigns, :text_selection) do
       %__MODULE__{session_id: id, size: size} ->
         if id == term.assigns.selected_session_id and size == term.assigns.breeze.terminal and
-             is_nil(term.assigns.modal), do: term, else: clear(term)
+             term.assigns.modal in [nil, :operator_question],
+           do: term,
+           else: clear(term)
 
       nil ->
         term
@@ -176,7 +178,8 @@ defmodule ReyCode.TUI.TextSelection do
     viewport = Map.get(layouts, assigns.timeline_id)
 
     point =
-      if is_nil(assigns.modal) and inside?(viewport, mouse), do: hit(rows, layouts, mouse, false)
+      if assigns.modal in [nil, :operator_question] and inside?(viewport, mouse),
+        do: hit(rows, layouts, mouse, false)
 
     case point do
       nil -> {:halt, Component.assign(term, selection_click: mouse)}

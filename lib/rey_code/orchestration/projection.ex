@@ -104,8 +104,16 @@ defmodule ReyCode.Orchestration.Projection do
   @doc "Returns the newest Invocation awaiting an OperatorQuestion in one Session."
   @spec pending_question_invocation(t(), String.t()) :: Invocation.t() | nil
   def pending_question_invocation(projection, session_id) do
+    projection
+    |> pending_question_invocations(session_id)
+    |> List.first()
+  end
+
+  @doc "Returns the ordered Invocations awaiting OperatorQuestion answers in one Session."
+  @spec pending_question_invocations(t(), String.t()) :: [Invocation.t()]
+  def pending_question_invocations(projection, session_id) do
     session_invocations(projection, session_id)
-    |> Enum.find(&(not is_nil(Map.get(&1, :coordination) && &1.coordination.pending_question)))
+    |> Enum.filter(&(not is_nil(Map.get(&1, :coordination) && &1.coordination.pending_question)))
   end
 
   @doc "Returns the newest Invocation with a WorkPlan in one Session."

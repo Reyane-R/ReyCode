@@ -119,7 +119,7 @@ defmodule ReyCode.TUI.State do
     if Settings.first_run_required?(projection, term.assigns.selected_session_id) do
       {:ok, Settings.open_first_run(term)}
     else
-      {:ok, term}
+      {:ok, OperatorQuestion.reconcile(term)}
     end
   end
 
@@ -414,7 +414,9 @@ defmodule ReyCode.TUI.State do
         Component.assign(term, projection: projection, selected_session_id: selected_session_id)
       end
 
-    reconcile_animation(term)
+    term
+    |> reconcile_animation()
+    |> OperatorQuestion.reconcile()
   end
 
   @doc "Accepts a fresh engine epoch, including a restored history with a lower sequence."
@@ -425,6 +427,7 @@ defmodule ReyCode.TUI.State do
       term
       |> Component.assign(projection: projection, engine_workspace_missing?: false)
       |> reconcile_animation()
+      |> OperatorQuestion.reconcile()
     else
       previous = term.assigns.projection.sessions[id]
       workspace = if previous, do: previous.workspace, else: File.cwd!()
@@ -442,6 +445,7 @@ defmodule ReyCode.TUI.State do
             engine_workspace_missing?: false
           )
           |> reconcile_animation()
+          |> OperatorQuestion.reconcile()
 
         {:error, _reason} ->
           Component.assign(term,

@@ -24,6 +24,7 @@ defmodule ReyCode.LocalEngine.Server do
     advise_strategy: 5,
     challenge: 5,
     answer_question: 4,
+    reject_question: 3,
     resolve_merge: 3,
     cancel_turn: 3,
     configure_participants: 5,

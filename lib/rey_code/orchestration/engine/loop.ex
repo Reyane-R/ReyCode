@@ -38,7 +38,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
   @type response :: {:reply, term(), map()}
 
-  @doc "Records one validated single/multi/Other answer and resumes the waiting Invocation."
+  @doc "Records one validated atomic answer submission and resumes the waiting Invocation."
   @spec answer_question(map(), String.t(), String.t(), term()) :: response()
   def answer_question(state, invocation_id, question_id, selection) do
     invocation = state.projection.invocations[invocation_id]
@@ -50,12 +50,12 @@ defmodule ReyCode.Orchestration.Engine.Loop do
          true <- question.id == question_id,
          {:ok, answer} <- OperatorQuestions.resolve(question, selection),
          %ToolRun{status: :running} = run <- Map.get(invocation.tool_runs, question.tool_run_id) do
-      output = Jason.encode!(%{"selected" => answer.labels, "other" => answer.other})
+      output = Jason.encode!(answer_output(answer))
 
       result = %{
         "output" => output,
         "truncated" => false,
-        "metadata" => %{"option_ids" => answer.option_ids}
+        "metadata" => answer_metadata(answer)
       }
 
       entries = [
@@ -75,6 +75,42 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       false -> {:reply, {:error, :stale_question}, state}
       {:error, reason} -> {:reply, {:error, reason}, state}
       _other -> {:reply, {:error, :invalid_question_selection}, state}
+    end
+  end
+
+  @doc "Rejects one pending question envelope, completes its ToolRun, and resumes its Invocation."
+  @spec reject_question(map(), String.t(), String.t()) :: response()
+  def reject_question(state, invocation_id, request_id) do
+    invocation = state.projection.invocations[invocation_id]
+    question = invocation && invocation.coordination.pending_question
+
+    with %{} <- invocation,
+         %{} <- question,
+         true <- invocation.status == :waiting_operator,
+         true <- question.id == request_id,
+         %ToolRun{status: :running} = run <- Map.get(invocation.tool_runs, question.tool_run_id) do
+      result = %{
+        "output" => Jason.encode!(%{"rejected" => true}),
+        "truncated" => false,
+        "metadata" => %{"request_id" => request_id}
+      }
+
+      entries = [
+        EventEntries.operator_question_rejected(invocation, question),
+        EventEntries.tool_run_completed(invocation, run, result)
+      ]
+
+      next =
+        state
+        |> Persistence.append_and_apply!(entries)
+        |> Admission.enqueue(invocation.id)
+        |> Lifecycle.pump_admission()
+
+      {:reply, :ok, next}
+    else
+      nil -> {:reply, {:error, :question_not_found}, state}
+      false -> {:reply, {:error, :stale_question}, state}
+      _other -> {:reply, {:error, :invalid_question_transition}, state}
     end
   end
 
@@ -435,6 +471,26 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp timestamp, do: DateTime.utc_now() |> DateTime.to_iso8601()
+
+  defp answer_output(answer) do
+    output = %{"answers" => Enum.map(answer.answers, &OperatorQuestions.answer_to_wire/1)}
+
+    if length(answer.answers) == 1 do
+      output
+      |> Map.put("selected", answer.labels)
+      |> Map.put("other", answer.other)
+    else
+      output
+    end
+  end
+
+  defp answer_metadata(answer) do
+    metadata = %{"question_ids" => Enum.map(answer.answers, & &1.question_id)}
+
+    if length(answer.answers) == 1,
+      do: Map.put(metadata, "option_ids", answer.option_ids),
+      else: metadata
+  end
 
   defp authorization_action(:allow), do: :execute
   defp authorization_action(:ask), do: :await

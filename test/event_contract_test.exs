@@ -139,6 +139,53 @@ defmodule ReyCode.EventContractTest do
   end
 
   describe "cross-field payload rules" do
+    test "OperatorQuestion envelopes enforce durable child bounds" do
+      base = valid_data(:operator_question_asked)
+
+      too_many = Map.put(base, "questions", List.duplicate(hd(base["questions"]), 5))
+      assert {:error, reason} = Event.validate_data(:operator_question_asked, too_many)
+      assert reason =~ "invalid OperatorQuestion envelope"
+
+      invalid_options = put_in(base, ["questions", Access.at(0), "options"], [])
+      assert {:error, reason} = Event.validate_data(:operator_question_asked, invalid_options)
+      assert reason =~ "invalid OperatorQuestion envelope"
+    end
+
+    test "OperatorQuestion answer envelopes enforce atomic bounded children" do
+      base =
+        Map.put(valid_data(:operator_question_answered), "answers", [
+          %{
+            "question_id" => "question-0",
+            "question" => "Which path?",
+            "option_ids" => ["option-0"],
+            "labels" => ["Safe"],
+            "other" => nil
+          }
+        ])
+
+      assert :ok = Event.validate_data(:operator_question_answered, base)
+
+      historical_id =
+        update_in(base, ["answers", Access.at(0), "option_ids"], fn _ids -> ["opt-proceed"] end)
+
+      assert :ok = Event.validate_data(:operator_question_answered, historical_id)
+
+      for answers <- [
+            [],
+            List.duplicate(hd(base["answers"]), 5),
+            [put_in(hd(base["answers"]), ["option_ids"], [""])],
+            [Map.delete(hd(base["answers"]), "labels")]
+          ] do
+        assert {:error, reason} =
+                 Event.validate_data(
+                   :operator_question_answered,
+                   Map.put(base, "answers", answers)
+                 )
+
+        assert reason =~ "invalid OperatorQuestion answers"
+      end
+    end
+
     test "text_delta frames require a text string inside data" do
       base = valid_data(:provider_frame_recorded)
       delta = %{base | "kind" => "text_delta", "data" => %{}}
@@ -644,6 +691,30 @@ defmodule ReyCode.EventContractTest do
       "options" => [
         %{"id" => "option-0", "label" => "Safe", "description" => "Conservative"},
         %{"id" => "option-1", "label" => "Fast", "description" => "Aggressive"}
+      ],
+      "questions" => [
+        %{
+          "question_id" => "question-0",
+          "header" => "Release",
+          "question" => "Which path?",
+          "options" => [
+            %{
+              "id" => "option-0",
+              "label" => "Safe",
+              "description" => "Conservative",
+              "preview" => ""
+            },
+            %{
+              "id" => "option-1",
+              "label" => "Fast",
+              "description" => "Aggressive",
+              "preview" => ""
+            }
+          ],
+          "recommended_id" => nil,
+          "multi" => false,
+          "allow_other" => false
+        }
       ]
     }
 
@@ -657,6 +728,16 @@ defmodule ReyCode.EventContractTest do
       "tool_run_id" => "run-1",
       "selected_id" => "option-0",
       "selected_label" => "Safe"
+    }
+
+  defp valid_data(:operator_question_rejected),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "request_id" => "request-1",
+      "tool_run_id" => "run-1"
     }
 
   defp valid_data(:invocation_plan_updated),

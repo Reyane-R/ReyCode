@@ -7,6 +7,7 @@ defmodule ReyCode.Orchestration.EventEntries do
     Invocation,
     ModelTier,
     OperatorQuestion,
+    OperatorQuestions,
     Participant,
     Session,
     Squad,
@@ -671,7 +672,7 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
-  @doc "Builds the event that pauses an Invocation for one OperatorQuestion."
+  @doc "Builds the event that pauses an Invocation for one OperatorQuestion envelope."
   @spec operator_question_asked(Invocation.t(), OperatorQuestion.t()) :: event_entry()
   def operator_question_asked(invocation, question) do
     invocation_event(
@@ -689,7 +690,7 @@ defmodule ReyCode.Orchestration.EventEntries do
     )
   end
 
-  @doc "Builds the event recording one validated Operator answer."
+  @doc "Builds the event recording one validated atomic Operator answer submission."
   @spec operator_question_answered(
           Invocation.t(),
           OperatorQuestion.t(),
@@ -711,7 +712,25 @@ defmodule ReyCode.Orchestration.EventEntries do
         "selected_label" => selected_label,
         "selected_ids" => answer.option_ids,
         "selected_labels" => answer.labels,
-        "other" => answer.other
+        "other" => answer.other,
+        "answers" => Enum.map(answer.answers, &OperatorQuestions.answer_to_wire/1)
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the event recording rejection of one pending OperatorQuestion envelope."
+  @spec operator_question_rejected(Invocation.t(), OperatorQuestion.t()) :: event_entry()
+  def operator_question_rejected(invocation, question) do
+    invocation_event(
+      :operator_question_rejected,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.session_id,
+        "request_id" => question.id,
+        "tool_run_id" => question.tool_run_id
       },
       invocation
     )

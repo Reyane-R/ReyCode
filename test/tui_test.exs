@@ -5,6 +5,7 @@ defmodule ReyCode.TUITest do
   alias ReyCode.Memory.Store
 
   alias ReyCode.Orchestration.{
+    Author,
     Engine,
     Invocation,
     InvocationCoordination,
@@ -19,6 +20,7 @@ defmodule ReyCode.TUITest do
     WorkPlan
   }
 
+  alias ReyCode.Orchestration.OperatorQuestion.Item
   alias ReyCode.Security.CanonicalPath
 
   alias ReyCode.Test.Wait
@@ -1334,6 +1336,36 @@ defmodule ReyCode.TUITest do
     Breeze.Test.render!(session)
     mouse.("release", 110, 30)
     assert_receive {:selection_copied, "Hello wide 世界 and friends"}
+
+    projection =
+      put_in(
+        projection,
+        [
+          :invocations,
+          "inv-layout",
+          Access.key(:coordination),
+          Access.key(:pending_question)
+        ],
+        operator_question_fixture()
+      )
+
+    push_projection(session, projection)
+    assert Breeze.Test.metadata(session).assigns.modal == :operator_question
+    Breeze.Test.render!(session)
+
+    line =
+      Map.fetch!(
+        Breeze.ChildServer.layout_snapshot(session.pid).elements,
+        "selection-msg-layout-assistant-0"
+      )
+
+    mouse.("press", line.left, line.top)
+    Breeze.Test.render!(session)
+    mouse.("move", line.left + 5, line.top)
+    Breeze.Test.render!(session)
+    assert Breeze.Test.metadata(session).assigns.text_selection.moved?
+    mouse.("release", line.left + 5, line.top)
+    assert_receive {:selection_copied, "Hello"}
     Breeze.Test.input(session, "Escape")
     assert is_nil(Breeze.Test.metadata(session).assigns.text_selection)
   end
@@ -1860,6 +1892,35 @@ defmodule ReyCode.TUITest do
     question = %OperatorQuestion{
       id: "question-tui",
       tool_run_id: "run-question",
+      questions: [
+        %Item{
+          id: "question-0",
+          header: "Release",
+          question: "Which implementation path?",
+          options: [
+            %{
+              id: "option-0",
+              label: "Safe",
+              description: "Preserve compatibility",
+              preview: "@@ -1 +1 @@\n-old\n+new"
+            },
+            %{id: "option-1", label: "Fast", description: "Prefer speed", preview: ""}
+          ],
+          recommended_id: "option-0",
+          multi?: true,
+          allow_other?: true
+        },
+        %Item{
+          id: "question-1",
+          header: "Region",
+          question: "Which region?",
+          options: [
+            %{id: "option-0", label: "East", description: "", preview: ""},
+            %{id: "option-1", label: "West", description: "", preview: ""}
+          ],
+          recommended_id: "option-1"
+        }
+      ],
       question: "Which implementation path?",
       options: [
         %{
@@ -1905,6 +1966,7 @@ defmodule ReyCode.TUITest do
       session_id: session_id,
       turn_id: invocation.turn_id,
       invocation_id: invocation.id,
+      author: Author.from_participant(primary),
       role: :assistant,
       status: :streaming
     }
@@ -1928,18 +1990,56 @@ defmodule ReyCode.TUITest do
       |> put_in([:invocations, invocation.id], invocation)
       |> put_in([:turns, turn.id], turn)
 
-    push_projection(session, projection)
+    questionless =
+      put_in(
+        projection,
+        [
+          :invocations,
+          invocation.id,
+          Access.key(:coordination),
+          Access.key(:pending_question)
+        ],
+        nil
+      )
+      |> put_in([:invocations, invocation.id, Access.key(:status)], :running)
 
-    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, ctrl("a"))
+    push_projection(session, questionless)
+    Breeze.Test.event(session, "prompt_changed", %{value: "/plan", cursor: 5})
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.modal == :work_plan
+    Breeze.Test.event(session, "prompt_changed", %{value: "preserved draft", cursor: 15})
+    push_projection(session, projection)
+    assert Breeze.Test.metadata(session).assigns.modal == :work_plan
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Escape")
+
+    assert Breeze.Test.metadata(session).assigns.modal == :operator_question
     question_screen = Breeze.Test.render!(session)
-    assert question_screen =~ "Operator question"
+    assert question_screen =~ "Assistant asks"
     assert question_screen =~ "Which implementation path?"
     assert question_screen =~ "Safe · recommended"
     assert question_screen =~ "@@ -1 +1 @@"
-    assert question_screen =~ "Other · type a bounded answer"
+    assert question_screen =~ "1 Release"
+    assert question_screen =~ "2 Region"
+    assert question_screen =~ "Review"
+    assert question_screen =~ "Other · type a custom answer"
+    assert Breeze.Test.metadata(session).assigns.drafts[session_id] == "preserved draft"
+
+    mouse_action(session, "Safe · recommended", "press")
+    mouse_action(session, "Safe · recommended", "release")
+
+    assert Breeze.Test.metadata(session).assigns.operator_question.answers["question-0"].option_ids ==
+             ["option-0"]
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.render!(session) =~ "Which region?"
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "2")
+    review_screen = Breeze.Test.render!(session)
+    assert review_screen =~ "Review answers"
+    assert review_screen =~ "Release · Safe"
+    assert review_screen =~ "Region · West"
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Escape")
 
-    type(session, "/plan")
+    Breeze.Test.event(session, "prompt_changed", %{value: "/plan", cursor: 5})
     assert {:noreply, "prompt", _changed?} = Breeze.Test.input(session, "Enter")
     plan_screen = Breeze.Test.render!(session)
     assert plan_screen =~ "WorkPlan"
@@ -2151,6 +2251,23 @@ defmodule ReyCode.TUITest do
 
   defp plain(screen), do: Regex.replace(~r/\e\[[0-9;]*m/, screen, "")
 
+  defp mouse_action(session, label, action) do
+    {line, y} =
+      session
+      |> Breeze.Test.render!()
+      |> plain()
+      |> String.split("\n")
+      |> Enum.with_index()
+      |> Enum.find(fn {line, _y} -> String.contains?(line, label) end)
+
+    {index, _length} = :binary.match(line, label)
+    x = line |> binary_part(0, index) |> String.length()
+
+    Breeze.Test.input(session, %{
+      "mouse" => %{"button" => "left", "action" => action, "x" => x, "y" => y}
+    })
+  end
+
   # Synthetic fixtures must respect the monotonic subscription contracts:
   # each push advances the version the session currently holds.
   defp push_projection(session, projection) do
@@ -2222,6 +2339,7 @@ defmodule ReyCode.TUITest do
       session_id: session_id,
       turn_id: turn_id,
       status: :running,
+      coordination: %InvocationCoordination{},
       attempt: 1,
       usage: %{"prompt_tokens" => 12_000, "completion_tokens" => 400},
       pending_tool_review: nil,
@@ -2272,6 +2390,29 @@ defmodule ReyCode.TUITest do
   end
 
   defp ctrl(key), do: %{"ctrlKey" => true, "key" => key}
+
+  defp operator_question_fixture do
+    item = %Item{
+      id: "question-0",
+      header: "Choice",
+      question: "Continue?",
+      options: [
+        %{id: "option-0", label: "Yes", description: "", preview: ""},
+        %{id: "option-1", label: "No", description: "", preview: ""}
+      ],
+      recommended_id: nil
+    }
+
+    %OperatorQuestion{
+      id: "selection-question",
+      tool_run_id: "selection-run",
+      questions: [item],
+      question: item.question,
+      options: item.options,
+      recommended_id: nil,
+      asked_at: "now"
+    }
+  end
 
   defp wait_until_turn_status(server, turn_id, status),
     do: Wait.turn_status(server, turn_id, status, 1_000)

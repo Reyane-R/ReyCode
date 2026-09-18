@@ -20,6 +20,25 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D47 - Operator questions are atomic grouped requests with client-local drafts (Policy - 2026-09-18)
+
+One `ask_operator` ToolRun owns one durable OperatorQuestion envelope containing
+one to four ordered child questions. Child IDs and short tab headers are frozen;
+each child retains the bounded option, recommendation, preview, multi-select and
+Other policies introduced by D31/D33. The Operator either submits every answer
+in frozen child order or rejects the envelope. Both paths append durable facts,
+complete the originating ToolRun, and re-arm only its Invocation. Historical
+singular events and checkpoints normalize to one-child envelopes at the durable
+compatibility seam.
+
+The TUI replaces the composer with a compact picker while leaving the transcript
+visible and the composer draft untouched. Child tabs, partial answers, cursor
+position and switching among simultaneous requests are TerminalClient state;
+only final confirmation or rejection crosses the Engine boundary. Projection
+updates reconcile stale requests so a resolution from another terminal cannot
+be submitted twice. This supersedes D31's single-selection completion wording
+and extends D33 without introducing a second orchestration lifecycle.
+
 ### D46 - Provider/tool loops have no local round-count quota (Policy - 2026-09-18)
 
 Remove the 16-provider-round failure from ordinary Invocations. A round count is

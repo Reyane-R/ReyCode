@@ -92,7 +92,7 @@ defmodule ReyCode.TUI.Components.Modals do
   defp dispatch(:hotkeys, assigns), do: Hotkeys.modal(assigns)
   defp dispatch(:model_picker, assigns), do: ModelPicker.modal(assigns)
   defp dispatch(:merge_review, assigns), do: MergeReview.modal(assigns)
-  defp dispatch(:operator_question, assigns), do: OperatorQuestion.modal(assigns)
+  defp dispatch(:operator_question, assigns), do: empty(assigns)
   defp dispatch(:prompt_history, assigns), do: PromptHistory.modal(assigns)
   defp dispatch(:session_picker, assigns), do: SessionPicker.modal(assigns)
   defp dispatch(:session_tree, assigns), do: SessionTree.modal(assigns)

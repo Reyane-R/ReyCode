@@ -420,7 +420,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/connect`: open provider configuration without model completion
 - `/model`: switch the Assistant model in one step
 - `/task`: delegate one task to one Task Participant
-- `/answer`: answer the newest waiting OperatorQuestion
+- `/answer`: open the waiting OperatorQuestion picker
 - `/artifacts`: inspect and page retained large ToolRun outputs
 - `/context`: inspect the latest provider-facing ContextSummary
 - `/decisions`: browse or invalidate recorded implementation decisions and assumptions
@@ -442,7 +442,7 @@ content digest and exact source paths so restart behavior cannot drift.
   files only, 512 KB per file, 2 MB total). Typing `@` or `#` opens bounded
   recursive fuzzy file completion; paths containing spaces are quoted.
 - `Tab`: cycle through the transcript, visible action controls, and prompt
-- `Ctrl+A`: open the newest waiting OperatorQuestion
+- `Ctrl+A`: open the waiting OperatorQuestion picker
 - `Ctrl+B`: open Session Tree
 - `Ctrl+O`: open ToolRun Inspector
 - `Ctrl+R`: search prompt history
@@ -607,9 +607,14 @@ context. The result includes a preview and `artifact://` identifier. Use
 windows with `artifact_read`. Retention defaults to 128 artifacts and 2 MB per
 artifact and is configurable with the `REYCODE_ARTIFACT_*` settings.
 
-OperatorQuestions may present two to five options with descriptions and bounded
-previews. `Space` toggles options in a multi-select question, `Enter` submits,
-and the Other row accepts bounded text when the question allows it.
+An OperatorQuestion may group one to four ordered questions, each with two to
+five options, descriptions, and bounded previews. The compact picker replaces
+the composer without hiding the transcript or changing its draft. Number keys,
+arrow keys, and mouse clicks choose options; `Space` toggles multi-select
+options; left/right or Tab changes question tabs; and the Other row accepts
+bounded custom text. Review confirms all answers atomically. `[` and `]` switch
+simultaneous requests from different agents. Escape leaves the custom editor or
+durably rejects the whole request.
 
 Submitting an ordinary message while the Session already has active or queued
 work records a durable FollowUp Turn. `/dequeue` cancels only the newest queued
@@ -1166,14 +1171,17 @@ durable auto-delivery when terminal.
 
 ## Operator questions, WorkPlans, and model tiers
 
-Providers can pause only their own Invocation for a bounded human choice:
+Providers can pause only their own Invocation for one bounded grouped request:
 
-    ask_operator  {"question":"Which release path?","options":[{"label":"Safe","description":"Run every gate"},{"label":"Fast","description":"Prefer speed"}],"recommended":0}
+    ask_operator  {"questions":[{"header":"Release","question":"Which release path?","options":[{"label":"Safe","description":"Run every gate"},{"label":"Fast","description":"Prefer speed"}],"recommended":0},{"header":"Region","question":"Where should it run?","options":[{"label":"Local"},{"label":"Cloud"}]}]}
 
-The question and its two to five options are durable. `/answer` opens the
-waiting question; selecting one option completes the originating ToolRun and
-re-arms the Invocation. This is not tool authorization and grants no execution
-authority.
+The envelope, its one to four ordered questions, and each question's two to five
+options are durable. The compact picker opens automatically, and `/answer`
+reopens it when needed. Tabs collect partial answers locally; Review submits all
+answers atomically in frozen order. Escape outside the custom editor durably
+rejects the request. Confirmation or rejection completes the originating
+ToolRun and re-arms the Invocation. This is not tool authorization and grants no
+execution authority.
 
 Providers maintain visible phased progress with `update_plan`. `init` accepts
 ordered phases and unique item names; later actions are `start`, `done`,

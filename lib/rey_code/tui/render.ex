@@ -16,7 +16,9 @@ defmodule ReyCode.TUI.Render do
       recent_session_rows={@recent_session_rows}
       mode={@mode}
       session={@session}
+      selected_session_id={@selected_session_id}
       projection={@projection}
+      operator_question={@operator_question}
       providers={@providers}
       messages={@messages}
       activity={@activity}

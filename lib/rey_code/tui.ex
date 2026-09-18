@@ -197,8 +197,11 @@ defmodule ReyCode.TUI do
   def open_command_palette(_event, term), do: {:noreply, term}
 
   @doc "Submits the active modal or the composer draft."
+  def submit(_event, %{assigns: %{modal: :operator_question}} = term),
+    do: OperatorQuestion.submit(term)
+
   def submit(_event, %{assigns: %{modal: modal}} = term) when not is_nil(modal),
-    do: Modals.module!(modal).submit(term)
+    do: modal |> Modals.module!() |> then(& &1.submit(term)) |> reconcile_closed_modal()
 
   def submit(_event, %{assigns: %{modal: nil}} = term) do
     draft = Map.get(term.assigns.drafts, term.assigns.selected_session_id, "")
@@ -339,16 +342,22 @@ defmodule ReyCode.TUI do
   def intercept_input(event, term), do: TextSelection.intercept(event, term)
 
   @impl true
+  def handle_event(:input, payload, %{assigns: %{modal: :operator_question}} = term),
+    do: OperatorQuestion.handle_input(payload, term)
+
   def handle_event(:input, %{"key" => key}, %{assigns: %{modal: modal}} = term)
       when not is_nil(modal) do
-    Modals.module!(modal).handle_input(key, term)
+    modal
+    |> Modals.module!()
+    |> then(& &1.handle_input(key, term))
+    |> reconcile_closed_modal()
   end
 
   def handle_event(event, payload, %{assigns: %{modal: modal}} = term)
       when not is_nil(modal) do
     case Modals.module!(modal).handle_event(event, payload, term) do
       :unhandled -> do_handle_event(event, payload, term)
-      result -> result
+      result -> reconcile_closed_modal(result)
     end
   end
 
@@ -408,6 +417,18 @@ defmodule ReyCode.TUI do
     do: open_operator_question(nil, term)
 
   defp do_handle_event(_, _, term), do: {:noreply, term}
+
+  defp reconcile_closed_modal(
+         {:noreply,
+          %{assigns: %{operator_question: %{}, projection: %{}, selected_session_id: session_id}} =
+            term}
+       )
+       when is_binary(session_id),
+       do: {:noreply, OperatorQuestion.reconcile(term)}
+
+  defp reconcile_closed_modal({:noreply, term}), do: {:noreply, term}
+
+  defp reconcile_closed_modal(result), do: result
 
   defp cancel_active_turn(session, term) do
     if session && session.active_turn_id do

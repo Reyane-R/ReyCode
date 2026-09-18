@@ -281,6 +281,12 @@ defmodule ReyCode.Orchestration.Engine do
     GenServer.call(server, {:answer_question, invocation_id, question_id, selection})
   end
 
+  @doc "Rejects one pending OperatorQuestion request envelope."
+  @spec reject_question(String.t(), String.t(), GenServer.server()) :: :ok | {:error, atom()}
+  def reject_question(invocation_id, request_id, server \\ __MODULE__) do
+    GenServer.call(server, {:reject_question, invocation_id, request_id})
+  end
+
   @doc "Applies or discards one pending isolated delegation patch."
   @spec resolve_merge(String.t(), atom() | String.t(), GenServer.server()) ::
           :ok | {:error, atom()}
@@ -569,6 +575,12 @@ defmodule ReyCode.Orchestration.Engine do
     do:
       with_work_admission(state, fn ->
         Loop.answer_question(state, invocation_id, question_id, option_id)
+      end)
+
+  def handle_call({:reject_question, invocation_id, request_id}, _from, state),
+    do:
+      with_work_admission(state, fn ->
+        Loop.reject_question(state, invocation_id, request_id)
       end)
 
   def handle_call(

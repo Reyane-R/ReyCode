@@ -104,7 +104,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ToolAsk** — Pending owner decision recorded when a ToolRun execution needs approval, addressed by request id.
 
-**OperatorQuestion** — Bounded durable question raised by an Invocation for the Operator, with two to five frozen options, optional display-only previews, an optional recommended option, optional ordered multi-selection, and optional bounded free text through Other. It pauses only that Invocation until the Operator submits a valid answer.
+**OperatorQuestion** — Bounded durable request envelope raised by one Invocation for the Operator, containing one to four ordered child questions with stable IDs and short headers. Each child has two to five frozen options, optional display-only previews, an optional recommended option, optional ordered multi-selection, and optional bounded free text through Other. The envelope pauses only its Invocation until the Operator atomically submits every child answer or rejects the request.
 
 **WorkPlan** — Durable phased progress projection owned by one Invocation. Items have exactly one lifecycle status; after each update, at most one actionable item is in progress and the earliest pending item auto-promotes when none is running.
 
@@ -217,6 +217,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - A TurnRetry references exactly one earlier failed terminal Turn; it is independently scheduled and reaches its own TurnOutcome.
 - A BackgroundProcess is owned by ProcessHub and does not outlive it.
 - A ToolRun realizes exactly one ToolCall.
+- An `ask_operator` ToolRun owns exactly one OperatorQuestion envelope; its ordered child answers complete or reject that ToolRun together.
 - A squad Turn owns exactly one SquadRun.
 - A SquadRun has one current Phase and PhaseIndex.
 - A GateReview contains one GateRecommendation and is completed by one GateResolution.

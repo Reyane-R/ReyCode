@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
   use ExUnit.Case, async: true
 
   alias ReyCode.{EventStore, RuntimeConfig}
-  alias ReyCode.Orchestration.{Engine, ModelTier, WorkPlan}
+  alias ReyCode.Orchestration.{Engine, ModelTier, Projector, WorkPlan}
   alias ReyCode.Provider.{Frame, Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
   alias ReyCode.TUI.Notice
@@ -43,31 +43,38 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     def stream(%Runtime{config: %{test_pid: test_pid}}, request, emit) do
       send(test_pid, {:provider_round, request.invocation_id, request.round_index})
 
-      case {directive(request), request.round_index} do
-        {"question", 0} ->
-          initialize_plan()
+      respond(directive(request), request.round_index, test_pid, request, emit)
+    end
 
-        {"question", 1} ->
-          complete_first_item()
+    defp respond("question", 0, _test_pid, _request, _emit), do: initialize_plan()
+    defp respond("question", 1, _test_pid, _request, _emit), do: complete_first_item()
+    defp respond("question", 2, _test_pid, _request, _emit), do: ask_operator()
 
-        {"question", 2} ->
-          ask_operator()
+    defp respond("question", 3, test_pid, request, emit),
+      do: finish_after_answer(test_pid, request, emit)
 
-        {"question", 3} ->
-          finish_after_answer(test_pid, request, emit)
+    defp respond("grouped", 0, _test_pid, _request, _emit), do: ask_grouped()
 
-        {"budget", 0} ->
-          budget_consuming_round()
+    defp respond("grouped", 1, test_pid, request, emit),
+      do: finish_after_grouped_answer(test_pid, request, emit)
 
-        {"budget", 1} ->
-          :ok = emit.(Frame.text_delta(request.resume_from + 1, "Finished beyond the old cap"))
+    defp respond("reject", 0, _test_pid, _request, _emit), do: ask_rejectable()
 
-          {:ok,
-           Response.new(text: "Finished beyond the old cap", usage: %{"total_tokens" => 300_000})}
+    defp respond("reject", 1, test_pid, request, emit),
+      do: finish_after_rejection(test_pid, request, emit)
 
-        other ->
-          {:error, ReyCode.Failure.new(:internal, "unexpected Tier Two round #{inspect(other)}")}
-      end
+    defp respond("budget", 0, _test_pid, _request, _emit), do: budget_consuming_round()
+
+    defp respond("budget", 1, _test_pid, request, emit) do
+      :ok = emit.(Frame.text_delta(request.resume_from + 1, "Finished beyond the old cap"))
+
+      {:ok,
+       Response.new(text: "Finished beyond the old cap", usage: %{"total_tokens" => 300_000})}
+    end
+
+    defp respond(directive, round_index, _test_pid, _request, _emit) do
+      unexpected = {directive, round_index}
+      {:error, ReyCode.Failure.new(:internal, "unexpected Tier Two round #{inspect(unexpected)}")}
     end
 
     defp initialize_plan do
@@ -116,6 +123,47 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
        )}
     end
 
+    defp ask_grouped do
+      {:ok,
+       Response.new(
+         tool_calls: [
+           ToolCall.new("ask-grouped", "ask_operator", %{
+             "questions" => [
+               %{
+                 "header" => "Database",
+                 "question" => "Which database?",
+                 "options" => [%{"label" => "SQLite"}, %{"label" => "Postgres"}]
+               },
+               %{
+                 "header" => "Region",
+                 "question" => "Which region?",
+                 "options" => [%{"label" => "East"}, %{"label" => "West"}]
+               }
+             ]
+           })
+         ],
+         usage: %{"total_tokens" => 100}
+       )}
+    end
+
+    defp ask_rejectable do
+      {:ok,
+       Response.new(
+         tool_calls: [
+           ToolCall.new("ask-reject", "ask_operator", %{
+             "questions" => [
+               %{
+                 "header" => "Release",
+                 "question" => "Release now?",
+                 "options" => [%{"label" => "Yes"}, %{"label" => "No"}]
+               }
+             ]
+           })
+         ],
+         usage: %{"total_tokens" => 100}
+       )}
+    end
+
     defp finish_after_answer(test_pid, request, emit) do
       answer =
         request
@@ -128,6 +176,28 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
       send(test_pid, {:selected_option, selected})
       :ok = emit.(Frame.text_delta(request.resume_from + 1, "finished with #{selected}"))
       {:ok, Response.new(text: "finished with #{selected}", usage: %{"total_tokens" => 100})}
+    end
+
+    defp finish_after_grouped_answer(test_pid, request, emit) do
+      answer = decoded_tool_output(request)
+      send(test_pid, {:grouped_answers, answer["answers"]})
+      :ok = emit.(Frame.text_delta(request.resume_from + 1, "finished grouped"))
+      {:ok, Response.new(text: "finished grouped", usage: %{"total_tokens" => 100})}
+    end
+
+    defp finish_after_rejection(test_pid, request, emit) do
+      answer = decoded_tool_output(request)
+      send(test_pid, {:rejected_question, answer})
+      :ok = emit.(Frame.text_delta(request.resume_from + 1, "continued after rejection"))
+      {:ok, Response.new(text: "continued after rejection", usage: %{"total_tokens" => 100})}
+    end
+
+    defp decoded_tool_output(request) do
+      request
+      |> latest_tool_content()
+      |> Jason.decode!()
+      |> Map.fetch!("output")
+      |> Jason.decode!()
     end
 
     defp budget_consuming_round do
@@ -145,8 +215,12 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
 
     defp directive(request) do
       Enum.find_value(request.messages, fn
-        %{role: :user, content: content} when content in ["question", "budget"] -> content
-        _other -> nil
+        %{role: :user, content: content}
+        when content in ["question", "grouped", "reject", "budget"] ->
+          content
+
+        _other ->
+          nil
       end)
     end
 
@@ -202,7 +276,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     session = Engine.snapshot(@engine).sessions[session_id]
     primary = Enum.find(session.participants, &(&1.kind == :primary))
     :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
-    %{session_id: session_id, primary_id: primary.id}
+    %{session_id: session_id, primary_id: primary.id, store: store}
   end
 
   test "question pauses one Invocation, Plan remains durable, and answer resumes", %{
@@ -230,27 +304,26 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
              pending: "Test"
            ]
 
-    question = invocation.coordination.pending_question
-
     term = %Breeze.Term{
       assigns: %{
         engine: @engine,
-        modal: :operator_question,
+        modal: nil,
         notice: nil,
-        operator_question: %{
-          QuestionModal.initial()
-          | invocation_id: invocation.id,
-            question_id: question.id,
-            selected_ids: ["option-0"]
-        },
-        projection: Engine.snapshot(@engine)
+        operator_question: QuestionModal.initial(),
+        projection: Engine.snapshot(@engine),
+        selected_session_id: session_id,
+        slash: nil,
+        drafts: %{session_id => "preserved draft"}
       }
     }
 
-    assert {:noreply, answered} = QuestionModal.handle_input("Enter", term)
+    opened = QuestionModal.open(term)
+    assert opened.assigns.drafts[session_id] == "preserved draft"
+    assert {:noreply, review} = QuestionModal.handle_input("1", opened)
+    assert {:noreply, answered} = QuestionModal.handle_input("Enter", review)
     assert %Notice{severity: :success} = answered.assigns.notice
-    assert {:noreply, stale} = QuestionModal.submit(term)
-    assert %Notice{severity: :error} = stale.assigns.notice
+    assert {:noreply, stale} = QuestionModal.handle_input("Enter", review)
+    assert %Notice{severity: :info} = stale.assigns.notice
     Wait.terminal_turn(@engine, turn_id)
     assert_receive {:selected_option, "Safe"}, 5_000
 
@@ -278,6 +351,128 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     assert_receive {:provider_round, ^invocation_id, 0}, 5_000
     assert_receive {:provider_round, ^invocation_id, 1}, 5_000
     assert ModelTier.used_tokens(invocation) == 550_000
+  end
+
+  test "grouped answers complete one ToolRun atomically and resume in frozen order", %{
+    session_id: session_id,
+    store: store
+  } do
+    {:ok, turn_id} = Engine.post_message(session_id, "grouped", :direct, @engine)
+    invocation = waiting_invocation(turn_id)
+    request = invocation.coordination.pending_question
+
+    assert Enum.map(request.questions, & &1.id) == ["question-0", "question-1"]
+    assert length(invocation.tool_run_order) == 1
+
+    assert :ok =
+             Engine.answer_question(
+               invocation.id,
+               request.id,
+               %{
+                 "answers" => [
+                   %{"question_id" => "question-1", "option_ids" => ["option-1"]},
+                   %{"question_id" => "question-0", "option_ids" => ["option-0"]}
+                 ]
+               },
+               @engine
+             )
+
+    Wait.terminal_turn(@engine, turn_id)
+
+    assert_receive {:grouped_answers, answers}, 5_000
+    assert Enum.map(answers, & &1["question_id"]) == ["question-0", "question-1"]
+    assert Enum.map(answers, & &1["labels"]) == [["SQLite"], ["West"]]
+
+    final = Engine.snapshot(@engine).invocations[invocation.id]
+    assert final.coordination.pending_question == nil
+    assert [run_id] = final.tool_run_order
+    assert final.tool_runs[run_id].status == :completed
+
+    events = EventStore.load(store)
+    answered_event = Enum.find(events, &(&1.type == :operator_question_answered))
+
+    assert Enum.map(answered_event.data["answers"], & &1["question_id"]) == [
+             "question-0",
+             "question-1"
+           ]
+
+    assert Projector.replay(events) == Engine.snapshot(@engine)
+
+    wrong_run = %{answered_event | data: Map.put(answered_event.data, "tool_run_id", "run-other")}
+    tampered = Enum.map(events, &if(&1.id == answered_event.id, do: wrong_run, else: &1))
+
+    assert_raise ArgumentError, ~r/invalid grouped OperatorQuestion answer event/, fn ->
+      Projector.replay(tampered)
+    end
+  end
+
+  test "question rejection completes the ToolRun, resumes, and rejects stale commands", %{
+    session_id: session_id,
+    store: store
+  } do
+    {:ok, turn_id} = Engine.post_message(session_id, "reject", :direct, @engine)
+    invocation = waiting_invocation(turn_id)
+    request = invocation.coordination.pending_question
+
+    term = %Breeze.Term{
+      assigns: %{
+        engine: @engine,
+        modal: nil,
+        notice: nil,
+        operator_question: QuestionModal.initial(),
+        projection: Engine.snapshot(@engine),
+        selected_session_id: session_id,
+        slash: nil,
+        drafts: %{}
+      }
+    }
+
+    opened = QuestionModal.open(term)
+
+    assert {:error, :stale_question} =
+             Engine.reject_question(invocation.id, "stale-request", @engine)
+
+    assert {:noreply, rejected_term} = QuestionModal.handle_input("Escape", opened)
+    assert %Notice{severity: :info, message: "Question rejected"} = rejected_term.assigns.notice
+
+    assert {:error, :question_not_found} =
+             Engine.reject_question(invocation.id, request.id, @engine)
+
+    Wait.terminal_turn(@engine, turn_id)
+    assert_receive {:rejected_question, %{"rejected" => true}}, 5_000
+
+    final = Engine.snapshot(@engine).invocations[invocation.id]
+    [run_id] = final.tool_run_order
+    assert final.tool_runs[run_id].result["output"] == ~s({"rejected":true})
+
+    events = EventStore.load(store)
+    rejected = Enum.find_index(events, &(&1.type == :operator_question_rejected))
+    completed = Enum.find_index(events, &(&1.type == :tool_run_completed))
+    assert completed == rejected + 1
+
+    assert Enum.find(events, &(&1.type == :operator_question_rejected)).data["request_id"] ==
+             request.id
+
+    assert Projector.replay(events) == Engine.snapshot(@engine)
+
+    rejected_event = Enum.find(events, &(&1.type == :operator_question_rejected))
+
+    wrong_run =
+      %{rejected_event | data: Map.put(rejected_event.data, "tool_run_id", "run-other")}
+
+    tampered = Enum.map(events, &if(&1.id == rejected_event.id, do: wrong_run, else: &1))
+
+    assert_raise ArgumentError, ~r/invalid OperatorQuestion rejection event/, fn ->
+      Projector.replay(tampered)
+    end
+  end
+
+  defp waiting_invocation(turn_id) do
+    Wait.projection(@engine, fn projection ->
+      projection.turns[turn_id].invocation_order
+      |> Enum.map(&projection.invocations[&1])
+      |> Enum.find(&(&1.status == :waiting_operator))
+    end)
   end
 
   defp statuses(plan) do

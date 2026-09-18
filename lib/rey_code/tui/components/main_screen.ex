@@ -5,6 +5,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   import Breeze.Blocks
 
   import ReyCode.TUI.Components.MainScreen.Timeline, only: [timeline: 1]
+  import ReyCode.TUI.OperatorQuestion, only: [question_panel: 1]
 
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Action, Activity, Cancellation, Notice, State, Verification}
@@ -14,6 +15,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :mode, :atom, required: true
   attr :session, :map, required: true
   attr :projection, :map, required: true
+  attr :selected_session_id, :string, required: true
+  attr :operator_question, :map, required: true
   attr :providers, :map, required: true
   attr :messages, :list, required: true
   attr :activity, :map, required: true
@@ -32,7 +35,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   def main_screen(assigns) do
     ~H"""
-    <box :if={@modal in [nil, :slash]} class="w-screen h-screen bg">
+    <box :if={@modal in [nil, :slash, :operator_question]} class="w-screen h-screen bg">
       <box class={content_class(@home)}>
         <.home_panel
           :if={@home}
@@ -65,6 +68,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           text_selection={@text_selection}
         />
         <.composer
+          :if={@modal != :operator_question}
           modal={@modal}
           terminal_height={@terminal_height}
           session={@session}
@@ -72,6 +76,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           notice={@notice}
           composer_status={@composer_status}
         />
+        <.question_panel :if={@modal == :operator_question} term={assigns}/>
         <.slash_palette
           modal={@modal}
           slash_rows={@slash_rows}

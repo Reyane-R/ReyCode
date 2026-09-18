@@ -897,8 +897,18 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert spawn_tasks["function"]["parameters"]["properties"]["tasks"]["maxItems"] == 8
       assert spawn_tasks["function"]["parameters"]["properties"]["integrator"]
       assert send_peer["function"]["parameters"]["required"] == ["target", "body"]
-      assert ask_operator["function"]["parameters"]["properties"]["options"]["minItems"] == 2
-      assert ask_operator["function"]["parameters"]["properties"]["options"]["maxItems"] == 5
+      ask_parameters = ask_operator["function"]["parameters"]
+      assert ask_parameters["required"] == ["questions"]
+      assert Map.keys(ask_parameters["properties"]) == ["questions"]
+      assert ask_parameters["properties"]["questions"]["minItems"] == 1
+      assert ask_parameters["properties"]["questions"]["maxItems"] == 4
+
+      question_schema = ask_parameters["properties"]["questions"]["items"]
+      assert question_schema["required"] == ["header", "question", "options"]
+      assert question_schema["properties"]["header"]["maxLength"] == 80
+      assert question_schema["properties"]["options"]["minItems"] == 2
+      assert question_schema["properties"]["options"]["maxItems"] == 5
+      assert ask_operator["function"]["description"] =~ "one to four ordered"
 
       assert update_plan["function"]["parameters"]["properties"]["action"]["enum"] ==
                ["init", "start", "done", "block", "unblock", "drop"]

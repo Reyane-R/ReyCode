@@ -1,7 +1,7 @@
 defmodule ReyCode.Orchestration.InvocationCoordination do
   @moduledoc "Durable human, peer, and WorkPlan coordination state for one Invocation."
 
-  alias ReyCode.Orchestration.{OperatorQuestion, PeerMessage, WorkPlan}
+  alias ReyCode.Orchestration.{OperatorQuestion, OperatorQuestions, PeerMessage, WorkPlan}
 
   @fields [:peer_messages, :pending_question, :work_plan]
   defstruct peer_messages: [], pending_question: nil, work_plan: nil
@@ -29,5 +29,5 @@ defmodule ReyCode.Orchestration.InvocationCoordination do
   end
 
   defp optional_question(nil), do: nil
-  defp optional_question(question), do: OperatorQuestion.from_map(question)
+  defp optional_question(question), do: OperatorQuestions.restore!(question)
 end

@@ -409,6 +409,11 @@ defmodule ReyCode.Orchestration.RecoveryTest do
       asked_at: DateTime.utc_now() |> DateTime.to_iso8601()
     }
 
+    {asked_type, asked_data, asked_metadata} =
+      EventEntries.operator_question_asked(invocation, question)
+
+    historical_asked = {asked_type, Map.delete(asked_data, "questions"), asked_metadata}
+
     entries =
       [
         EventEntries.session_created(
@@ -445,11 +450,12 @@ defmodule ReyCode.Orchestration.RecoveryTest do
           EventEntries.invocation_started(invocation),
           EventEntries.tool_run_requested(invocation, run),
           EventEntries.tool_run_started(invocation, run),
-          EventEntries.operator_question_asked(invocation, question)
+          historical_asked
         ]
 
     assert {:ok, _events} = EventStore.append_many(entries, store)
     pre_boot = EventStore.load(store)
+    assert :ok = EventStore.checkpoint(Projector.replay(pre_boot), store)
 
     start_supervised!(
       {Engine,
@@ -467,6 +473,10 @@ defmodule ReyCode.Orchestration.RecoveryTest do
 
     assert recovered.status == :waiting_operator
     assert recovered.coordination.pending_question.id == question.id
+
+    assert [%{id: "question-0", header: "Question"}] =
+             recovered.coordination.pending_question.questions
+
     assert recovered.tool_runs[run.id].status == :running
     assert snapshot.sessions[session_id].active_turn_id == turn_id
     assert Registry.lookup(@agent_registry, invocation_id) == []

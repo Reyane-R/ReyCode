@@ -18,7 +18,7 @@ defmodule ReyCode.Orchestration.Projector do
     Message,
     Mode,
     ModelTier,
-    OperatorQuestion,
+    OperatorQuestions,
     Participant,
     PeerMessage,
     Projection,
@@ -539,24 +539,18 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :operator_question_asked, data: data} = event, state) do
-    question = %OperatorQuestion{
-      id: data["question_id"],
-      tool_run_id: data["tool_run_id"],
-      question: data["question"],
-      options:
-        Enum.map(data["options"], fn option ->
-          %{
-            id: option["id"],
-            label: option["label"],
-            description: option["description"] || "",
-            preview: option["preview"] || ""
-          }
-        end),
-      recommended_id: data["recommended_id"],
-      multi?: data["multi"] == true,
-      allow_other?: data["allow_other"] == true,
-      asked_at: event.recorded_at
-    }
+    question =
+      OperatorQuestions.restore!(%{
+        id: data["question_id"],
+        tool_run_id: data["tool_run_id"],
+        questions: data["questions"] || [],
+        question: data["question"],
+        options: data["options"],
+        recommended_id: data["recommended_id"],
+        multi?: data["multi"] == true,
+        allow_other?: data["allow_other"] == true,
+        asked_at: event.recorded_at
+      })
 
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
@@ -569,6 +563,17 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :operator_question_answered, data: data} = event, state) do
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
+      validate_grouped_answers!(invocation, data)
+      coordination = %{invocation.coordination | pending_question: nil}
+      %{invocation | status: :queued, coordination: coordination}
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :operator_question_rejected, data: data} = event, state) do
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      validate_rejected_request!(invocation, data)
       coordination = %{invocation.coordination | pending_question: nil}
       %{invocation | status: :queued, coordination: coordination}
     end)
@@ -847,6 +852,40 @@ defmodule ReyCode.Orchestration.Projector do
 
   # Snapshots written before durable tool runs lack the rounds/tool-run
   # invocation fields; backfill them so recovery code can rely on the shape.
+  defp validate_grouped_answers!(invocation, %{"answers" => answers} = data) do
+    question = invocation.coordination.pending_question
+
+    submitted =
+      Enum.map(answers, fn answer ->
+        Map.take(answer, ["question_id", "option_ids", "other"])
+      end)
+
+    with %{id: request_id, tool_run_id: tool_run_id} <- question,
+         true <- request_id == data["question_id"],
+         true <- tool_run_id == data["tool_run_id"],
+         {:ok, resolution} <- OperatorQuestions.resolve(question, %{"answers" => submitted}),
+         true <- Enum.map(resolution.answers, &OperatorQuestions.answer_to_wire/1) == answers do
+      :ok
+    else
+      _invalid -> raise ArgumentError, "invalid grouped OperatorQuestion answer event"
+    end
+  end
+
+  defp validate_grouped_answers!(_invocation, _legacy_data), do: :ok
+
+  defp validate_rejected_request!(invocation, data) do
+    request_id = data["request_id"]
+    tool_run_id = data["tool_run_id"]
+
+    case invocation.coordination.pending_question do
+      %{id: ^request_id, tool_run_id: ^tool_run_id} ->
+        :ok
+
+      _invalid ->
+        raise ArgumentError, "invalid OperatorQuestion rejection event"
+    end
+  end
+
   defp normalize_snapshot(state), do: Projection.from_map(state)
 
   @doc "Applies a provider frame payload to the projection without advancing the sequence."

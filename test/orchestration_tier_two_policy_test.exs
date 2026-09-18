@@ -53,6 +53,7 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
       OperatorQuestion.from_map(%{
         id: wire["question_id"],
         tool_run_id: wire["tool_run_id"],
+        questions: wire["questions"],
         question: wire["question"],
         options: wire["options"],
         recommended_id: wire["recommended_id"],
@@ -70,6 +71,205 @@ defmodule ReyCode.Orchestration.TierTwoPolicyTest do
                "run-2",
                "now"
              )
+  end
+
+  test "OperatorQuestion freezes grouped questions and resolves answers in child order" do
+    arguments = %{
+      "questions" => [
+        %{
+          "header" => "Database",
+          "question" => "Which database?",
+          "options" => [%{"label" => "SQLite"}, %{"label" => "Postgres"}],
+          "recommended" => 0
+        },
+        %{
+          "header" => "Deployment",
+          "question" => "Which deployment?",
+          "options" => [%{"label" => "Local"}, %{"label" => "Cloud"}],
+          "allow_other" => true
+        }
+      ]
+    }
+
+    assert {:ok, question} =
+             OperatorQuestions.build(arguments, "request-1", "run-1", "now")
+
+    assert Enum.map(question.questions, &{&1.id, &1.header}) == [
+             {"question-0", "Database"},
+             {"question-1", "Deployment"}
+           ]
+
+    assert question.question == "Which database?"
+    assert question.options == hd(question.questions).options
+    assert question.recommended_id == "option-0"
+
+    assert {:ok, answer} =
+             OperatorQuestions.resolve(question, %{
+               "answers" => [
+                 %{
+                   "question_id" => "question-1",
+                   "option_ids" => [],
+                   "other" => "Fly.io"
+                 },
+                 %{
+                   "question_id" => "question-0",
+                   "option_ids" => ["option-1"]
+                 }
+               ]
+             })
+
+    assert Enum.map(answer.answers, & &1.question_id) == ["question-0", "question-1"]
+    assert Enum.map(answer.answers, & &1.labels) == [["Postgres"], []]
+    assert List.last(answer.answers).other == "Fly.io"
+    assert answer.labels == ["Postgres"]
+
+    assert OperatorQuestion.from_map(question) == question
+    assert OperatorQuestion.from_map(Map.from_struct(question)) == question
+  end
+
+  test "OperatorQuestion grouped arguments and answers fail closed" do
+    item = %{
+      "header" => "Choice",
+      "question" => "Choose",
+      "options" => [%{"label" => "One"}, %{"label" => "Two"}]
+    }
+
+    assert {:error, :invalid_question_arguments} =
+             OperatorQuestions.build(
+               %{"questions" => [item], "question" => "mixed"},
+               "request",
+               "run",
+               "now"
+             )
+
+    assert {:error, :invalid_question_arguments} =
+             OperatorQuestions.build(
+               %{"questions" => [Map.put(item, "unknown", true)]},
+               "request",
+               "run",
+               "now"
+             )
+
+    assert {:error, :invalid_question_arguments} =
+             OperatorQuestions.build(
+               %{"questions" => List.duplicate(item, 5)},
+               "request",
+               "run",
+               "now"
+             )
+
+    assert {:error, :invalid_question_arguments} =
+             OperatorQuestions.build(
+               %{"questions" => [%{item | "header" => String.duplicate("h", 81)}]},
+               "request",
+               "run",
+               "now"
+             )
+
+    assert {:ok, question} =
+             OperatorQuestions.build(
+               %{"questions" => [item, %{item | "header" => "Second"}]},
+               "request",
+               "run",
+               "now"
+             )
+
+    valid = [
+      %{"question_id" => "question-0", "option_ids" => ["option-0"]},
+      %{"question_id" => "question-1", "option_ids" => ["option-1"]}
+    ]
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, %{"answers" => tl(valid)})
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, %{"answers" => [hd(valid), hd(valid)]})
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, %{
+               "answers" => [hd(valid), Map.put(List.last(valid), "unknown", true)]
+             })
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, "option-0")
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, %{
+               "answers" => [
+                 %{hd(valid) | "option_ids" => List.duplicate("option-0", 6)},
+                 List.last(valid)
+               ]
+             })
+
+    assert {:error, :invalid_question_selection} =
+             OperatorQuestions.resolve(question, %{
+               "answers" => [
+                 hd(valid),
+                 Map.merge(List.last(valid), %{"option_ids" => [], "other" => <<255>>})
+               ]
+             })
+  end
+
+  test "durable OperatorQuestion envelopes restore only within frozen bounds" do
+    assert {:ok, question} =
+             OperatorQuestions.build(
+               %{
+                 "questions" => [
+                   %{
+                     "header" => "Choice",
+                     "question" => "Choose",
+                     "options" => [%{"label" => "One"}, %{"label" => "Two"}]
+                   }
+                 ]
+               },
+               "request",
+               "run",
+               "now"
+             )
+
+    assert {:ok, restored} = OperatorQuestions.restore(Map.from_struct(question))
+    assert restored == question
+
+    duplicate = %{hd(question.questions) | id: "question-1"}
+    one_option = %{hd(question.questions) | options: [hd(hd(question.questions).options)]}
+
+    assert {:error, :invalid_question_arguments} =
+             OperatorQuestions.restore(%{
+               Map.from_struct(question)
+               | questions: [duplicate, duplicate]
+             })
+
+    assert {:error, :invalid_question_arguments} =
+             OperatorQuestions.restore(%{
+               Map.from_struct(question)
+               | questions: List.duplicate(hd(question.questions), 5)
+             })
+
+    assert {:error, :invalid_question_arguments} =
+             OperatorQuestions.restore(%{Map.from_struct(question) | questions: [one_option]})
+  end
+
+  test "historical singular question maps normalize to singleton groups" do
+    historical = %{
+      id: "request-legacy",
+      tool_run_id: "run-legacy",
+      question: "Proceed?",
+      options: [
+        %{id: "option-0", label: "Yes", description: "", preview: ""},
+        %{id: "option-1", label: "No", description: "", preview: ""}
+      ],
+      recommended_id: nil,
+      multi?: false,
+      allow_other?: false,
+      asked_at: "then"
+    }
+
+    question = OperatorQuestion.from_map(historical)
+    assert [%{id: "question-0", header: "Question", question: "Proceed?"}] = question.questions
+    assert question.legacy_singular?
+    assert {:ok, restored} = OperatorQuestions.restore(Map.from_struct(question))
+    assert restored.legacy_singular?
+    assert OperatorQuestion.to_wire(question)["questions"] |> length() == 1
   end
 
   test "WorkPlan auto-promotes, blocks, unblocks, completes, and drops deterministically" do
