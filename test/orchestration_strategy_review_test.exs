@@ -23,7 +23,7 @@ defmodule ReyCode.Orchestration.StrategyReviewTest do
 
     @impl true
     def handle_call({action, _provider, _model}, _from, test_pid)
-        when action in [:resolve, :resolve_when_ready] do
+        when action in [:resolve, :resolve_when_ready, :resolve_continuation] do
       {:reply,
        {:ok,
         %Runtime{

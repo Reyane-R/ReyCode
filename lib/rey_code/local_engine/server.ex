@@ -344,6 +344,9 @@ defmodule ReyCode.LocalEngine.Server do
               elem(request, 0) in [:resolve, :resolve_when_ready],
        do: GenServer.call(services.catalog, request, 20_000)
 
+  defp dispatch(:catalog, {:resolve_continuation, _provider, nil} = request, services),
+    do: GenServer.call(services.catalog, request, 20_000)
+
   defp dispatch(:credentials, {action, key} = request, services)
        when action in [:fetch, :remove] and is_binary(key) do
     if credential_name?(key),

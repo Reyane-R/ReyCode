@@ -36,6 +36,7 @@ defmodule ReyCode.Provider.CatalogTest do
     for provider <- [:opencode, :omp, :open_code, "opencode", "omp", "open_code"] do
       assert {:error, :unknown_provider} = Catalog.resolve(provider, "any-model", catalog)
       assert {:error, :unknown_provider} = Catalog.resolve_when_ready(provider, nil, catalog)
+      assert {:error, :unknown_provider} = Catalog.resolve_continuation(provider, catalog)
     end
 
     assert Enum.sort(Map.keys(Catalog.snapshot(catalog).providers)) ==
@@ -91,6 +92,10 @@ defmodule ReyCode.Provider.CatalogTest do
     assert status?(catalog, :deepseek, :error)
     assert status?(catalog, :ollama, :error)
     assert status?(catalog, :lmstudio, :configured)
+    assert {:error, :error} = Catalog.resolve(:deepseek, "deepseek-chat", catalog)
+
+    assert {:ok, %Runtime{provider_id: :deepseek, status: :error}} =
+             Catalog.resolve_continuation(:deepseek, catalog)
   end
 
   test "a hung API does not block another API or its readiness waiters" do

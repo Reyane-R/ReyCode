@@ -17,7 +17,7 @@ defmodule ReyCode.LocalEngineTest do
     def handle_call(:snapshot, _from, state), do: {:reply, state, state}
 
     def handle_call({action, _provider, _model}, _from, state)
-        when action in [:resolve, :resolve_when_ready],
+        when action in [:resolve, :resolve_when_ready, :resolve_continuation],
         do:
           {:reply,
            {:ok,
@@ -185,6 +185,12 @@ defmodule ReyCode.LocalEngineTest do
 
     assert {:ok, %{status: :available}} =
              ProviderCatalog.resolve_when_ready(:zai, "glm", peer.catalog)
+
+    assert {:ok, %{status: :available}} =
+             ProviderCatalog.resolve_continuation(:zai, peer.catalog)
+
+    assert {:error, :unsupported_engine_operation} =
+             GenServer.call(peer.catalog, {:resolve_continuation, :zai, "unexpected"})
 
     assert :ok = Credentials.remember("TEST_KEY", "test-value", false, peer.credentials)
     assert Credentials.known?("TEST_KEY", peer.credentials)

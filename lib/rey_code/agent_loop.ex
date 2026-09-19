@@ -65,11 +65,7 @@ defmodule ReyCode.AgentLoop do
   end
 
   defp stream_round(state, request) do
-    case Catalog.resolve_when_ready(
-           state.provider,
-           request.participant.model,
-           state.provider_catalog
-         ) do
+    case resolve_runtime(state, request) do
       {:ok, runtime} ->
         :ok = Client.invocation_started(state.engine, state.invocation_id)
 
@@ -87,6 +83,17 @@ defmodule ReyCode.AgentLoop do
         {:stop, state}
     end
   end
+
+  defp resolve_runtime(state, %{round_index: 0} = request) do
+    Catalog.resolve_when_ready(
+      state.provider,
+      request.participant.model,
+      state.provider_catalog
+    )
+  end
+
+  defp resolve_runtime(state, _request),
+    do: Catalog.resolve_continuation(state.provider, state.provider_catalog)
 
   defp record_round(state, request, response) do
     case Client.record_round(

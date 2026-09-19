@@ -18,20 +18,38 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     alias ReyCode.Provider.Runtime
 
     def start_link(test_pid), do: GenServer.start_link(__MODULE__, test_pid)
+    def fail(server), do: GenServer.call(server, :fail)
 
     @impl true
-    def init(test_pid), do: {:ok, test_pid}
+    def init(test_pid), do: {:ok, %{available?: true, test_pid: test_pid}}
 
     @impl true
-    def handle_call({action, _provider, _model}, _from, test_pid)
-        when action in [:resolve, :resolve_when_ready] do
+    def handle_call(:fail, _from, state), do: {:reply, :ok, %{state | available?: false}}
+
+    @impl true
+    def handle_call({action, _provider, _model}, _from, %{available?: true} = state)
+        when action in [:resolve, :resolve_when_ready, :resolve_continuation] do
       runtime = %Runtime{
         module: ReyCode.Orchestration.TierTwoInteractionTest.Provider,
         status: :available,
-        config: %{test_pid: test_pid}
+        config: %{test_pid: state.test_pid}
       }
 
-      {:reply, {:ok, runtime}, test_pid}
+      {:reply, {:ok, runtime}, state}
+    end
+
+    def handle_call({action, _provider, _model}, _from, state)
+        when action in [:resolve, :resolve_when_ready],
+        do: {:reply, {:error, :error}, state}
+
+    def handle_call({:resolve_continuation, _provider, nil}, _from, state) do
+      runtime = %Runtime{
+        module: ReyCode.Orchestration.TierTwoInteractionTest.Provider,
+        status: :error,
+        config: %{test_pid: state.test_pid}
+      }
+
+      {:reply, {:ok, runtime}, state}
     end
   end
 
@@ -51,6 +69,12 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     defp respond("question", 2, _test_pid, _request, _emit), do: ask_operator()
 
     defp respond("question", 3, test_pid, request, emit),
+      do: finish_after_answer(test_pid, request, emit)
+
+    defp respond("catalog-failure", 0, _test_pid, _request, _emit),
+      do: ask_operator_then_plan()
+
+    defp respond("catalog-failure", 1, test_pid, request, emit),
       do: finish_after_answer(test_pid, request, emit)
 
     defp respond("grouped", 0, _test_pid, _request, _emit), do: ask_grouped()
@@ -109,18 +133,34 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     defp ask_operator do
       {:ok,
        Response.new(
+         tool_calls: [operator_question_call()],
+         usage: %{"total_tokens" => 100}
+       )}
+    end
+
+    defp ask_operator_then_plan do
+      {:ok,
+       Response.new(
          tool_calls: [
-           ToolCall.new("ask", "ask_operator", %{
-             "question" => "Which implementation path?",
-             "options" => [
-               %{"label" => "Safe", "description" => "Preserve compatibility"},
-               %{"label" => "Fast", "description" => "Prefer speed"}
-             ],
-             "recommended" => 0
+           operator_question_call(),
+           ToolCall.new("plan-after-answer", "update_plan", %{
+             "action" => "init",
+             "phases" => [%{"name" => "After answer", "items" => ["Continue"]}]
            })
          ],
          usage: %{"total_tokens" => 100}
        )}
+    end
+
+    defp operator_question_call do
+      ToolCall.new("ask", "ask_operator", %{
+        "question" => "Which implementation path?",
+        "options" => [
+          %{"label" => "Safe", "description" => "Preserve compatibility"},
+          %{"label" => "Fast", "description" => "Prefer speed"}
+        ],
+        "recommended" => 0
+      })
     end
 
     defp ask_grouped do
@@ -216,7 +256,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     defp directive(request) do
       Enum.find_value(request.messages, fn
         %{role: :user, content: content}
-        when content in ["question", "grouped", "reject", "budget"] ->
+        when content in ["question", "catalog-failure", "grouped", "reject", "budget"] ->
           content
 
         _other ->
@@ -276,7 +316,7 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     session = Engine.snapshot(@engine).sessions[session_id]
     primary = Enum.find(session.participants, &(&1.kind == :primary))
     :ok = Engine.configure_participants(session_id, [primary.id], :simulator, nil, @engine)
-    %{session_id: session_id, primary_id: primary.id, store: store}
+    %{catalog: catalog, session_id: session_id, primary_id: primary.id, store: store}
   end
 
   test "question pauses one Invocation, Plan remains durable, and answer resumes", %{
@@ -330,6 +370,36 @@ defmodule ReyCode.Orchestration.TierTwoInteractionTest do
     final = Engine.snapshot(@engine).invocations[invocation.id]
     assert final.coordination.pending_question == nil
     assert final.coordination.work_plan.updated_at != ""
+  end
+
+  test "question continuation survives a later catalog discovery failure", %{
+    catalog: catalog,
+    session_id: session_id
+  } do
+    {:ok, turn_id} = Engine.post_message(session_id, "catalog-failure", :direct, @engine)
+    invocation = waiting_invocation(turn_id)
+    request = invocation.coordination.pending_question
+
+    assert :ok = Catalog.fail(catalog)
+
+    assert :ok =
+             Engine.answer_question(
+               invocation.id,
+               request.id,
+               hd(request.options).id,
+               @engine
+             )
+
+    Wait.terminal_turn(@engine, turn_id)
+    final = Engine.snapshot(@engine).invocations[invocation.id]
+
+    after_answer =
+      Enum.find(Map.values(final.tool_runs), &(&1.tool_call_id == "plan-after-answer"))
+
+    assert after_answer.status == :completed
+    assert final.status == :completed
+    assert final.error == nil
+    assert_receive {:selected_option, "Safe"}, 5_000
   end
 
   test "usage beyond all former tier caps does not stop another provider round", %{

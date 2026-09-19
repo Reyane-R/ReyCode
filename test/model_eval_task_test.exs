@@ -24,13 +24,13 @@ defmodule ReyCode.ModelEvalTaskTest do
 
     @impl true
     def handle_call({action, provider, _model}, _from, test_pid)
-        when action in [:resolve, :resolve_when_ready] and
+        when action in [:resolve, :resolve_when_ready, :resolve_continuation] and
                provider in [:unconfigured, "unconfigured"] do
       {:reply, {:error, :unknown_provider}, test_pid}
     end
 
     def handle_call({action, _provider, _model}, _from, test_pid)
-        when action in [:resolve, :resolve_when_ready] do
+        when action in [:resolve, :resolve_when_ready, :resolve_continuation] do
       if action == :resolve_when_ready, do: send(test_pid, :resolve_when_ready)
 
       runtime = %Runtime{

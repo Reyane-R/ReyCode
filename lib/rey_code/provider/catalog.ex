@@ -11,6 +11,9 @@ defmodule ReyCode.Provider.Catalog do
   `resolve_when_ready/3` replies when the requested provider settles rather
   than when a whole refresh round ends, and therefore uses an intentional
   infinite call timeout; task/probe policy bounds the physical work.
+  An already-admitted Invocation can rebuild its runtime for later rounds
+  without letting an unrelated discovery failure invalidate durable work.
+  The provider adapter still checks credentials and request availability.
   Missing, checking, unavailable, and invalid-model states return stable
   tagged reasons.
   """
@@ -75,6 +78,13 @@ defmodule ReyCode.Provider.Catalog do
           {:ok, Runtime.t()} | {:error, atom()}
   def resolve_when_ready(provider, model, server \\ __MODULE__) do
     GenServer.call(server, {:resolve_when_ready, provider, model}, :infinity)
+  end
+
+  @doc "Rebuilds the runtime for an Invocation that already passed provider admission."
+  @spec resolve_continuation(atom() | String.t(), GenServer.server()) ::
+          {:ok, Runtime.t()} | {:error, :unknown_provider}
+  def resolve_continuation(provider, server \\ __MODULE__) do
+    GenServer.call(server, {:resolve_continuation, provider, nil})
   end
 
   @impl true
@@ -143,6 +153,15 @@ defmodule ReyCode.Provider.Catalog do
       {:noreply, %{state | awaiters: [{from, key, model} | state.awaiters]}}
     else
       {:reply, resolve_entry(key, state.providers[key], model, state), state}
+    end
+  end
+
+  def handle_call({:resolve_continuation, provider, nil}, _from, state) do
+    key = provider_key(state.config, provider)
+
+    case state.providers[key] do
+      nil -> {:reply, {:error, :unknown_provider}, state}
+      entry -> {:reply, {:ok, runtime_from_entry(entry, state)}, state}
     end
   end
 
