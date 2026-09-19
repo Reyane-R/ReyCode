@@ -24,11 +24,11 @@ defmodule ReyCode.Provider.Keychain do
   def store(key_env, secret)
       when is_binary(key_env) and key_env != "" and is_binary(secret) do
     cond do
-      not supported?() ->
-        {:error, :keychain_unsupported}
-
       byte_size(secret) > @max_secret_bytes ->
         {:error, {:keychain_failed, "secret exceeds the #{@max_secret_bytes} byte limit"}}
+
+      not supported?() ->
+        {:error, :keychain_unsupported}
 
       true ->
         run(["add-generic-password", "-U", "-s", @service, "-a", key_env, "-w", secret])
