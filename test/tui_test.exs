@@ -1968,6 +1968,7 @@ defmodule ReyCode.TUITest do
       invocation_id: invocation.id,
       author: Author.from_participant(primary),
       role: :assistant,
+      body: Enum.map_join(1..40, "\n\n", &"Transcript line #{&1}"),
       status: :streaming
     }
 
@@ -2012,6 +2013,28 @@ defmodule ReyCode.TUITest do
     assert waiting_screen =~ "Which implementation path?"
     refute waiting_screen =~ "Message Assistant"
     refute waiting_screen =~ "Ask anything"
+
+    timeline_id = State.timeline_id(session_id)
+    assert {:noreply, ^timeline_id, true} = Breeze.ChildServer.set_focus(session.pid, timeline_id)
+
+    {Breeze.Implicit.Scroll, %{offset_y: timeline_offset}} =
+      session
+      |> Breeze.Test.metadata()
+      |> Map.fetch!(:implicit_state)
+      |> Map.fetch!(timeline_id)
+
+    assert Breeze.Test.metadata(session).assigns.operator_question.option_index == 0
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowUp")
+    assert Breeze.Test.metadata(session).assigns.operator_question.option_index == 2
+
+    assert {Breeze.Implicit.Scroll, %{offset_y: ^timeline_offset}} =
+             Map.fetch!(Breeze.Test.metadata(session).implicit_state, timeline_id)
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowDown")
+    assert Breeze.Test.metadata(session).assigns.operator_question.option_index == 0
+
+    assert {Breeze.Implicit.Scroll, %{offset_y: ^timeline_offset}} =
+             Map.fetch!(Breeze.Test.metadata(session).implicit_state, timeline_id)
 
     push_projection(session, questionless)
     assert Breeze.Test.metadata(session).assigns.modal == nil

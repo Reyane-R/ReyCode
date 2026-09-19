@@ -339,6 +339,24 @@ defmodule ReyCode.TUI do
   def render(assigns), do: assigns |> State.prepare_render() |> Render.render()
 
   @impl true
+  def intercept_input(
+        key,
+        %{assigns: %{modal: :operator_question, operator_question: %{step: :options}}} = term
+      )
+      when key in ["ArrowUp", "ArrowDown"] do
+    {:noreply, next} = OperatorQuestion.handle_input(key, term)
+    {:halt, next}
+  end
+
+  def intercept_input(
+        %{"key" => key},
+        %{assigns: %{modal: :operator_question, operator_question: %{step: :options}}} = term
+      )
+      when key in ["ArrowUp", "ArrowDown"] do
+    {:noreply, next} = OperatorQuestion.handle_input(key, term)
+    {:halt, next}
+  end
+
   def intercept_input(event, term), do: TextSelection.intercept(event, term)
 
   @impl true

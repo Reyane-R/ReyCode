@@ -82,6 +82,7 @@ defmodule ReyCode.TUI.AdvancedComponentsTest do
     assert {:noreply, other_step} = QuestionPanel.handle_input("Enter", other_row)
     assert other_step.assigns.operator_question.step == :other
     assert other_step.focused == "question-other"
+    assert {:cont, ^other_step} = ReyCode.TUI.intercept_input("ArrowUp", other_step)
 
     assert {:noreply, edited} =
              QuestionPanel.handle_event(
