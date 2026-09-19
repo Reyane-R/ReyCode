@@ -609,7 +609,8 @@ artifact and is configurable with the `REYCODE_ARTIFACT_*` settings.
 
 An OperatorQuestion may group one to four ordered questions, each with two to
 five options, descriptions, and bounded previews. The compact picker replaces
-the composer without hiding the transcript or changing its draft. Number keys,
+the composer without hiding the transcript or changing its draft, and labels
+the paused Invocation as waiting for the Operator's answer. Number keys,
 arrow keys, and mouse clicks choose options; `Space` toggles multi-select
 options; left/right or Tab changes question tabs; and the Other row accepts
 bounded custom text. Review confirms all answers atomically. `[` and `]` switch

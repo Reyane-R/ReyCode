@@ -2003,7 +2003,18 @@ defmodule ReyCode.TUITest do
       )
       |> put_in([:invocations, invocation.id, Access.key(:status)], :running)
 
+    push_projection(session, projection)
+    assert Breeze.Test.metadata(session).assigns.modal == :operator_question
+
+    waiting_screen = Breeze.Test.render!(session)
+    assert waiting_screen =~ "Answer required"
+    assert waiting_screen =~ "Assistant is waiting for your answer"
+    assert waiting_screen =~ "Which implementation path?"
+    refute waiting_screen =~ "Message Assistant"
+    refute waiting_screen =~ "Ask anything"
+
     push_projection(session, questionless)
+    assert Breeze.Test.metadata(session).assigns.modal == nil
     Breeze.Test.event(session, "prompt_changed", %{value: "/plan", cursor: 5})
     assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
     assert Breeze.Test.metadata(session).assigns.modal == :work_plan
@@ -2014,7 +2025,8 @@ defmodule ReyCode.TUITest do
 
     assert Breeze.Test.metadata(session).assigns.modal == :operator_question
     question_screen = Breeze.Test.render!(session)
-    assert question_screen =~ "Assistant asks"
+    assert question_screen =~ "Answer required"
+    assert question_screen =~ "Assistant is waiting for your answer"
     assert question_screen =~ "Which implementation path?"
     assert question_screen =~ "Safe · recommended"
     assert question_screen =~ "@@ -1 +1 @@"

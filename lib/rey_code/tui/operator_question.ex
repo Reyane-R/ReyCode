@@ -161,7 +161,10 @@ defmodule ReyCode.TUI.OperatorQuestion do
       class="h-14 w-full bg-surface border-t border-primary px-2 overflow-hidden"
     >
       <box class="inline w-full">
-        <box class="font-bold text-primary">{@participant_name} asks</box>
+        <box class="font-bold text-warning">Answer required</box>
+        <box class="pl-1 font-bold text-primary">
+          · {@participant_name} is waiting for your answer
+        </box>
         <box class="w-full text-right text-muted">
           Request {@request_position} · [ ] switch · Esc reject
         </box>
