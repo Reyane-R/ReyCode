@@ -343,7 +343,7 @@ defmodule ReyCode.TUI do
         key,
         %{assigns: %{modal: :operator_question, operator_question: %{step: :options}}} = term
       )
-      when key in ["ArrowUp", "ArrowDown"] do
+      when key in ["ArrowUp", "ArrowDown", "Enter", " "] do
     {:noreply, next} = OperatorQuestion.handle_input(key, term)
     {:halt, next}
   end
@@ -352,7 +352,7 @@ defmodule ReyCode.TUI do
         %{"key" => key},
         %{assigns: %{modal: :operator_question, operator_question: %{step: :options}}} = term
       )
-      when key in ["ArrowUp", "ArrowDown"] do
+      when key in ["ArrowUp", "ArrowDown", "Enter", " "] do
     {:noreply, next} = OperatorQuestion.handle_input(key, term)
     {:halt, next}
   end

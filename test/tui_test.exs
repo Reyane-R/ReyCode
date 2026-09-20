@@ -2036,6 +2036,15 @@ defmodule ReyCode.TUITest do
     assert {Breeze.Implicit.Scroll, %{offset_y: ^timeline_offset}} =
              Map.fetch!(Breeze.Test.metadata(session).implicit_state, timeline_id)
 
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, " ")
+
+    assert {:noreply, _focused, _changed?} =
+             Breeze.ChildServer.set_focus(session.pid, "copy-#{message.id}")
+
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "Enter")
+    assert Breeze.Test.metadata(session).assigns.operator_question.tab_index == 1
+    assert {:noreply, _focused, _changed?} = Breeze.Test.input(session, "ArrowLeft")
+
     push_projection(session, questionless)
     assert Breeze.Test.metadata(session).assigns.modal == nil
     Breeze.Test.event(session, "prompt_changed", %{value: "/plan", cursor: 5})
