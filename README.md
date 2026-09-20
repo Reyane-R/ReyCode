@@ -517,6 +517,12 @@ Set `REYCODE_TUI_REDUCED_MOTION=true` in a release environment (or
 `tui_reduced_motion: true` in application configuration) to use a static active
 glyph and one-second elapsed-time refresh instead of frame animation.
 
+Streaming update bursts share a screen refresh, and unchanged Markdown formatting
+is reused during menu navigation. While a question picker is showing options or
+its review tab, Enter and Space belong to the picker even if a transcript control
+still has keyboard focus. Multi-select questions use Space to select options and
+Enter to advance.
+
 Token usage is summed from durable provider usage records against the
 configured `context_budget_tokens` budget
 (`REYCODE_CONTEXT_BUDGET_TOKENS`). Before an over-budget Turn starts, ReyCode

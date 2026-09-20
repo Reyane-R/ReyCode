@@ -168,12 +168,17 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   @doc "Rendered transcript lines with stable IDs and explicit copy separators."
   def selection_lines(message, width, selection) do
     width = if message.role == :user, do: max(width - 2, 1), else: width
+    body = answer_text(message)
 
-    message
-    |> answer_text()
-    |> MermaidASCII.expand()
-    |> Breeze.Markdown.render_lines(width)
-    |> TextSelection.wrap_lines(width)
+    # Formatting is independent of focus, theme and selection. Reuse the
+    # renderer's bounded prepared-content cache across its layout passes and
+    # keyboard redraws; decorate only after retrieval so highlights stay local.
+    BackBreeze.Cache.fetch(:prepared, {__MODULE__, body, width}, fn ->
+      body
+      |> MermaidASCII.expand()
+      |> Breeze.Markdown.render_lines(width)
+      |> TextSelection.wrap_lines(width)
+    end)
     |> TextSelection.decorate(message.id, selection)
   end
 

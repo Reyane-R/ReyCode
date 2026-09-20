@@ -113,6 +113,36 @@ Design intent: every cycle either advances, consumes rework budget, or terminate
 
 The total Projection has no retention bound. Before long-lived multi-user operation, choose one of archival, pagination/windowed projection, or explicit memory/database capacity limits.
 
+### Interactive redraw work
+
+Root-view invalidations share Breeze's existing 16 ms input-render cadence.
+Queued Projection notifications mark one pending root redraw; input is still
+processed in order, and routing changes force a render before the next input
+boundary. This coalesces display work, not Events or Projection processing.
+The server regression drives twenty Projection updates through the actual Breeze
+server and permits at most two root redraws rather than twenty.
+
+Transcript Markdown, Mermaid expansion and cell wrapping are cached by displayed
+body and effective width in BackBreeze's existing prepared-content cache. Stable
+message IDs and selection highlighting are applied after retrieval. The cache
+shares the renderer's 32-entry / 64 MiB serialized-value retention limits;
+source-body keys also retain their source binaries. Eviction recomputes formatting
+without clipping text. Layout still processes the full transcript.
+
+Resource sketch: normal remote updates arrive at up to ten polls/second, with
+provider and input bursts handled by the existing event loops. Display scheduling
+reuses one timer/token and adds at most the remaining 16 ms cadence before render
+work when the server is available. No extra network traffic or storage writes
+are introduced. CPU work on cache misses remains proportional to the body;
+cache hits reuse formatting, while layout and cache lookup/copy still scale with
+the displayed transcript. No hard end-to-end latency bound is claimed.
+
+Local macOS measurement at 120x32, with 500 repeated Markdown code sections:
+ten warmed arrow-key-plus-redraw samples fell from 231–258 ms to 115–137 ms
+with formatting reuse. These are diagnostic samples, not CI timing thresholds.
+Tests cover burst redraw counts, navigation over long responses, fresh streamed
+text, width changes, cross-message cache reuse and selection isolation.
+
 ## Interactive verification
 
 | Resource | Envelope |

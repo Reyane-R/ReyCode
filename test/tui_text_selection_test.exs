@@ -2,7 +2,28 @@ defmodule ReyCode.TUI.TextSelectionTest do
   use ExUnit.Case, async: true
 
   alias BackBreeze.{TextSpan, Ucwidth}
+  alias ReyCode.TUI.Components.MainScreen.Timeline
   alias ReyCode.TUI.TextSelection
+
+  test "cached transcript formatting follows body, width, identity, and selection changes" do
+    message = %{id: "cached-first", role: :assistant, body: "alpha beta gamma delta epsilon"}
+    wide = Timeline.selection_lines(message, 80, nil)
+    narrow = Timeline.selection_lines(message, 10, nil)
+    assert length(narrow) > length(wide)
+    assert hd(wide).id == "selection-cached-first-0"
+    assert Enum.map_join(hd(wide).spans, & &1.text) == message.body
+
+    other = %{message | id: "cached-second"}
+    assert hd(Timeline.selection_lines(other, 80, nil)).id == "selection-cached-second-0"
+
+    selection = %TextSelection{anchor: {0, 0}, endpoint: {0, 5}, row_index: %{hd(wide).id => 0}}
+    highlighted = Timeline.selection_lines(message, 80, selection)
+    assert hd(hd(highlighted).spans).style.reverse
+    assert Timeline.selection_lines(message, 80, nil) == wide
+
+    updated = Timeline.selection_lines(%{message | body: "new streamed text"}, 80, nil)
+    assert Enum.map_join(hd(updated).spans, & &1.text) == "new streamed text"
+  end
 
   test "soft wrapping and long code preserve logical newlines and indentation on copy" do
     prose = "alpha beta gamma delta epsilon"

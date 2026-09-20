@@ -27,6 +27,67 @@ defmodule ReyCode.TUITest do
   alias ReyCode.Tool.Result
   alias ReyCode.TUI.{AnimationClock, Notice, State}
 
+  defmodule RecordingTerminal do
+    def write(owner, _data), do: {:ok, owner}
+    def resize(_owner), do: %{width: 120, height: 32}
+  end
+
+  test "terminal redraws coalesce projection bursts and preserve keyboard navigation" do
+    %{engine: engine} = start_isolated_stack([])
+    reader = make_ref()
+
+    terminal = %Termite.Terminal{
+      reader: reader,
+      adapter: {RecordingTerminal, self()},
+      size: %{width: 120, height: 32}
+    }
+
+    {:ok, server} =
+      Breeze.Server.start_app_link(
+        view: ReyCode.TUI,
+        terminal: terminal,
+        theme: ReyCode.Theme.default(),
+        global_keybindings: ReyCode.TUI.global_keybindings(),
+        start_opts: [engine: engine]
+      )
+
+    on_exit(fn -> if Process.alive?(server), do: GenServer.stop(server) end)
+    view_pid = :sys.get_state(server).view_pid
+    session = %Breeze.Test{pid: view_pid, terminal: terminal}
+    baseline = GenServer.call(server, :stats).render_base_count
+    :ok = :sys.suspend(server)
+    projection = Engine.snapshot(engine)
+    for _index <- 1..20, do: push_projection(session, projection)
+    :ok = :sys.resume(server)
+    state = :sys.get_state(server)
+
+    if state.input.render_timer_token,
+      do: send(server, {:flush_input_render, state.input.render_timer_token})
+
+    stats = GenServer.call(server, :stats)
+    assert stats.render_base_count - baseline <= 2
+
+    Breeze.Test.event(session, "prompt_changed", %{value: "/", cursor: 1})
+    Breeze.Test.render!(session)
+    send(server, {reader, {:data, "\e[B"}})
+    send(server, {reader, {:data, "\e[B"}})
+    send(server, {reader, {:data, "\e[B"}})
+    assert_navigation_settled(session, server, 100)
+    assert Breeze.Test.metadata(session).assigns.slash.index == 3
+  end
+
+  defp assert_navigation_settled(_session, _server, 0), do: flunk("input did not settle")
+
+  defp assert_navigation_settled(session, server, attempts) do
+    state = :sys.get_state(server)
+
+    if state.input.pending_ref || not :queue.is_empty(state.input.queued_input) do
+      assert_navigation_settled(session, server, attempts - 1)
+    else
+      :ok
+    end
+  end
+
   test "starts clean and creates a fresh durable session for the first message" do
     %{engine: tui_engine_1} = start_isolated_stack([])
     session = start_session({120, 32}, engine: tui_engine_1)
@@ -2197,6 +2258,55 @@ defmodule ReyCode.TUITest do
     assert screen =~ "Providers now"
     assert screen =~ "model APIs"
     assert screen =~ "Type / for commands"
+  end
+
+  @tag :ui_latency
+  test "palette navigation and streamed text remain current with cached long responses" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    projection = long_response_projection(session)
+
+    body =
+      String.duplicate(
+        "## Streaming response\n\n```elixir\ndef run(value), do: {:ok, value}\n```\n\n",
+        500
+      )
+
+    projection = put_in(projection, [:messages, "msg-layout-assistant", :body], body)
+    push_projection(session, projection)
+    open_first_session(session)
+    Breeze.Test.event(session, "prompt_changed", %{value: "/", cursor: 1})
+    Breeze.Test.render!(session)
+
+    count =
+      session
+      |> Breeze.Test.metadata()
+      |> Map.fetch!(:assigns)
+      |> State.prepare_render()
+      |> Map.fetch!(:slash_rows)
+      |> length()
+
+    for index <- 1..10 do
+      Breeze.Test.input(session, "ArrowDown")
+      assert Breeze.Test.metadata(session).assigns.slash.index == rem(index, count)
+      assert Breeze.Test.render!(session) =~ "Streaming response"
+    end
+
+    Breeze.Test.input(session, "Escape")
+
+    for index <- 1..3 do
+      next =
+        put_in(
+          projection,
+          [:messages, "msg-layout-assistant", :body],
+          body <> "\n\nStreamed update #{index}"
+        )
+
+      push_projection(session, next)
+      assert Breeze.Test.render!(session) =~ "Streamed update #{index}"
+    end
   end
 
   defp start_isolated_stack(config_overrides) do

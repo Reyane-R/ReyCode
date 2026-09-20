@@ -734,7 +734,16 @@ defmodule Breeze.Server do
 
   def handle_info(:child_invalidated, state) do
     state = Debug.increment_stat(state, :child_invalidated_count)
-    {:noreply, maybe_render_base(state, :child_invalidated)}
+
+    # Projection bursts describe the same live view. Share the input frame
+    # cadence instead of repainting that view once per queued notification.
+    state =
+      state
+      |> update_input(pending_sync_child_render_id: nil, render_boundary?: true)
+      |> mark_input_render_after_flush(true, :child_invalidated)
+      |> maybe_render_or_schedule_input()
+
+    {:noreply, state}
   end
 
   def handle_info({:child_invalidated, _child_id}, %{crash: crash} = state)
