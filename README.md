@@ -469,11 +469,33 @@ alternates, and an empty array disables the action:
 }
 ```
 
-The default theme presents the Session as a quiet terminal workbench. Color has
-state semantics: white is active, gray is dormant, amber is waiting or under
-review, and red requires attention. The header keeps the Assistant runtime,
-Workspace, branch, and token context on its first line. Its second line is a
-persistent work pulse derived from the Projection:
+### Cyberpunk terminal interface
+
+ReyCode's default interface takes inspiration from
+[CyberArch-Shell](https://github.com/ARCANGEL0/CyberArch-Shell): near-black panels,
+red structural accents, electric-cyan controls, and cut-corner input frames.
+Conversation text stays cool white; amber means waiting or review, green marks
+success, and error labels stay explicit alongside their red highlights.
+
+Tall terminals reveal a large wordmark that resolves from scrambled glyphs in
+700 ms. Typing immediately settles it without delaying or consuming input.
+The home dashboard has traveling scan lines, a scanning geometric emblem,
+and animated signal bars. These are decorative effects, not progress or
+resource-usage measurements. The wordmark occasionally glitches while the
+composer is empty.
+
+At **120 columns × 28 rows** or larger, a side panel shows workspace context
+on home and real activity, execution links, and reported token usage during a
+Session. Active links carry moving pulses; blocked Message headers pulse amber
+attention brackets. Smaller windows reclaim the panel's space for the transcript.
+Menus share an animated red header, and the command palette has its own scanner.
+Animations use lightweight renderer decorations without rebuilding the
+conversation on every decorative frame. The existing `Ctrl+T` / `/theme`
+controls still cycle palettes.
+
+The Session header includes a scanning brand strip, the Assistant runtime,
+Workspace, branch, and token context, followed by a persistent work pulse
+derived from the Projection:
 
 ```text
 ⠹ · Reading · lib/foo.ex · 5s
@@ -482,7 +504,7 @@ persistent work pulse derived from the Projection:
 The pulse shows the highest-priority truthful activity, including its bounded
 file, command, approval, or delegated-work target when one exists. Thinking
 omits the redundant Assistant name. Queued and waiting work remain truthfully
-static (`… · Queued`, `Ⅱ · Paused · bash approval required`); terminal
+labelled (`… · Queued`, `Ⅱ · Paused · bash approval required`); terminal
 completed/partial/reworked/failed/cancelled Outcomes use stable, distinct
 glyphs.
 
@@ -513,9 +535,11 @@ work pulse remain visible while the timeline preserves durable Invocation
 order. A waiting-question indicator opens with `Ctrl+A`; the budget meter and
 composer warn at 80 percent without stopping the Invocation.
 
-Set `REYCODE_TUI_REDUCED_MOTION=true` in a release environment (or
+Set `REYCODE_TUI_REDUCED_MOTION=true` before launching (or
 `tui_reduced_motion: true` in application configuration) to use a static active
-glyph and one-second elapsed-time refresh instead of frame animation.
+glyph and one-second elapsed-time refresh instead of frame animation. This
+also disables every decorative animation, logo scramble, and glitch while
+retaining the HUD layout and palette. Basic terminals use ASCII effect glyphs.
 
 Streaming update bursts share a screen refresh, and unchanged Markdown formatting
 is reused during menu navigation. While a question picker is showing options or

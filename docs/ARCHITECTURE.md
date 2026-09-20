@@ -40,7 +40,7 @@ When you run `mix run --no-halt`, ReyCode starts at a clean session home:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  REYCODE  AI workbench                                     │
+│  REYCODE // AI workbench                                   │
 │  ─────────────────────────────────────────────────────────  │
 │                                                             │
 │  Assistant                                                  │
@@ -74,11 +74,27 @@ responsibility and independently selected provider/model. `/task` creates a
 Delegation addressed to exactly one Task Participant. `/resume` explicitly
 opens a prior Session, including one rooted at another Workspace.
 
+The home layout uses a compact header on small terminals and an animated
+wordmark on terminals at least 72 columns × 30 rows. At 120 columns × 28 rows,
+`TUI.Components.HUD` reserves a 30-column right rail. On home this contains
+decorative artwork and command hints; during a Session it presents actual
+activity, execution links, and reported usage. `State.prepare_render/1` uses
+the same rail-width calculation as rendering, so Markdown wrapping and text
+selection agree with the visible transcript width.
+
+`TUI.Effects` implements Breeze's renderer-local animation interface for
+bounded logo, scanner, signal, link, attention, and emblem effects. Breeze
+owns a shared decoration scheduler and removes decorations when their elements
+leave the screen. Effects touch only their existing cells, not layout, focus,
+or Projection state. Reduced motion registers no decorative animation cadence.
+The separate `AnimationClock` remains responsible for truthful activity glyphs
+and elapsed-time updates.
+
 The active transcript shows only useful execution context:
 
 │
-- **Header:** a two-line workbench. The first line carries
-  `Assistant · runtime · Workspace · branch` and informational token usage. The second is
+- **Header:** a scanning brand strip above the workbench. The next line carries
+  `Assistant · runtime · Workspace · branch` and informational token usage. The last is
   a persistent, Projection-derived work pulse such as
   `⠹ · Reading · lib/foo.ex · 5s`. Its bounded target identifies the file,
   command, approval, or delegated work without exposing event telemetry.

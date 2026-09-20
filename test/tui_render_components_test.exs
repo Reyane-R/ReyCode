@@ -474,6 +474,31 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     assert Breeze.Test.metadata(session).focused == "prompt"
   end
 
+  test "wide HUD yields its space to the transcript on narrow and short terminals" do
+    session =
+      Breeze.Test.start!(ActiveSessionView,
+        size: {130, 38},
+        theme: ReyCode.Theme.default(),
+        start_opts: [animation_style: :ascii],
+        global_keybindings: ReyCode.TUI.global_keybindings()
+      )
+
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    type(session, "draft stays put")
+    assert session |> Breeze.Test.render!() |> plain() =~ "SESSION // HUD"
+    id = Breeze.Test.metadata(session).assigns.selected_session_id
+
+    for {width, height} <- [{119, 38}, {130, 27}, {60, 18}, {80, 24}, {130, 38}] do
+      terminal = %{session.terminal | size: %{width: width, height: height}}
+      screen = session |> Breeze.Test.render!(terminal: terminal) |> plain()
+      assert String.contains?(screen, "SESSION // HUD") == (width >= 120 and height >= 28)
+      assert screen =~ "draft stays put"
+      assert screen =~ "Message Assistant"
+      assert Breeze.Test.metadata(session).assigns.drafts[id] == "draft stays put"
+      assert Breeze.Test.metadata(session).focused == "prompt"
+    end
+  end
+
   test "composer readiness states what the Assistant can do right now" do
     session =
       Breeze.Test.start!(ReyCode.TUI,

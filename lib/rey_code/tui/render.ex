@@ -5,6 +5,7 @@ defmodule ReyCode.TUI.Render do
 
   import ReyCode.TUI.Components.MainScreen, only: [main_screen: 1]
   import ReyCode.TUI.Components.Modals, only: [active: 1]
+  import ReyCode.TUI.Components.HUD, only: [modal_chrome: 1]
 
   @doc "Renders the terminal UI from prepared view assigns."
   @spec render(map()) :: Breeze.Component.rendered()
@@ -23,6 +24,10 @@ defmodule ReyCode.TUI.Render do
       messages={@messages}
       activity={@activity}
       activity_frame={@activity_frame}
+      motion={not @config.tui.reduced_motion?}
+      ascii={@animation_style == :ascii}
+      rail_width={@rail_width}
+      content_width={@content_width}
       timeline_id={@timeline_id}
       message_width={@message_width}
       slash_rows={@slash_rows}
@@ -40,7 +45,10 @@ defmodule ReyCode.TUI.Render do
       composer_status={@composer_status}
       slash={@slash}
     />
-    <.active term={assigns}/>
+    <box :if={@modal not in [nil, :slash, :operator_question]} class="w-screen h-screen bg">
+      <.active term={assigns}/>
+      <.modal_chrome term={assigns}/>
+    </box>
     """
   end
 end

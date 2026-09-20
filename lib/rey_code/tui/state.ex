@@ -35,6 +35,8 @@ defmodule ReyCode.TUI.State do
     ToolReview
   }
 
+  alias ReyCode.TUI.Components.HUD
+
   @max_trace_note_graphemes 240
   @max_trace_note_rows_count 100
   @max_expanded_message_count 128
@@ -139,8 +141,10 @@ defmodule ReyCode.TUI.State do
     width = assigns.breeze.terminal.width
     height = assigns.breeze.terminal.height
     session = assigns.projection.sessions[assigns.selected_session_id]
-    message_width = message_width(width)
-    target_graphemes = target_graphemes(width)
+    rail_width = HUD.rail_width(width, height)
+    content_width = width - rail_width
+    message_width = message_width(content_width)
+    target_graphemes = target_graphemes(content_width)
 
     activity =
       Activity.present(
@@ -191,6 +195,8 @@ defmodule ReyCode.TUI.State do
       token_label_class: "pl-2 text-muted",
       composer_status: composer_status(session, assigns.providers),
       message_width: message_width,
+      rail_width: rail_width,
+      content_width: content_width,
       timeline_id: timeline_id(session.id),
       recent_session_rows: recent_session_rows(assigns),
       slash_rows: slash_rows(assigns, height),

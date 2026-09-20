@@ -176,10 +176,10 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
         |> String.split("\n")
         |> Enum.map(&String.trim/1)
 
-      first = Enum.find_index(lines, &(&1 == "│ First prompt"))
-      assistant = Enum.find_index(lines, &String.starts_with?(&1, "Assistant"))
-      answer = Enum.find_index(lines, &(&1 == "Final response"))
-      second = Enum.find_index(lines, &(&1 == "│ Second prompt"))
+      first = Enum.find_index(lines, &String.ends_with?(&1, "│ First prompt"))
+      assistant = Enum.find_index(lines, &String.contains?(&1, "Assistant"))
+      answer = Enum.find_index(lines, &String.ends_with?(&1, "Final response"))
+      second = Enum.find_index(lines, &String.ends_with?(&1, "│ Second prompt"))
 
       assert is_integer(first) and is_integer(assistant) and is_integer(answer) and
                is_integer(second)

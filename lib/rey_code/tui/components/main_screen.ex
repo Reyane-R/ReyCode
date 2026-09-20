@@ -6,6 +6,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   import ReyCode.TUI.Components.MainScreen.Timeline, only: [timeline: 1]
   import ReyCode.TUI.OperatorQuestion, only: [question_panel: 1]
+  import ReyCode.TUI.Components.HUD, only: [hero: 1, rail: 1, home_rail: 1, scan: 1, glyph: 2]
 
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Action, Activity, Cancellation, Notice, State, Verification}
@@ -29,21 +30,65 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :token_label_class, :string, required: true
   attr :update_notice, :any, required: true
   attr :text_selection, :any, default: nil
+  attr :motion, :boolean, required: true
+  attr :ascii, :boolean, required: true
+  attr :rail_width, :integer, required: true
+  attr :content_width, :integer, required: true
 
   attr :terminal_width, :integer, required: true
   attr :terminal_height, :integer, required: true
 
   def main_screen(assigns) do
+    input_height =
+      State.composer_height(
+        Map.get(assigns, :draft, ""),
+        Map.get(assigns, :modal),
+        assigns.terminal_height
+      )
+
+    footer_height =
+      if Map.get(assigns, :modal) == :operator_question, do: 14, else: input_height + 4
+
+    bottom = max(assigns.terminal_height - footer_height, 0)
+    header_height = if assigns.session.verified_change, do: 8, else: 4
+
+    assigns =
+      assign(assigns,
+        background_motion:
+          Map.get(assigns, :motion, false) == true and is_nil(Map.get(assigns, :modal)),
+        home_clip: {0, 0, assigns.content_width, bottom},
+        home_rail_clip: {assigns.content_width, 0, assigns.terminal_width, bottom},
+        timeline_clip: {0, header_height, assigns.content_width, bottom},
+        rail_clip: {assigns.content_width, header_height, assigns.terminal_width, bottom},
+        screen_clip: {0, 0, assigns.terminal_width, assigns.terminal_height}
+      )
+
     ~H"""
     <box :if={@modal in [nil, :slash, :operator_question]} class="w-screen h-screen bg">
       <box class={content_class(@home)}>
-        <.home_panel
-          :if={@home}
-          session={@session}
-          recent_session_rows={@recent_session_rows}
-          composer_status={@composer_status}
-          update_notice={@update_notice}
-        />
+        <box :if={@home} class="inline h-full w-full overflow-hidden">
+          <box class="h-full" style={%{width: @content_width}}>
+            <.home_panel
+              session={@session}
+              recent_session_rows={@recent_session_rows}
+              composer_status={@composer_status}
+              update_notice={@update_notice}
+              terminal_width={@content_width}
+              terminal_height={@terminal_height}
+              motion={@background_motion}
+              ascii={@ascii}
+              draft={@draft}
+              clip={@home_clip}
+            />
+          </box>
+          <.home_rail
+            :if={@rail_width > 0}
+            session={@session}
+            motion={@background_motion}
+            ascii={@ascii}
+            clip={@home_rail_clip}
+          />
+        </box>
         <.session_header
           :if={session_visible?(@home)}
           session={@session}
@@ -56,17 +101,34 @@ defmodule ReyCode.TUI.Components.MainScreen do
           token_label={@token_label}
           token_label_class={@token_label_class}
           terminal_width={@terminal_width}
+          motion={@background_motion}
+          ascii={@ascii}
         />
-        <.timeline
-          :if={session_visible?(@home)}
-          messages={@messages}
-          timeline_id={@timeline_id}
-          message_width={@message_width}
-          activity_frame={@activity_frame}
-          terminal_height={@terminal_height}
-          challenge_enabled={is_nil(@session.verified_change)}
-          text_selection={@text_selection}
-        />
+        <box :if={session_visible?(@home)} class="inline h-full w-full overflow-hidden">
+          <box class="h-full" style={%{width: @content_width}}>
+            <.timeline
+              messages={@messages}
+              timeline_id={@timeline_id}
+              message_width={@message_width}
+              activity_frame={@activity_frame}
+              terminal_height={@terminal_height}
+              challenge_enabled={is_nil(@session.verified_change)}
+              text_selection={@text_selection}
+              motion={@background_motion}
+              ascii={@ascii}
+              clip={@timeline_clip}
+            />
+          </box>
+          <.rail
+            :if={@rail_width > 0}
+            session={@session}
+            activity={@activity}
+            token_label={@token_label}
+            motion={@background_motion}
+            ascii={@ascii}
+            clip={@rail_clip}
+          />
+        </box>
         <.composer
           :if={@modal != :operator_question}
           modal={@modal}
@@ -75,6 +137,10 @@ defmodule ReyCode.TUI.Components.MainScreen do
           draft={@draft}
           notice={@notice}
           composer_status={@composer_status}
+          motion={@background_motion}
+          ascii={@ascii}
+          activity={@activity}
+          terminal_width={@terminal_width}
         />
         <.question_panel :if={@modal == :operator_question} term={assigns}/>
         <.slash_palette
@@ -82,6 +148,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
           slash_rows={@slash_rows}
           slash_style={@slash_style}
           slash_empty_label={@slash_empty_label}
+          motion={@motion}
+          ascii={@ascii}
+          clip={@screen_clip}
         />
       </box>
     </box>
@@ -92,20 +161,43 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :recent_session_rows, :list, required: true
   attr :composer_status, :map, required: true
   attr :update_notice, :any, required: true
+  attr :terminal_width, :integer, required: true
+  attr :terminal_height, :integer, required: true
+  attr :motion, :boolean, required: true
+  attr :ascii, :boolean, required: true
+  attr :draft, :string, required: true
+  attr :clip, :any, required: true
 
   defp home_panel(assigns) do
     ~H"""
-    <.scroll id="home-scroll" class="h-full w-full overflow-scroll mute-scrollbar-40 px-4">
-      <box class="pt-2 inline w-full border-b border-muted pb-1">
-        <box class="font-bold text-primary">REYCODE</box>
-        <box class="pl-2 text-muted">AI workbench</box>
+    <.scroll id="home-scroll" class="h-full w-full overflow-scroll mute-scrollbar-40 px-2">
+      <.hero
+        width={@terminal_width}
+        height={@terminal_height}
+        motion={@motion}
+        ascii={@ascii}
+        skip={@draft != ""}
+        clip={@clip}
+      />
+      <box class="pt-1 inline w-full border-b border-accent pb-1">
+        <box class="font-bold text-accent">REYCODE</box>
+        <box class="pl-2 text-primary">// AI workbench</box>
+        <.scan
+          :if={@terminal_height < 30 and @terminal_width >= 60}
+          id="compact-home-scan"
+          width={16}
+          motion={@motion}
+          ascii={@ascii}
+          class="text-accent"
+          clip={@clip}
+        />
         <box :if={@update_notice} class={"w-full text-right " <> Notice.text_class(@update_notice)}>
           {@update_notice.message}
         </box>
       </box>
-      <box class="pt-2 text-muted">Workspace</box>
+      <box class="pt-1 text-secondary">{glyph(:corner, @ascii)} 01 / Workspace</box>
       <box class="font-bold">{compact_home(@session.workspace)}</box>
-      <box class="pt-2 text-muted">Assistant</box>
+      <box class="pt-1 text-secondary">{glyph(:corner, @ascii)} 02 / Assistant</box>
       <box class="inline w-full">
         <box
           id="choose-model-home"
@@ -123,7 +215,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           {@composer_status.label}
         </box>
       </box>
-      <box class="pt-2 text-muted">Quick start</box>
+      <box class="pt-1 text-secondary">{glyph(:corner, @ascii)} 03 / Quick start</box>
       <box :if={connect_first?(@composer_status)} id="connect-setup" class="text-primary">
         /connect  Choose a model provider
       </box>
@@ -152,14 +244,18 @@ defmodule ReyCode.TUI.Components.MainScreen do
       <box class="pt-1 text-muted">
         Find task agents, review tools, and settings in the action menu.
       </box>
-      <box class="pt-2 text-muted">Teammates · {length(task_participants(@session))}</box>
+      <box class="pt-1 text-secondary">
+        {glyph(:corner, @ascii)} 04 / Teammates · {length(task_participants(@session))}
+      </box>
       <box :if={task_participants(@session) == []} class="text-muted">
         None yet. Create one when a responsibility repeats.
       </box>
       <box :for={participant <- task_participants(@session)}>
         {participant.name} · {Presentation.current_assignment_label(participant)}
       </box>
-      <box class="pt-2 text-muted">Recent sessions · {length(@recent_session_rows)}</box>
+      <box class="pt-1 text-secondary">
+        {glyph(:corner, @ascii)} 05 / Recent sessions · {length(@recent_session_rows)}
+      </box>
       <box :if={@recent_session_rows == []} class="text-muted">No previous sessions.</box>
       <box :for={session <- @recent_session_rows} class="text-muted">
         {session.title} · {session.meta}
@@ -176,16 +272,29 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :update_notice, :any, required: true
   attr :token_label_class, :string, required: true
   attr :terminal_width, :integer, required: true
+  attr :motion, :boolean, required: true
+  attr :ascii, :boolean, required: true
 
   defp session_header(assigns) do
     ~H"""
     <box
       class={if @session.verified_change do
-      "h-7 w-full bg-surface border-b border-muted px-2"
+      "h-8 w-full bg-surface border-b border-accent px-2"
     else
-      "h-3 w-full bg-surface border-b border-muted px-2"
+      "h-4 w-full bg-surface border-b border-accent px-2"
     end}
     >
+      <box class="inline w-full overflow-hidden">
+        <box class="font-bold text-accent">{glyph(:corner, @ascii)} REYCODE // </box>
+        <.scan
+          id="session-scan"
+          width={min(max(@terminal_width - 34, 1), 80)}
+          motion={@motion == true and @activity.active?}
+          ascii={@ascii}
+          clip={{0, 0, @terminal_width, 1}}
+        />
+        <box class="text-muted"> SESSION</box>
+      </box>
       <box class="inline w-full overflow-hidden">
         <box
           id="choose-model"
@@ -196,7 +305,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
         >
           {primary_summary(@session)}
         </box>
-        <box class="text-muted">
+        <box class="h-1 overflow-hidden text-muted">
           {header_context(@session, @terminal_width, @git_branch, @token_label)}
         </box>
         <box class={header_token_class(@token_label_class)}>{@token_label}</box>
@@ -267,6 +376,10 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :draft, :string, required: true
   attr :notice, :any, required: true
   attr :composer_status, :map, required: true
+  attr :motion, :boolean, required: true
+  attr :ascii, :boolean, required: true
+  attr :activity, :map, required: true
+  attr :terminal_width, :integer, required: true
 
   defp composer(assigns) do
     assigns =
@@ -278,10 +391,20 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
     ~H"""
     <box
-      class={"h-#{@input_height + 4} w-full bg-surface border-t border-muted px-2 overflow-hidden"}
+      class={"h-#{@input_height + 4} w-full bg-surface border-t border-accent px-2 overflow-hidden"}
     >
       <box class="inline w-full">
-        <box class="font-bold text-primary">Message Assistant</box>
+        <box class="font-bold text-primary">{glyph(:corner, @ascii)} Message Assistant</box>
+        <.scan
+          :if={@terminal_width >= 72}
+          id="composer-signal"
+          kind={:signal}
+          width={12}
+          motion={@motion == true and @activity.active?}
+          ascii={@ascii}
+          class="text-accent"
+          clip={{0, 0, @terminal_width, @terminal_height}}
+        />
         <box :if={is_nil(@notice)} class={"w-full text-right " <> @composer_status.class}>
           {@composer_status.label}
         </box>
@@ -296,7 +419,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
         textarea-submit-on-enter={true}
         br-change="prompt_changed"
         br-submit="prompt_submitted"
-        class={"w-full h-#{@input_height} border focus:border-primary bg-surface"}
+        class={"w-full h-#{@input_height} border border-secondary focus:border-primary bg-panel"}
+        style={%{border: ReyCode.TUI.Components.HUD.frame(@ascii)}}
       />
       <box :if={is_nil(@notice)} class="text-muted">
         Enter {State.send_label(@session)} · /steer · Shift+Enter new line · ↑↓ history
@@ -313,24 +437,40 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :slash_style, :map, required: true
 
   attr :slash_empty_label, :string, required: true
+  attr :clip, :any, required: true
+  attr :motion, :boolean, required: true
+  attr :ascii, :boolean, required: true
 
   defp slash_palette(assigns) do
     ~H"""
     <box
       :if={@modal == :slash}
       class={if @slash_style.height > 1 do
-      "bg-panel border-l border-r border-t border-muted overflow-hidden layer-40"
+      "bg-panel border-l border-r border-t border-accent overflow-hidden layer-40"
     else
       "bg-panel overflow-hidden layer-40"
     end}
       style={@slash_style}
     >
-      <box :if={@slash_style.height >= 3} class="h-1 w-full px-1 text-muted overflow-hidden">
-        {if @slash_empty_label == "No matching files" do
-          "Files"
-        else
-          "Actions"
-        end} · type to search · Esc back
+      <box
+        :if={@slash_style.height >= 3}
+        class="h-1 w-full px-1 text-secondary overflow-hidden inline"
+      >
+        <box>
+          {if @slash_empty_label == "No matching files" do
+            "Files"
+          else
+            "Actions"
+          end} // type to search · Esc back
+        </box>
+        <.scan
+          :if={@slash_style.width >= 72}
+          id="palette-scan"
+          width={16}
+          motion={@motion}
+          ascii={@ascii}
+          clip={@clip}
+        />
       </box>
       <box :for={row <- @slash_rows} class={row.option_class}>
         <box class={row.command_class}>{row.command}</box>
@@ -378,7 +518,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
       branch
   end
 
-  defp header_token_class(class), do: "w-full text-right " <> class
+  defp header_token_class(class), do: "w-full h-1 overflow-hidden text-right " <> class
   defp work_pulse_class(item), do: "text-#{Activity.color(item)}"
 
   defp workspace_context(path, max_length) do

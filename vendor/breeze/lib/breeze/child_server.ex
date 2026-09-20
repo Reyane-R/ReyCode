@@ -2102,10 +2102,10 @@ defmodule Breeze.ChildServer do
   defp mouse_target(term, %{"x" => x, "y" => y}) do
     term.mouse_targets
     |> Enum.map(fn {id, bounds} -> {id, mouse_target_bounds(term, bounds)} end)
-    |> Enum.filter(fn {_id, bounds} ->
+    |> Enum.filter(fn {id, bounds} ->
       is_integer(bounds[:left]) and is_integer(bounds[:right]) and is_integer(bounds[:top]) and
         is_integer(bounds[:bottom]) and x >= bounds.left and x <= bounds.right and
-        y >= bounds.top and y <= bounds.bottom
+        y >= bounds.top and y <= bounds.bottom and within_mouse_owner?(term, id, x, y)
     end)
     |> Enum.sort_by(fn {id, bounds} ->
       area = (bounds.right - bounds.left + 1) * (bounds.bottom - bounds.top + 1)
@@ -2115,6 +2115,22 @@ defmodule Breeze.ChildServer do
     |> case do
       {id, _bounds} -> id
       nil -> nil
+    end
+  end
+
+  # Descendant layout metrics include off-screen scroll content. Such a row
+  # must not beat a visible footer control merely because its hit area is smaller.
+  defp within_mouse_owner?(term, id, x, y) do
+    owner = get_in(term.focus_meta, [id, :implicit_owner])
+
+    case {Map.get(term.rendered_boxes, owner), Map.get(term.elements, owner)} do
+      {%BackBreeze.Box{style: %{overflow: overflow}}, %Breeze.Viewport{} = viewport}
+      when overflow in [:scroll, :hidden] and owner != id ->
+        x >= viewport.left and x < viewport.left + (viewport.width || 0) and
+          y >= viewport.top and y < viewport.top + viewport.height
+
+      _ ->
+        true
     end
   end
 

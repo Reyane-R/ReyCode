@@ -11,6 +11,8 @@ Local changes:
 - Optional `Breeze.View.intercept_input/2`: continue ordinary routing, replace
   a deferred input, or consume an event before any implicit/live child sees it.
 - Read-only `element_layouts/1` and `scroll_offset_y/2` for hit testing.
+- Mouse targets owned by a clipped implicit must be inside that owner's viewport;
+  off-screen transcript rows cannot intercept clicks on the question picker.
 - `Breeze.Markdown.render_lines/2`: styled lines with explicit soft-wrap copy
   separators; long code wrapping belongs to ReyCode's selection renderer.
 - Markdown headings render as marker-free bold text without a background fill,

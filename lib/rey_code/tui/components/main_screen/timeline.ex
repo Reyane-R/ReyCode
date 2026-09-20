@@ -9,6 +9,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   alias ReyCode.Orchestration.StrategicReview
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Activity, MermaidASCII, TextSelection}
+  import ReyCode.TUI.Components.HUD, only: [scan: 1, glyph: 2]
 
   @max_visible_notes 8
 
@@ -53,6 +54,9 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   attr :terminal_height, :integer
   attr :challenge_enabled, :boolean
   attr :text_selection, :any, default: nil
+  attr :motion, :boolean, default: false
+  attr :ascii, :boolean, default: false
+  attr :clip, :any, default: {0, 0, 0, 0}
 
   def timeline(assigns) do
     assigns = Map.put_new(assigns, :terminal_height, 40)
@@ -77,10 +81,25 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
             <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
           </box>
           <box :if={item.kind == :message} class={message_class(item, index, @terminal_height)}>
-            <box class="inline w-full overflow-hidden">
+            <box class="inline w-full overflow-hidden bg-surface">
+              <box class="text-accent">{glyph(:corner, @ascii)} </box>
               <box class={author_name_class(item)}>{author_label(item)}</box>
               <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
               <box class={message_status_class(item)}>{message_status_label(item)}</box>
+              <.scan
+                :if={animated_activity?(item.activity)}
+                id={"message-scan-" <> item.id}
+                width={8}
+                kind={if item.activity.state == :blocked do
+      :attention
+    else
+      :link
+    end}
+                motion={@motion}
+                ascii={@ascii}
+                class={"text-" <> Activity.color(item.activity)}
+                clip={@clip}
+              />
               <box
                 :if={item.role == :assistant and item.body != ""}
                 id={"copy-#{item.id}"}
@@ -229,12 +248,18 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   defp challengeable?(_item), do: false
 
-  defp message_class(_message, 0, _height), do: "w-full overflow-hidden"
+  defp message_class(_message, 0, _height), do: "w-full border-l border-secondary overflow-hidden"
 
   defp message_class(%{role: :user}, _index, height) when height >= 32,
-    do: "w-full pt-2 overflow-hidden"
+    do: "w-full pt-2 border-l border-secondary overflow-hidden"
 
-  defp message_class(_message, _index, _height), do: "w-full pt-1 overflow-hidden"
+  defp message_class(_message, _index, _height),
+    do: "w-full pt-1 border-l border-primary overflow-hidden"
+
+  defp animated_activity?(%Activity.Item{state: state}) when state in [:active, :blocked],
+    do: true
+
+  defp animated_activity?(_activity), do: false
 
   defp author_name_class(%{role: :user}), do: "font-bold text-secondary"
   defp author_name_class(%{author: %{id: "builder"}}), do: "font-bold text-primary"
