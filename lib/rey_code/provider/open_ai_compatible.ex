@@ -11,8 +11,8 @@ defmodule ReyCode.Provider.OpenAICompatible do
   alias ReyCode.Capabilities
   alias ReyCode.Failure
   alias ReyCode.Memory.Store
-  alias ReyCode.Provider.{Credentials, Frame, Request, Response, Runtime}
-  alias ReyCode.Provider.OpenAICompatible.{HTTP, Profile, RequestShape, Stream}
+  alias ReyCode.Provider.{ContextBudget, Credentials, Frame, Request, Response, Runtime}
+  alias ReyCode.Provider.OpenAICompatible.{HTTP, PreparedRequest, Profile, RequestShape, Stream}
   alias ReyCode.RuntimeConfig
   alias ReyCode.RuntimeConfig.OpenAICompatible, as: OpenAIPolicy
   alias ReyCode.RuntimeConfig.Schema
@@ -80,6 +80,18 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
+  @doc "Encodes one request exactly as the first stream attempt and reports its budgets."
+  @spec prepare(Runtime.t(), Request.t()) ::
+          {:ok, PreparedRequest.t()} | {:error, :unknown_provider}
+  def prepare(
+        %Runtime{provider_id: provider_id, config: %OpenAIPolicy{} = policy},
+        %Request{} = request
+      ) do
+    with {:ok, profile} <- Profile.fetch(provider_id, policy) do
+      {:ok, prepare_request(request, profile, policy, initial_shape(profile))}
+    end
+  end
+
   # Strict servers may reject `stream_options` or `tools` with HTTP 400 before
   # any side effect. The ladder retries once without `stream_options`; if the
   # server still refuses while tools were offered, the invocation fails loudly
@@ -87,8 +99,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
   # round. Non-400 failures keep their existing semantics. A shape that worked
   # is remembered via RequestShape for later rounds and invocations.
   defp run_stream(%Stream.Context{} = context, shape) do
-    with {:ok, body} <- build_body(context.request, context.profile, shape) do
-      case Stream.run(%{context | body: body}) do
+    prepared = prepare_request(context.request, context.profile, context.config, shape)
+
+    with :ok <- admit_request(prepared) do
+      case Stream.run(%{context | body: prepared.body}) do
         {:ok, response} ->
           remember_downgrade(context.profile, shape)
           {:ok, response}
@@ -278,13 +292,9 @@ defmodule ReyCode.Provider.OpenAICompatible do
     end
   end
 
-  defp build_body(request, profile, shape) do
-    request_body(profile, request, shape)
-  end
-
   # Capability flags control which optional features appear on the wire; a
   # pinned strict-server profile omits them from the first attempt.
-  defp request_body(profile, request, shape) do
+  defp prepare_request(request, profile, policy, shape) do
     names = request.tool_names || ToolRegistry.wire_tool_names()
 
     body =
@@ -297,17 +307,28 @@ defmodule ReyCode.Provider.OpenAICompatible do
       |> maybe_put("stream_options", %{"include_usage" => true}, shape.stream_options?)
       |> Jason.encode!()
 
-    if byte_size(body) > profile.max_prompt_bytes do
-      HTTP.error(
-        :prompt_too_large,
-        "Provider prompt is #{byte_size(body)} bytes; maximum is #{profile.max_prompt_bytes} bytes",
-        false
+    budget =
+      ContextBudget.assess(
+        byte_size(body),
+        profile.max_prompt_bytes,
+        policy.context_budget_tokens,
+        profile.context_window_tokens,
+        profile.output_reserve_tokens
       )
-      |> then(&{:error, &1})
-    else
-      {:ok, body}
-    end
+
+    %PreparedRequest{body: body, budget: budget}
   end
+
+  defp admit_request(%PreparedRequest{budget: %{status: :too_large} = budget}) do
+    HTTP.error(
+      :prompt_too_large,
+      "Provider prompt is #{budget.prompt_bytes} bytes; maximum is #{budget.max_prompt_bytes} bytes",
+      false
+    )
+    |> then(&{:error, &1})
+  end
+
+  defp admit_request(%PreparedRequest{}), do: :ok
 
   defp maybe_put(map, _key, _value, false), do: map
   defp maybe_put(map, key, value, true), do: Map.put(map, key, value)

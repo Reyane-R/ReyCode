@@ -55,6 +55,7 @@ defmodule ReyCode.RuntimeConfig.OpenAICompatible do
   @enforce_keys [
     :chunk_bytes,
     :chunk_latency_ms,
+    :context_budget_tokens,
     :base_url_overrides,
     :capability_overrides,
     :profiles,
@@ -70,6 +71,7 @@ defmodule ReyCode.RuntimeConfig.OpenAICompatible do
   @type t :: %__MODULE__{
           chunk_bytes: pos_integer(),
           chunk_latency_ms: non_neg_integer(),
+          context_budget_tokens: pos_integer(),
           base_url_overrides: map(),
           capability_overrides: %{optional(atom()) => capability()},
           profiles: [map()],

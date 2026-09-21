@@ -1187,6 +1187,132 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
     end
   end
 
+  describe "request preparation and budgets" do
+    test "preflight measures the exact body sent to the transport" do
+      scoped = %{
+        request()
+        | system_prompt: "Use the quoted value: \"λ\".",
+          messages: [
+            Message.new(role: :user, content: "Line one\nLine two: \"escaped\" and λ")
+          ],
+          tool_names: ["read", "grep"]
+      }
+
+      runtime = runtime()
+      assert {:ok, prepared} = OpenAICompatible.prepare(runtime, scoped)
+      assert prepared.budget.prompt_bytes == byte_size(prepared.body)
+      assert prepared.budget.model_context_percent == nil
+
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"content":"done"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      assert {:ok, %Response{text: "done"}} =
+               OpenAICompatible.stream(runtime, scoped, fn _frame -> :ok end)
+
+      assert FakeTransport.last_body() == prepared.body
+    end
+
+    test "marks a request for maintenance before its exact byte ceiling" do
+      base_runtime = runtime()
+      assert {:ok, baseline} = OpenAICompatible.prepare(base_runtime, request())
+      max_prompt_bytes = baseline.budget.prompt_bytes + 100
+      limited_runtime = runtime(max_prompt_profile(max_prompt_bytes))
+
+      assert {:ok, prepared} = OpenAICompatible.prepare(limited_runtime, request())
+      assert prepared.budget.status == :maintenance_required
+      assert prepared.budget.prompt_bytes <= max_prompt_bytes
+    end
+
+    test "accumulated tool rounds cross the exact prompt limit before transport" do
+      base_runtime = runtime()
+      assert {:ok, initial} = OpenAICompatible.prepare(base_runtime, request())
+      max_prompt_bytes = initial.budget.prompt_bytes + 2_000
+      limited_runtime = runtime(max_prompt_profile(max_prompt_bytes))
+
+      FakeTransport.set_stream([
+        ~s(data: {"choices":[{"delta":{"content":"accepted"}}]}\n\n),
+        "data: [DONE]\n\n"
+      ])
+
+      assert {:ok, %Response{text: "accepted"}} =
+               OpenAICompatible.stream(limited_runtime, request(), fn _frame -> :ok end)
+
+      continuation = %{
+        request()
+        | round_index: 4,
+          messages: accumulated_tool_messages(4, 1_000)
+      }
+
+      assert {:error,
+              %Failure{
+                category: :prompt_too_large,
+                retryable?: false,
+                message: message
+              }} = OpenAICompatible.stream(limited_runtime, continuation, fn _frame -> :ok end)
+
+      assert message =~ "maximum is #{max_prompt_bytes} bytes"
+      assert length(FakeTransport.requests()) == 1
+    end
+
+    test "the default profile rejects an actual request above 128000 bytes" do
+      oversized = %{
+        request()
+        | messages: [Message.new(role: :user, content: String.duplicate("x", 128_000))],
+          tool_names: []
+      }
+
+      assert {:ok, prepared} = OpenAICompatible.prepare(runtime(), oversized)
+      assert prepared.budget.status == :too_large
+      assert prepared.budget.prompt_bytes == byte_size(prepared.body)
+
+      assert {:error, %Failure{category: :prompt_too_large, message: message}} =
+               OpenAICompatible.stream(runtime(), oversized, fn _frame -> :ok end)
+
+      assert message =~ "maximum is 128000 bytes"
+      assert FakeTransport.requests() == []
+    end
+
+    test "profile model capacity and output reserve tighten the input token budget" do
+      scoped_runtime =
+        runtime(
+          openai_compatible_providers: [
+            %{
+              id: :deepseek,
+              name: "DeepSeek",
+              base_url: "https://api.deepseek.com",
+              key_env: @key_env,
+              max_prompt_bytes: 1_000_000,
+              context_window_tokens: 16_000,
+              output_reserve_tokens: 4_000
+            }
+          ]
+        )
+
+      assert {:ok, prepared} = OpenAICompatible.prepare(scoped_runtime, request())
+      assert prepared.budget.input_budget_tokens == 12_000
+      assert is_integer(prepared.budget.model_context_percent)
+    end
+
+    test "validates model context capacity against its output reserve" do
+      assert_raise ArgumentError, ~r/output_reserve_tokens/, fn ->
+        RuntimeConfig.fresh(
+          openai_compatible_providers: [
+            %{
+              id: :small_context,
+              name: "Small Context",
+              base_url: "https://example.test/v1",
+              key_env: "SMALL_CONTEXT_KEY",
+              context_window_tokens: 4_000,
+              output_reserve_tokens: 4_000
+            }
+          ]
+        )
+      end
+    end
+  end
+
   describe "Profile" do
     test "exposes the built-in DeepSeek profile" do
       ids = Profile.ids()
@@ -1285,6 +1411,40 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       status: :configured,
       config: config
     }
+  end
+
+  defp max_prompt_profile(max_prompt_bytes) do
+    [
+      openai_compatible_providers: [
+        %{
+          id: :deepseek,
+          name: "DeepSeek",
+          base_url: "https://api.deepseek.com",
+          key_env: @key_env,
+          max_prompt_bytes: max_prompt_bytes
+        }
+      ]
+    ]
+  end
+
+  defp accumulated_tool_messages(round_count, output_bytes) do
+    [Message.new(role: :user, content: "Inspect the workspace")]
+    |> then(fn messages ->
+      Enum.reduce(1..round_count, messages, fn index, acc ->
+        call = ToolCall.new("call-#{index}", "read", %{"path" => "file-#{index}.txt"})
+
+        acc ++
+          [
+            Message.new(role: :assistant, content: "", tool_calls: [call]),
+            Message.new(
+              role: :tool,
+              content: String.duplicate(Integer.to_string(index), output_bytes),
+              tool_call_id: call.id,
+              name: call.tool
+            )
+          ]
+      end)
+    end)
   end
 
   defp request do

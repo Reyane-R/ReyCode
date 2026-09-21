@@ -273,12 +273,29 @@ defmodule ReyCode.RuntimeConfig.Schema do
       &optional_profile_flag!(profile, &1, path)
     )
 
-    Enum.each([:request_timeout_ms, :max_output_bytes, :max_prompt_bytes], fn field ->
-      case Map.fetch(profile, field) do
-        :error -> :ok
-        {:ok, value} -> bounded!("#{path}.#{field}", value, 1)
+    Enum.each(
+      [
+        :request_timeout_ms,
+        :max_output_bytes,
+        :max_prompt_bytes,
+        :context_window_tokens,
+        :output_reserve_tokens
+      ],
+      fn field ->
+        case Map.fetch(profile, field) do
+          :error -> :ok
+          {:ok, value} -> bounded!("#{path}.#{field}", value, 1)
+        end
       end
-    end)
+    )
+
+    context_window_tokens = Map.get(profile, :context_window_tokens)
+    output_reserve_tokens = Map.get(profile, :output_reserve_tokens, 16_384)
+
+    if context_window_tokens && output_reserve_tokens >= context_window_tokens do
+      raise ArgumentError,
+            "invalid #{path}.output_reserve_tokens: must be less than context_window_tokens"
+    end
 
     profile
   end

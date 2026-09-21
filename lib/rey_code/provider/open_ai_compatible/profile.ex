@@ -28,7 +28,9 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
     supports_stream_options: true,
     request_timeout_ms: 600_000,
     max_output_bytes: 10_000_000,
-    max_prompt_bytes: 128_000
+    max_prompt_bytes: 128_000,
+    context_window_tokens: nil,
+    output_reserve_tokens: 16_384
   ]
 
   @type t :: %__MODULE__{
@@ -41,7 +43,9 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
           supports_stream_options: boolean(),
           request_timeout_ms: pos_integer(),
           max_output_bytes: pos_integer(),
-          max_prompt_bytes: pos_integer()
+          max_prompt_bytes: pos_integer(),
+          context_window_tokens: pos_integer() | nil,
+          output_reserve_tokens: pos_integer()
         }
 
   @spec all(OpenAIPolicy.t()) :: [t()]
@@ -172,7 +176,9 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
         :supports_stream_options,
         :request_timeout_ms,
         :max_output_bytes,
-        :max_prompt_bytes
+        :max_prompt_bytes,
+        :context_window_tokens,
+        :output_reserve_tokens
       ])
     )
     |> normalize(policy)
@@ -193,14 +199,23 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
   end
 
   # Fail fast on an impossible profile instead of crashing mid-invocation.
-  defp validate(%__MODULE__{require_key: true, key_env: key_env} = profile)
-       when is_binary(key_env) and key_env != "",
-       do: profile
+  defp validate(%__MODULE__{} = profile) do
+    if profile.context_window_tokens &&
+         profile.output_reserve_tokens >= profile.context_window_tokens do
+      raise ArgumentError,
+            "invalid profile: output_reserve_tokens must be less than context_window_tokens"
+    end
 
-  defp validate(%__MODULE__{require_key: false} = profile), do: profile
+    cond do
+      profile.require_key == false ->
+        profile
 
-  defp validate(%__MODULE__{}) do
-    raise ArgumentError, "invalid profile: key_env is required unless require_key is false"
+      is_binary(profile.key_env) and profile.key_env != "" ->
+        profile
+
+      true ->
+        raise ArgumentError, "invalid profile: key_env is required unless require_key is false"
+    end
   end
 
   defp resolved_base_url(%__MODULE__{id: id, base_url: base_url}, policy) do
