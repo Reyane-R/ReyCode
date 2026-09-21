@@ -70,6 +70,8 @@ defmodule ReyCode.EventContractTest do
         {:assistant_message_opened, "attempt", 0},
         {:provider_frame_recorded, "frame_sequence", 1.5},
         {:provider_frame_recorded, "kind", "carrier_pigeon"},
+        {:invocation_context_compacted, "through_round_index", -1},
+        {:invocation_context_compacted, "generator", "mystery-v1"},
         {:invocation_completed, "metadata", []},
         {:invocation_failed, "error", %{"category" => :boom}},
         {:invocation_cancelled, "reason", 9},
@@ -554,6 +556,21 @@ defmodule ReyCode.EventContractTest do
       "text" => "working",
       "tool_calls" => [],
       "usage" => nil
+    }
+
+  defp valid_data(:invocation_context_compacted),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "through_round_index" => 0,
+      "summary" => "Earlier execution summary",
+      "source_digest" => String.duplicate("a", 64),
+      "source_round_count" => 1,
+      "source_bytes" => 200,
+      "summary_bytes" => 25,
+      "generator" => "extractive-v1"
     }
 
   defp valid_data(:tool_run_requested),

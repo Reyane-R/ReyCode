@@ -11,6 +11,7 @@ defmodule ReyCode.Orchestration.Engine.Client do
   """
 
   alias ReyCode.Failure
+  alias ReyCode.Orchestration.InvocationContextBoundary
 
   alias ReyCode.Provider.Frame
 
@@ -45,6 +46,13 @@ defmodule ReyCode.Orchestration.Engine.Client do
           {:ok, :final | :continue} | {:error, term()}
   def record_round(server, invocation_id, round_index, response_wire) do
     GenServer.call(server, {:record_round, invocation_id, round_index, response_wire}, :infinity)
+  end
+
+  @doc "Records one validated Invocation context boundary durably and idempotently."
+  @spec record_context_boundary(GenServer.server(), String.t(), InvocationContextBoundary.t()) ::
+          :ok | {:error, term()}
+  def record_context_boundary(server, invocation_id, %InvocationContextBoundary{} = boundary) do
+    GenServer.call(server, {:record_context_boundary, invocation_id, boundary}, :infinity)
   end
 
   @doc """

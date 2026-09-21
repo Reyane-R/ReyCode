@@ -13,6 +13,8 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
 
   alias ReyCode.Orchestration.{
     Invocation,
+    InvocationContextBoundary,
+    InvocationExecution,
     Message,
     Participant,
     Projection,
@@ -104,6 +106,18 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
               }
             ],
             tool_runs: %{"run-1" => %ToolRun{id: "run-1", status: :completed}},
+            execution_context: %InvocationExecution{
+              context_boundary: %InvocationContextBoundary{
+                through_round_index: 0,
+                summary: "Earlier work",
+                source_digest: String.duplicate("a", 64),
+                source_round_count: 1,
+                source_bytes: 100,
+                summary_bytes: 12,
+                generator: "extractive-v1",
+                recorded_at: "2026-09-21T12:00:00Z"
+              }
+            },
             error: failure
           }
         }

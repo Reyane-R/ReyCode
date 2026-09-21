@@ -66,6 +66,7 @@ defmodule ReyCode.Orchestration.ProjectorSnapshotTest do
     assert invocation.tool_runs == %{}
     assert invocation.tool_run_order == []
     assert invocation.pending_tool_review == nil
+    assert invocation.execution_context.context_boundary == nil
     assert invocation.status == :running
   end
 end

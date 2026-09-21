@@ -13,6 +13,7 @@ defmodule ReyCode.Orchestration.Projector do
   alias ReyCode.Orchestration.{
     Author,
     Invocation,
+    InvocationContextBoundary,
     InvocationCoordination,
     InvocationExecution,
     Message,
@@ -360,6 +361,24 @@ defmodule ReyCode.Orchestration.Projector do
             Enum.reject(invocation.pending_steering, &MapSet.member?(consumed_ids, &1.id)),
           usage: data["usage"] || invocation.usage
       }
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :invocation_context_compacted, data: data} = event, state) do
+    boundary =
+      data
+      |> Map.put("recorded_at", event.recorded_at)
+      |> InvocationContextBoundary.from_map()
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      current = invocation.execution_context.context_boundary
+      true = boundary.through_round_index < length(invocation.rounds) - 1
+      true = current == nil or boundary.through_round_index > current.through_round_index
+
+      execution_context = %{invocation.execution_context | context_boundary: boundary}
+      %{invocation | execution_context: execution_context}
     end)
     |> put_sequence(event.sequence)
   end

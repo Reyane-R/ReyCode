@@ -7,6 +7,8 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     Delegation,
     DelegationWorktree,
     EventEntries,
+    InvocationContextBoundary,
+    InvocationContextReduction,
     InvocationRequest,
     OperatorQuestions,
     PeerMessaging,
@@ -207,6 +209,18 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     end
   end
 
+  @doc "Validates and records one Invocation-scoped provider context boundary."
+  @spec record_context_boundary(map(), term(), term()) :: response()
+  def record_context_boundary(state, invocation_id, boundary_data) do
+    case state.projection.invocations[invocation_id] do
+      nil ->
+        {:reply, {:error, :invocation_not_found}, state}
+
+      invocation ->
+        persist_context_boundary(state, invocation, boundary_data)
+    end
+  end
+
   def take_tool_run(state, invocation_id) do
     invocation = state.projection.invocations[invocation_id]
 
@@ -336,6 +350,66 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       do: :ok,
       else: {:error, :invalid_round_index}
   end
+
+  defp normalize_context_boundary(%InvocationContextBoundary{} = boundary), do: {:ok, boundary}
+  defp normalize_context_boundary(boundary), do: InvocationContextBoundary.new(boundary)
+
+  defp persist_context_boundary(state, invocation, boundary_data) do
+    case normalize_context_boundary(boundary_data) do
+      {:ok, boundary} ->
+        current = invocation.execution_context.context_boundary
+
+        case context_boundary_duplicate(current, boundary) do
+          :duplicate -> {:reply, :ok, state}
+          :conflict -> {:reply, {:error, :conflicting_invocation_context_boundary}, state}
+          {:error, reason} -> {:reply, {:error, reason}, state}
+          :new -> append_context_boundary(state, invocation, boundary)
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp append_context_boundary(state, invocation, boundary) do
+    cond do
+      invocation.status in [:completed, :failed, :cancelled] ->
+        {:reply, {:error, :invocation_terminal}, state}
+
+      invocation.status != :running ->
+        {:reply, {:error, :invalid_invocation_context_transition}, state}
+
+      true ->
+        case InvocationContextReduction.validate(invocation, boundary) do
+          :ok ->
+            entry = EventEntries.invocation_context_compacted(invocation, boundary)
+            {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
+    end
+  end
+
+  defp context_boundary_duplicate(nil, _boundary), do: :new
+
+  defp context_boundary_duplicate(current, proposed) do
+    cond do
+      current.through_round_index > proposed.through_round_index ->
+        {:error, :stale_invocation_context_boundary}
+
+      current.through_round_index < proposed.through_round_index ->
+        :new
+
+      boundary_content(current) == boundary_content(proposed) ->
+        :duplicate
+
+      true ->
+        :conflict
+    end
+  end
+
+  defp boundary_content(boundary), do: boundary |> Map.from_struct() |> Map.delete(:recorded_at)
 
   defp next_tool_run(state, invocation) do
     case ToolRuns.next_action(invocation) do

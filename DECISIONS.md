@@ -20,6 +20,23 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D48 - Active Invocations compact only complete round prefixes (Policy - 2026-09-21)
+
+An Invocation may record one current InvocationContextBoundary over a completed
+prefix of its ProviderRounds. The boundary replaces that prefix with one bounded
+InvocationContextSummary only when rebuilding provider input; ProviderRounds,
+ToolRuns, Events, and the visible transcript remain unchanged. Every covered
+ToolCall has a terminal ToolRun, the newest round stays verbatim, later boundaries
+strictly advance the prior boundary, and a canonical chained source digest rejects
+stale or conflicting summaries.
+
+Deterministic extractive reduction is the fail-closed base. Optional semantic
+refinement runs outside the Engine as one bounded, tool-free provider round and
+may replace only the summary text for the same source identity. The Engine owns
+validation and durable append; adapters never mutate orchestration state. This
+extends D46's unbounded useful round count without weakening context bounds and
+keeps Session ContextBoundary semantics separate from Invocation continuation.
+
 ### D47 - Operator questions are atomic grouped requests with client-local drafts (Policy - 2026-09-18)
 
 One `ask_operator` ToolRun owns one durable OperatorQuestion envelope containing

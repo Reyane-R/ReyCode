@@ -5,6 +5,7 @@ defmodule ReyCode.Orchestration.EventEntries do
 
   alias ReyCode.Orchestration.{
     Invocation,
+    InvocationContextBoundary,
     ModelTier,
     OperatorQuestion,
     OperatorQuestions,
@@ -457,6 +458,22 @@ defmodule ReyCode.Orchestration.EventEntries do
       },
       invocation
     )
+  end
+
+  @doc "Builds the durable event for one Invocation context boundary."
+  @spec invocation_context_compacted(Invocation.t(), InvocationContextBoundary.t()) ::
+          event_entry()
+  def invocation_context_compacted(invocation, boundary) do
+    data =
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.session_id
+      }
+      |> Map.merge(InvocationContextBoundary.to_wire(boundary))
+
+    invocation_event(:invocation_context_compacted, data, invocation)
   end
 
   @doc "Builds the durable event requesting one tool run under an authorization decision."

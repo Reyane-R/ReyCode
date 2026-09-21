@@ -4,6 +4,7 @@ defmodule ReyCode.Event do
   alias ReyCode.{Failure, JSON}
 
   alias ReyCode.Orchestration.{
+    InvocationContextBoundary,
     OperatorQuestions,
     StrategicReview,
     Turn,
@@ -55,7 +56,7 @@ defmodule ReyCode.Event do
     verified_change_recorded
     verified_change_resolution_recorded
     room_created session_forked context_compacted participant_added participant_configured message_posted turn_queued turn_started assistant_message_opened
-    invocation_started invocation_steering_requested provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
+    invocation_started invocation_steering_requested invocation_context_compacted provider_frame_recorded invocation_completed invocation_failed invocation_cancelled
     turn_completed snapshot_recorded squad_configured squad_stage_entered squad_decision_recorded
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
     gate_review_requested gate_resolved squad_budget_extended tool_ask_requested tool_ask_resolved
@@ -316,6 +317,20 @@ defmodule ReyCode.Event do
         |> Map.merge(%{
           "steering_id" => :id,
           "body" => :text
+        }),
+      optional: %{}
+    },
+    invocation_context_compacted: %{
+      required:
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
+        |> Map.merge(%{
+          "through_round_index" => :non_negative_integer,
+          "summary" => :id,
+          "source_digest" => :id,
+          "source_round_count" => :positive_integer,
+          "source_bytes" => :positive_integer,
+          "summary_bytes" => :positive_integer,
+          "generator" => {:one_of, ~w(extractive-v1 semantic-v1)}
         }),
       optional: %{}
     },
@@ -755,6 +770,16 @@ defmodule ReyCode.Event do
     case VerifiedChange.from_wire(record) do
       {:ok, _record} -> :ok
       {:error, :invalid_verified_change} -> {:error, "invalid verified-change record"}
+    end
+  end
+
+  defp cross_field_rules(:invocation_context_compacted, data) do
+    case InvocationContextBoundary.new(data) do
+      {:ok, _boundary} ->
+        :ok
+
+      {:error, :invalid_invocation_context_boundary} ->
+        {:error, "invalid invocation_context_compacted event: inconsistent boundary"}
     end
   end
 

@@ -56,9 +56,13 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **TurnOutcome** — Result of a terminal Turn: completed, partial, failed, cancelled, or reworked.
 
-**ContextBoundary** — Durable Session sequence through which earlier Messages are replaced by one ContextSummary in future provider requests; Events and transcript history remain unchanged.
+**ContextBoundary** — Durable Session sequence through which earlier Messages are replaced by one ContextSummary in future provider requests; Events and transcript history remain unchanged. It never covers ProviderRounds within an active Invocation.
 
 **ContextSummary** — Bounded extractive conversation value recorded at a ContextBoundary.
+
+**InvocationContextBoundary** — Durable ProviderRound index through which one Invocation's earlier complete ProviderRounds and terminal ToolRun results are replaced by one InvocationContextSummary in later provider requests; original rounds, ToolRuns, Events, and transcript history remain unchanged.
+
+**InvocationContextSummary** — Bounded provider-facing execution-history value recorded at an InvocationContextBoundary. It carries no tool authority and never replaces frozen system, project, or verified-change instructions.
 
 **VerifiedChange** — Opt-in, Session-owned change request with a frozen goal, ordered Owner-authorized check commands, repair limits, isolated candidate, and retained verification evidence; its identity refers to that one request rather than any individual implementation attempt.
 
@@ -211,6 +215,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - A Steering belongs to one active Invocation and is recorded into exactly one ProviderRound when consumed.
 - A DelegationContract belongs to exactly one delegated child Invocation; its IsolationWorktree, when present, has the same owner.
 - An Invocation owns ordered ProviderRounds and ToolRuns.
+- An Invocation has at most one current InvocationContextBoundary; later boundaries strictly advance it without deleting ProviderRounds or ToolRuns.
 - A ToolArtifact belongs to one successful ToolRun output; it is retained by bounded count and bytes rather than projected as business state.
 - A Session has at most one current ContextBoundary; later boundaries supersede it for provider-context reconstruction without deleting Events.
 - A SessionFork has exactly one parent Session and one immutable fork sequence.
