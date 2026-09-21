@@ -13,8 +13,9 @@ defmodule ReyCode.AgentLoop do
   alias ReyCode.{Agent, ArtifactStore, Failure}
   alias ReyCode.Orchestration.Engine.Client
   alias ReyCode.Orchestration.Engine.SourceTask
-  alias ReyCode.Provider.Catalog
-  alias ReyCode.Provider.Response
+  alias ReyCode.Orchestration.InvocationContextBoundary
+  alias ReyCode.Provider
+  alias ReyCode.Provider.{Catalog, ContextBudget, Response}
   alias ReyCode.Tool.{Request, Result}
   alias ReyCode.ToolRegistry
 
@@ -68,15 +69,7 @@ defmodule ReyCode.AgentLoop do
     case resolve_runtime(state, request) do
       {:ok, runtime} ->
         :ok = Client.invocation_started(state.engine, state.invocation_id)
-
-        case Agent.stream(state, request, runtime) do
-          {:ok, %Response{} = response} ->
-            record_round(state, request, response)
-
-          {:error, error} ->
-            Agent.fail(state, error)
-            {:stop, state}
-        end
+        preflight_context(state, request, runtime)
 
       {:error, reason} ->
         Agent.fail(state, unavailable_provider_error(reason))
@@ -94,6 +87,94 @@ defmodule ReyCode.AgentLoop do
 
   defp resolve_runtime(state, _request),
     do: Catalog.resolve_continuation(state.provider, state.provider_catalog)
+
+  defp preflight_context(state, request, runtime) do
+    case Provider.context_budget(runtime, request) do
+      {:ok, %ContextBudget{status: :ready}} -> stream_provider(state, request, runtime)
+      {:ok, %ContextBudget{} = budget} -> maintain_context(state, request, runtime, budget)
+      :unassessed -> stream_provider(state, request, runtime)
+      {:error, reason} -> fail_context_maintenance(state, reason)
+    end
+  end
+
+  defp maintain_context(state, request, runtime, budget) do
+    max_summary_bytes =
+      min(
+        InvocationContextBoundary.maximum_summary_bytes(),
+        min(budget.target_prompt_bytes, budget.target_input_tokens * 4)
+      )
+
+    case Client.prepare_context_boundary(state.engine, state.invocation_id, max_summary_bytes) do
+      {:ok, boundary} -> record_context_boundary(state, runtime, boundary)
+      :unchanged -> stream_provider(state, request, runtime)
+      {:error, :context_summary_budget_too_small} -> stream_provider(state, request, runtime)
+      {:error, reason} -> fail_context_maintenance(state, reason)
+    end
+  end
+
+  defp record_context_boundary(state, runtime, boundary) do
+    case Client.record_context_boundary(state.engine, state.invocation_id, boundary) do
+      :ok ->
+        rebuild_after_context_boundary(state, runtime)
+
+      {:error, reason}
+      when reason in [
+             :stale_invocation_context_boundary,
+             :conflicting_invocation_context_boundary
+           ] ->
+        rebuild_after_context_boundary(state, runtime)
+
+      {:error, :invocation_terminal} ->
+        {:stop, state}
+
+      {:error, reason} ->
+        fail_context_maintenance(state, reason)
+    end
+  end
+
+  defp rebuild_after_context_boundary(state, runtime) do
+    case Client.invocation_request(state.engine, state.invocation_id) do
+      {:ok, request} -> reassess_context_target(state, request, runtime)
+      {:terminal, _status} -> {:stop, state}
+      {:waiting, _reason} -> {:stop, state}
+    end
+  end
+
+  defp reassess_context_target(state, request, runtime) do
+    case Provider.context_budget(runtime, request) do
+      {:ok, %ContextBudget{} = budget} ->
+        if context_target_reached?(budget),
+          do: stream_provider(state, request, runtime),
+          else: maintain_context(state, request, runtime, budget)
+
+      :unassessed ->
+        stream_provider(state, request, runtime)
+
+      {:error, reason} ->
+        fail_context_maintenance(state, reason)
+    end
+  end
+
+  defp context_target_reached?(budget) do
+    budget.prompt_bytes <= budget.target_prompt_bytes and
+      budget.estimated_prompt_tokens <= budget.target_input_tokens
+  end
+
+  defp stream_provider(state, request, runtime) do
+    case Agent.stream(state, request, runtime) do
+      {:ok, %Response{} = response} ->
+        record_round(state, request, response)
+
+      {:error, error} ->
+        Agent.fail(state, error)
+        {:stop, state}
+    end
+  end
+
+  defp fail_context_maintenance(state, reason) do
+    Agent.fail(state, internal_error("provider context maintenance failed: " <> inspect(reason)))
+    {:stop, state}
+  end
 
   defp record_round(state, request, response) do
     case Client.record_round(

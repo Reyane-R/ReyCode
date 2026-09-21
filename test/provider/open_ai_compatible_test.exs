@@ -3,6 +3,7 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.Failure
+  alias ReyCode.Provider
 
   alias ReyCode.OpenAICompatible.FakeTransport
 
@@ -1200,7 +1201,9 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
 
       runtime = runtime()
       assert {:ok, prepared} = OpenAICompatible.prepare(runtime, scoped)
+      assert {:ok, budget} = Provider.context_budget(runtime, scoped)
       assert prepared.budget.prompt_bytes == byte_size(prepared.body)
+      assert budget == prepared.budget
       assert prepared.budget.model_context_percent == nil
 
       FakeTransport.set_stream([

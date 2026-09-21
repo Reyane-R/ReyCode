@@ -62,6 +62,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   @doc "Streams one chat-completion round from the runtime's OpenAI-compatible provider."
   @spec stream(Runtime.t(), Request.t(), (Frame.t() -> :ok)) ::
           {:ok, Response.t()} | {:error, Failure.t()}
+  @impl true
   def stream(%Runtime{provider_id: provider_id, config: %OpenAIPolicy{} = policy}, request, emit) do
     transport = transport(policy)
 
@@ -89,6 +90,14 @@ defmodule ReyCode.Provider.OpenAICompatible do
       ) do
     with {:ok, profile} <- Profile.fetch(provider_id, policy) do
       {:ok, prepare_request(request, profile, policy, initial_shape(profile))}
+    end
+  end
+
+  @impl true
+  def context_budget(%Runtime{} = runtime, %Request{} = request) do
+    case prepare(runtime, request) do
+      {:ok, prepared} -> {:ok, prepared.budget}
+      {:error, reason} -> {:error, reason}
     end
   end
 

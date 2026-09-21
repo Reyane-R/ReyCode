@@ -554,6 +554,12 @@ records a bounded extractive ContextSummary and a durable ContextBoundary. The
 timeline keeps the complete transcript and inserts a visible compaction divider;
 `/context` shows the summary sent with later Messages.
 
+Long-running provider/tool loops also maintain their active Invocation context.
+Before a continuation is sent, providers with exact preflight support trigger a
+durable summary at 80 percent of the request budget and reduce toward 60 percent.
+Only complete older rounds are summarized; the newest round, full execution
+ledger, ToolRuns, Events, and visible transcript remain intact.
+
 The conversation view separates exchanges with whitespace and marks your
 message text with a subtle `│` rail. On terminals at least 32 rows tall,
 answers have an extra row below their header and exchanges have a two-row

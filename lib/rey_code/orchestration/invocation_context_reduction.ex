@@ -79,10 +79,11 @@ defmodule ReyCode.Orchestration.InvocationContextReduction do
 
   defp source(invocation, start_index, through_round_index) do
     rounds = Enum.slice(invocation.rounds, start_index..through_round_index)
+    runs_by_call = runs_by_call(invocation)
 
     with true <- length(rounds) == through_round_index - start_index + 1,
-         true <- Enum.all?(rounds, &complete_round?(invocation, &1)) do
-      entries = Enum.map(rounds, &entry(invocation, &1))
+         true <- Enum.all?(rounds, &complete_round?(runs_by_call, &1)) do
+      entries = Enum.map(rounds, &entry(runs_by_call, &1))
       canonical = canonical(entries)
       {:ok, %{entries: entries, canonical: canonical, bytes: byte_size(canonical)}}
     else
@@ -90,23 +91,29 @@ defmodule ReyCode.Orchestration.InvocationContextReduction do
     end
   end
 
-  defp complete_round?(invocation, round) do
+  defp runs_by_call(invocation) do
+    invocation.tool_runs
+    |> Map.values()
+    |> Map.new(&{&1.tool_call_id, &1})
+  end
+
+  defp complete_round?(runs_by_call, round) do
     Enum.all?(round.tool_calls || [], fn call ->
-      case ToolRuns.run_for_call(invocation, call.id) do
+      case Map.get(runs_by_call, call.id) do
         nil -> false
         run -> ToolRuns.terminal?(run.status)
       end
     end)
   end
 
-  defp entry(invocation, round) do
+  defp entry(runs_by_call, round) do
     %{
       "round_index" => round.index,
       "assistant" => round.text || "",
       "steering" => Enum.map(round.steering || [], & &1.body),
       "tools" =>
         Enum.map(round.tool_calls || [], fn call ->
-          run = ToolRuns.run_for_call(invocation, call.id)
+          run = Map.fetch!(runs_by_call, call.id)
 
           %{
             "call_id" => call.id,

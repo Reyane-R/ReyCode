@@ -623,6 +623,9 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:record_round, invocation_id, round_index, response_wire}, _from, state),
     do: Loop.record_round(state, invocation_id, round_index, response_wire)
 
+  def handle_call({:prepare_context_boundary, invocation_id, max_summary_bytes}, _from, state),
+    do: Loop.prepare_context_boundary(state, invocation_id, max_summary_bytes)
+
   def handle_call({:record_context_boundary, invocation_id, boundary}, _from, state),
     do: Loop.record_context_boundary(state, invocation_id, boundary)
 

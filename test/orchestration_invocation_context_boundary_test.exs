@@ -77,6 +77,20 @@ defmodule ReyCode.Orchestration.InvocationContextBoundaryTest do
     assert :ok = InvocationContextReduction.validate(expanded, second)
   end
 
+  test "large histories advance through bounded reduction passes" do
+    invocation = invocation_with_rounds(67, 1)
+
+    assert {:ok, first} = InvocationContextReduction.prepare(invocation)
+    assert first.through_round_index == 63
+
+    execution_context = %{invocation.execution_context | context_boundary: first}
+    invocation = %{invocation | execution_context: execution_context}
+
+    assert {:ok, second} = InvocationContextReduction.prepare(invocation)
+    assert second.through_round_index == 65
+    assert :ok = InvocationContextReduction.validate(invocation, second)
+  end
+
   test "boundary wire data round-trips and rejects inconsistent summary bytes" do
     invocation = invocation_with_rounds(2, 64)
     assert {:ok, boundary} = InvocationContextReduction.prepare(invocation)

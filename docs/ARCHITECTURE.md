@@ -439,11 +439,12 @@ The Agent Loop follows this cycle:
 ```
 1. Ask the Engine for the invocation's current state (durable request)
 2. Drain pending tool runs (execute ready ones, pause on awaiting approval)
-3. If all tool runs are done, rebuild the next provider request
-4. A long Invocation may replace a complete old round prefix with its durable InvocationContextSummary
-5. Stream one provider round and record it (with its tool calls) durably
-6. If the round had tool calls → go to step 2
-7. If the round had no tool calls → the invocation is done
+3. If all tool runs are done, rebuild and exactly preflight the next provider request
+4. At 80% of a provider budget, replace complete old round prefixes with durable InvocationContextSummaries until the request reaches the 60% target or no prefix remains
+5. Rebuild and preflight after every durable boundary; never stream the superseded request
+6. Stream one provider round and record it (with its tool calls) durably
+7. If the round had tool calls → go to step 2
+8. If the round had no tool calls → the invocation is done
 ```
 
 Every step is durable. If the process crashes mid-loop, the next process picks
@@ -453,6 +454,7 @@ Session ContextBoundaries compact earlier conversation Messages before a Turn.
 InvocationContextBoundaries are separate: they compact only complete ProviderRound
 and terminal ToolRun prefixes within one long-running Invocation. The latest
 boundary is projected, while original execution history remains replayable.
+Adapters without exact context preflight preserve their existing stream behavior.
 
 The Agent (`agent.ex`) handles the mechanics: frame buffering in ETS tables,
 error containment, and provider streaming. The Agent Loop (`agent_loop.ex`)

@@ -11,7 +11,7 @@ These are design envelopes, not benchmarks. Changes to a data-plane path update 
 | Frame persistence | Each provider-batched frame is recorded before acknowledgement; no second count-only buffer |
 | Text chunk target | 8,192 bytes |
 | Text flush latency | 50 ms |
-| Provider rounds | 16 per Invocation |
+| Provider rounds | No local count quota; each request remains byte/token bounded |
 
 Design intent: network latency dominates. Buffer short text to reduce event transactions while flushing within interactive latency. Output caps bound binary retention and parsing.
 
@@ -23,6 +23,26 @@ each durable event. The existing provider activity retention bound still applies
 Historical provider activity remains readable, bounded to the newest 256 events
 per Invocation. New model API calls return text and ToolCalls; tool activity is
 recorded through ReyCode's durable ToolRun lifecycle.
+
+### Active Invocation context maintenance
+
+OpenAI-compatible preflight encodes the same body as the first stream attempt.
+It adds no network request and retains only that bounded request body until the
+assessment returns. At 80 percent of either request budget, one maintenance pass
+canonicalizes at most 64 complete old ProviderRounds, writes one bounded summary
+event of at most 32,768 bytes, rebuilds the request, and reassesses toward 60
+percent. Additional passes strictly advance the boundary, so their count is
+bounded by the finite retained round list; if no prefix remains, the existing
+provider byte ceiling decides whether streaming proceeds.
+
+Network traffic is unchanged. Storage adds at most one bounded event per pass;
+all original events remain under the existing unbounded database-retention policy.
+The Projection already retains complete Invocation history, while reduction builds
+one ToolCall-to-ToolRun index and handles at most 64 source rounds per pass rather
+than rescanning all ToolRuns per call. The Agent Loop performs no provider stream
+until the rebuilt request has been assessed. Tests cover no-preflight adapters,
+maintenance with no eligible prefix, hard-limit recovery, exact OpenAI encoding,
+multi-pass advancement, durable event ordering, and adapter-fault containment.
 
 ## Local engine transport
 

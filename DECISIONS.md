@@ -36,6 +36,12 @@ may replace only the summary text for the same source identity. The Engine owns
 validation and durable append; adapters never mutate orchestration state. This
 extends D46's unbounded useful round count without weakening context bounds and
 keeps Session ContextBoundary semantics separate from Invocation continuation.
+Before each provider continuation, adapters that support exact preflight report
+the encoded request budget. At the 80 percent maintenance threshold, the Agent
+Loop advances durable boundaries toward the 60 percent target before streaming;
+it rebuilds and reassesses after every append. If no complete older prefix remains,
+requests below the hard byte ceiling continue, while oversized requests retain the
+adapter's existing fail-closed rejection.
 
 ### D47 - Operator questions are atomic grouped requests with client-local drafts (Policy - 2026-09-18)
 

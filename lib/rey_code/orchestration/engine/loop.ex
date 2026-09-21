@@ -221,6 +221,25 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     end
   end
 
+  @doc "Builds one bounded Invocation context boundary without changing durable state."
+  @spec prepare_context_boundary(map(), term(), term()) :: response()
+  def prepare_context_boundary(state, invocation_id, max_summary_bytes)
+      when is_integer(max_summary_bytes) and max_summary_bytes > 0 do
+    case state.projection.invocations[invocation_id] do
+      nil ->
+        {:reply, {:error, :invocation_not_found}, state}
+
+      %{status: status} when status in [:completed, :failed, :cancelled] ->
+        {:reply, {:error, :invocation_terminal}, state}
+
+      invocation ->
+        {:reply, InvocationContextReduction.prepare(invocation, max_summary_bytes), state}
+    end
+  end
+
+  def prepare_context_boundary(state, _invocation_id, _max_summary_bytes),
+    do: {:reply, {:error, :invalid_context_summary_budget}, state}
+
   def take_tool_run(state, invocation_id) do
     invocation = state.projection.invocations[invocation_id]
 

@@ -4,7 +4,6 @@ defmodule ReyCode.Orchestration.InvocationContextBoundaryEngineTest do
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.Orchestration.{Engine, Projector}
   alias ReyCode.Orchestration.Engine.Client
-  alias ReyCode.Orchestration.InvocationContextReduction
   alias ReyCode.Provider.{Response, Runtime, ToolCall}
   alias ReyCode.Test.Wait
 
@@ -88,7 +87,10 @@ defmodule ReyCode.Orchestration.InvocationContextBoundaryEngineTest do
     assert_receive {:boundary_request, request}, 2_000
 
     invocation = Engine.snapshot(@engine).invocations[request.invocation_id]
-    assert {:ok, boundary} = InvocationContextReduction.prepare(invocation)
+
+    assert {:ok, boundary} =
+             Client.prepare_context_boundary(@engine, invocation.id, 32_768)
+
     assert :ok = Client.record_context_boundary(@engine, invocation.id, boundary)
     assert :ok = Client.record_context_boundary(@engine, invocation.id, boundary)
 

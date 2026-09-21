@@ -48,6 +48,13 @@ defmodule ReyCode.Orchestration.Engine.Client do
     GenServer.call(server, {:record_round, invocation_id, round_index, response_wire}, :infinity)
   end
 
+  @doc "Builds the next Invocation context boundary from authoritative projected state."
+  @spec prepare_context_boundary(GenServer.server(), String.t(), pos_integer()) ::
+          :unchanged | {:ok, InvocationContextBoundary.t()} | {:error, term()}
+  def prepare_context_boundary(server, invocation_id, max_summary_bytes) do
+    GenServer.call(server, {:prepare_context_boundary, invocation_id, max_summary_bytes})
+  end
+
   @doc "Records one validated Invocation context boundary durably and idempotently."
   @spec record_context_boundary(GenServer.server(), String.t(), InvocationContextBoundary.t()) ::
           :ok | {:error, term()}
