@@ -7,6 +7,8 @@ defmodule ReyCode.TUI.Effects do
 
   @behaviour Breeze.Implicit
 
+  alias ReyCode.TUI.Blackwall
+
   @frame_ms 100
   @entrance_ms 700
   @max_width_count 160
@@ -27,9 +29,11 @@ defmodule ReyCode.TUI.Effects do
             skip?: false,
             ascii?: false,
             width_count: 24,
+            rows_count: 1,
             clip: {0, 0, 0, 0},
             text: "",
-            identity: nil
+            identity: nil,
+            phase: :idle
 
   @impl true
   def init(_children, attrs, previous) do
@@ -45,14 +49,16 @@ defmodule ReyCode.TUI.Effects do
 
     state = %__MODULE__{
       kind: Map.fetch!(attrs, :"effect-kind"),
-      started_ms: started_ms,
+      started_ms: Map.get(attrs, :"effect-started-ms", started_ms),
       enabled?: Map.get(attrs, :"effect-enabled", false),
       skip?: Map.get(attrs, :"effect-skip", false),
       ascii?: Map.get(attrs, :"effect-ascii", false),
       width_count: attrs |> Map.get(:"effect-width", 24) |> max(1) |> min(@max_width_count),
+      rows_count: attrs |> Map.get(:"effect-rows", 1) |> max(1) |> min(5),
       clip: Map.get(attrs, :"effect-clip", {0, 0, 0, 0}),
       text: Map.get(attrs, :"effect-text", ""),
-      identity: identity
+      identity: identity,
+      phase: Map.get(attrs, :"effect-phase", :idle)
     }
 
     options =
@@ -155,6 +161,11 @@ defmodule ReyCode.TUI.Effects do
     scanner(state, frame)
   end
 
+  defp content(%{kind: :blackwall} = state, frame, elapsed_ms) do
+    elapsed_ms = if state.enabled?, do: elapsed_ms, else: 0
+    Enum.map_join(0..(state.rows_count - 1), "\n", &wall_row(state, {frame, elapsed_ms}, &1))
+  end
+
   defp content(%{kind: :emblem, ascii?: true}, frame, _elapsed_ms) do
     "    /------------\\\n   /    [ " <>
       elem(@glyphs, rem(frame, 6)) <>
@@ -202,6 +213,37 @@ defmodule ReyCode.TUI.Effects do
       end
     end)
   end
+
+  defp wall_glyphs(true), do: {"-", "/", ":"}
+  defp wall_glyphs(false), do: {"─", "╱", "░"}
+
+  defp wall_row(state, {frame, elapsed_ms}, row) do
+    glyphs = wall_glyphs(state.ascii?)
+    density = wall_density(state.phase)
+    frame = if state.phase in [:idle, :blocked, :failed, :cancelled], do: 0, else: frame
+
+    Enum.map_join(0..(state.width_count - 1), fn index ->
+      offset = Integer.mod(index * 7 + row * 3 + div(frame, 2), density)
+
+      wall_cell(state, glyphs, {index, offset}, elapsed_ms)
+    end)
+  end
+
+  defp wall_density(:breach), do: 3
+  defp wall_density(:receiving), do: 17
+  defp wall_density(_phase), do: 11
+
+  defp wall_cell(%{phase: :settling} = state, glyphs, {index, _offset}, elapsed_ms) do
+    if index < div(elapsed_ms * state.width_count, Blackwall.settle_ms()),
+      do: elem(glyphs, 0),
+      else: elem(glyphs, 2)
+  end
+
+  defp wall_cell(_state, glyphs, {_index, 0}, _frame), do: elem(glyphs, 1)
+  defp wall_cell(_state, glyphs, {_index, 1}, _frame), do: elem(glyphs, 2)
+
+  defp wall_cell(state, glyphs, _position, _frame),
+    do: if(state.rows_count > 1, do: " ", else: elem(glyphs, 0))
 
   defp resolve_logo(text, frame, elapsed_ms) do
     glyphs = String.graphemes(text)

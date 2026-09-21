@@ -69,8 +69,22 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
         :complete ->
           :ok = emit.(Frame.text_delta(request.resume_from + 1, "done"))
           {:ok, Response.new(text: "done", usage: %{"total_tokens" => 2})}
+
+        :stream ->
+          :ok = emit.(Frame.text_delta(request.resume_from + 1, "partial"))
+          complete_stream(request, emit)
       after
         10_000 -> {:error, Failure.new(:internal, "blocking provider timed out")}
+      end
+    end
+
+    defp complete_stream(request, emit) do
+      receive do
+        :complete ->
+          :ok = emit.(Frame.text_delta(request.resume_from + 2, " response"))
+          {:ok, Response.new(text: "partial response", usage: %{"total_tokens" => 2})}
+      after
+        10_000 -> {:error, Failure.new(:internal, "stream completion timed out")}
       end
     end
   end
@@ -86,6 +100,7 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
 
     projection = Wait.projection(@engine, &active_turn/1)
     push_projection(session, projection)
+    assert Breeze.Test.metadata(session).assigns.blackwall.phase == :breach
     engine_sequence = projection.sequence
     tui_sequence = Breeze.Test.metadata(session).assigns.projection.sequence
     turn = active_turn_record(projection)
@@ -112,7 +127,10 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
     send(provider_pid, :complete)
     terminal = Wait.projection(@engine, &terminal_turn/1)
     push_projection(session, terminal)
-    assert_receive {:cancelled, _timer_ref}, 5_000
+    assert Breeze.Test.metadata(session).assigns.blackwall.phase == :settling
+    assert AnimationClock.armed?(Breeze.Test.metadata(session).assigns.animation_clock)
+    :atomics.put(stack.decoration_time, 1, 400)
+    assert {:noreply, _} = Breeze.Test.info(session, {:activity_tick, final_token})
     refute AnimationClock.armed?(Breeze.Test.metadata(session).assigns.animation_clock)
 
     terminal_screen = session |> Breeze.Test.render!() |> plain()
@@ -167,6 +185,56 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
 
     assert {:noreply, _focused} = Breeze.Test.info(session, {:activity_tick, token})
     refute_receive {:scheduled, _token, _delay, _timer_ref}
+  end
+
+  test "streamed text calms the boundary without changing the draft or response" do
+    stack = start_stack()
+    session = start_session(stack)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    send_prompt(session, "stream a response")
+    assert_receive {:provider_waiting, invocation_id, provider_pid}, 5_000
+    push_projection(session, Wait.projection(@engine, &active_turn/1))
+    assert Breeze.Test.metadata(session).assigns.blackwall.phase == :breach
+
+    Breeze.Test.render!(session)
+    assert {:noreply, _, _} = Breeze.Test.input(session, "x")
+    send(provider_pid, :stream)
+
+    streaming =
+      Wait.projection(@engine, fn projection ->
+        invocation = Map.fetch!(projection.invocations, invocation_id)
+        if projection.messages[invocation.message_id].body == "partial", do: projection
+      end)
+
+    push_projection(session, streaming)
+    assert Breeze.Test.metadata(session).assigns.blackwall.phase == :receiving
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "partial"
+    assert screen =~ "BLACKWALL // HUD"
+    assigns = Breeze.Test.metadata(session).assigns
+    assert assigns.drafts[assigns.selected_session_id] == "x"
+
+    send(provider_pid, :complete)
+    push_projection(session, Wait.projection(@engine, &terminal_turn/1))
+    assert session |> Breeze.Test.render!() |> plain() =~ "partial response"
+  end
+
+  test "narrow ASCII terminal retains a compact boundary and usable composer" do
+    stack = start_stack(tui_reduced_motion: true)
+    session = start_session(stack, size: {60, 24}, animation_style: :ascii)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+    send_prompt(session, "narrow screen")
+    assert_receive {:provider_waiting, _id, provider_pid}, 5_000
+    push_projection(session, Wait.projection(@engine, &active_turn/1))
+    screen = session |> Breeze.Test.render!() |> plain()
+    assert screen =~ "REYCODE"
+    assert screen =~ "Message Assistant"
+    refute screen =~ "BLACKWALL // HUD"
+    assert screen =~ "/"
+    send(provider_pid, :complete)
+    push_projection(session, Wait.projection(@engine, &terminal_turn/1))
+    refute AnimationClock.armed?(Breeze.Test.metadata(session).assigns.animation_clock)
+    assert Breeze.Test.metadata(session).assigns.blackwall.phase == :idle
   end
 
   defp drive_ticks(_session, token, _now_ms, 0), do: token
@@ -233,12 +301,19 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
       true
     end
 
-    %{catalog: catalog, config: config, schedule: schedule, cancel: cancel, workspace: workspace}
+    %{
+      catalog: catalog,
+      config: config,
+      schedule: schedule,
+      cancel: cancel,
+      workspace: workspace,
+      decoration_time: :atomics.new(1, [])
+    }
   end
 
-  defp start_session(stack) do
+  defp start_session(stack, opts \\ []) do
     Breeze.Test.start!(ReyCode.TUI,
-      size: {120, 32},
+      size: Keyword.get(opts, :size, {120, 32}),
       theme: ReyCode.Theme.default(),
       global_keybindings: ReyCode.TUI.global_keybindings(),
       start_opts: [
@@ -247,8 +322,9 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
         config: stack.config,
         workspace: stack.workspace,
         animation_schedule: stack.schedule,
-        animation_style: :unicode,
-        animation_cancel: stack.cancel
+        animation_style: Keyword.get(opts, :animation_style, :unicode),
+        animation_cancel: stack.cancel,
+        decoration_now: fn -> :atomics.get(stack.decoration_time, 1) end
       ]
     )
   end

@@ -13,6 +13,7 @@ defmodule ReyCode.TUI.State do
     AgentProfile,
     AnimationClock,
     Artifacts,
+    Blackwall,
     Clipboard,
     ContextBoundary,
     Decisions,
@@ -108,6 +109,8 @@ defmodule ReyCode.TUI.State do
         settings: Settings.initial(),
         workspace_preview_path: nil,
         animation_clock: clock,
+        decoration_now:
+          Keyword.get(opts, :decoration_now, fn -> System.monotonic_time(:millisecond) end),
         animation_now_ms: now_ms,
         animation_style: Keyword.get(opts, :animation_style, Spinner.style()),
         keybindings: keybindings,
@@ -497,8 +500,15 @@ defmodule ReyCode.TUI.State do
     if Map.has_key?(term.assigns, :animation_clock) do
       activity = current_activity(term, now_ms)
       active? = not term.assigns.home and Activity.active?(activity)
-      clock = AnimationClock.reconcile(term.assigns.animation_clock, active?)
-      Component.assign(term, animation_clock: clock, animation_now_ms: now_ms)
+      wall = reconcile_blackwall(term, activity)
+
+      clock =
+        AnimationClock.reconcile(
+          term.assigns.animation_clock,
+          active? or Blackwall.transitioning?(wall)
+        )
+
+      Component.assign(term, animation_clock: clock, animation_now_ms: now_ms, blackwall: wall)
     else
       term
     end
@@ -510,9 +520,16 @@ defmodule ReyCode.TUI.State do
     activity = current_activity(term, now_ms)
     active? = not term.assigns.home and Activity.active?(activity)
 
-    case AnimationClock.tick(term.assigns.animation_clock, token, active?) do
+    wall = reconcile_blackwall(term, activity)
+
+    case AnimationClock.tick(
+           term.assigns.animation_clock,
+           token,
+           active? or Blackwall.transitioning?(wall)
+         ) do
       {:ok, clock} ->
-        {:ok, Component.assign(term, animation_clock: clock, animation_now_ms: now_ms)}
+        {:ok,
+         Component.assign(term, animation_clock: clock, animation_now_ms: now_ms, blackwall: wall)}
 
       :stale ->
         :stale
@@ -525,6 +542,7 @@ defmodule ReyCode.TUI.State do
     term
     |> Component.assign(
       selected_session_id: session_id,
+      blackwall: %Blackwall{},
       home: home?,
       expanded_message_ids: [],
       engine_workspace_missing?: false
@@ -556,6 +574,16 @@ defmodule ReyCode.TUI.State do
   def stop_animation(term) do
     clock = AnimationClock.stop(term.assigns.animation_clock)
     Component.assign(term, animation_clock: clock)
+  end
+
+  defp reconcile_blackwall(term, activity) do
+    Blackwall.reconcile(
+      Map.get(term.assigns, :blackwall, %Blackwall{}),
+      term.assigns,
+      activity,
+      term.assigns.decoration_now.(),
+      not term.assigns.animation_clock.reduced_motion?
+    )
   end
 
   @doc "Updates the selected session's composer draft."

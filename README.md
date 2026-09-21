@@ -535,6 +535,17 @@ work pulse remain visible while the timeline preserves durable Invocation
 order. A waiting-question indicator opens with `Ctrl+A`; the budget meter and
 composer warn at 80 percent without stopping the Invocation.
 
+The conversation screen uses a Blackwall-inspired theme: burgundy-black panels,
+crimson fractured boundaries, cyan focus and response accents, and yellow REYCODE
+branding. The boundary stays still when idle, briefly intensifies when an operator
+message is accepted (including queued work), and becomes quieter when response text arrives. Wide terminals show a
+confined interference field in the HUD; narrow terminals retain a compact header
+strip. Completion plays a short closing sweep before returning to idle. Errors,
+cancellations, tool activity, and approvals keep their explicit status labels;
+the effects are decorative, not connection telemetry. Transcript text, code,
+selection, and the draft are never distorted. Opening an existing Session does
+not replay its historical breach or completion effects.
+
 Set `REYCODE_TUI_REDUCED_MOTION=true` before launching (or
 `tui_reduced_motion: true` in application configuration) to use a static active
 glyph and one-second elapsed-time refresh instead of frame animation. This

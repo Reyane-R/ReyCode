@@ -47,7 +47,8 @@ defmodule ReyCode.TUI.EffectsTest do
   end
 
   test "reduced motion registers no decoration timer and every effect stays still" do
-    for kind <- [:logo, :scanner, :signal, :link, :attention, :emblem], ascii? <- [true, false] do
+    for kind <- [:logo, :scanner, :signal, :link, :attention, :emblem, :blackwall],
+        ascii? <- [true, false] do
       {state, []} =
         effect(kind, %{"effect-enabled": false, "effect-ascii": ascii?, "effect-text": "REYCODE"})
 
@@ -63,6 +64,27 @@ defmodule ReyCode.TUI.EffectsTest do
       refute first.content == second.content
       assert line_widths(first.content) == line_widths(second.content)
       assert first.style == second.style
+    end
+  end
+
+  test "Blackwall interference is bounded, ASCII safe, and static when disabled" do
+    for phase <- [:breach, :waiting, :receiving, :working, :settling],
+        ascii? <- [true, false],
+        width <- [1, 26, 10_000] do
+      attrs = %{
+        "effect-phase": phase,
+        "effect-ascii": ascii?,
+        "effect-width": width,
+        "effect-rows": 20
+      }
+
+      {state, _} = effect(:blackwall, attrs)
+      frames = Enum.map([0, 300, 700], &animate(state, &1).content)
+      assert Enum.all?(frames, &(line_widths(&1) == List.duplicate(min(width, 160), 5)))
+      assert length(Enum.uniq(frames)) > 1
+      if ascii?, do: assert(Enum.all?(frames, &(byte_size(&1) == String.length(&1))))
+      {static, []} = effect(:blackwall, Map.put(attrs, :"effect-enabled", false))
+      assert animate(static, 0) == animate(static, 10_000)
     end
   end
 

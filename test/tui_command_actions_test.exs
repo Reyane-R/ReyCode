@@ -83,6 +83,7 @@ defmodule ReyCode.TUI.CommandActionsTest do
             cancel: fn _timer -> :ok end
           ),
         animation_now_ms: 0,
+        decoration_now: fn -> 0 end,
         providers: %{}
       }
     }

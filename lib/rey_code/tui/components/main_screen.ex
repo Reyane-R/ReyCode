@@ -6,7 +6,9 @@ defmodule ReyCode.TUI.Components.MainScreen do
 
   import ReyCode.TUI.Components.MainScreen.Timeline, only: [timeline: 1]
   import ReyCode.TUI.OperatorQuestion, only: [question_panel: 1]
-  import ReyCode.TUI.Components.HUD, only: [hero: 1, rail: 1, home_rail: 1, scan: 1, glyph: 2]
+
+  import ReyCode.TUI.Components.HUD,
+    only: [hero: 1, rail: 1, home_rail: 1, scan: 1, boundary: 1, glyph: 2]
 
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Action, Activity, Cancellation, Notice, State, Verification}
@@ -21,6 +23,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :providers, :map, required: true
   attr :messages, :list, required: true
   attr :activity, :map, required: true
+  attr :wall, :map, required: true
   attr :activity_frame, :string, required: true
   attr :timeline_id, :string, required: true
   attr :message_width, :integer, required: true
@@ -94,6 +97,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           session={@session}
           projection={@projection}
           activity={@activity}
+          wall={@wall}
           activity_frame={@activity_frame}
           git_branch={@git_branch}
           question_label={@question_label}
@@ -123,6 +127,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
             :if={@rail_width > 0}
             session={@session}
             activity={@activity}
+            wall={@wall}
             token_label={@token_label}
             motion={@background_motion}
             ascii={@ascii}
@@ -140,6 +145,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           motion={@background_motion}
           ascii={@ascii}
           activity={@activity}
+          wall={@wall}
           terminal_width={@terminal_width}
         />
         <.question_panel :if={@modal == :operator_question} term={assigns}/>
@@ -268,6 +274,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :activity, :map, required: true
   attr :activity_frame, :string, required: true
   attr :git_branch, :any, required: true
+  attr :wall, :map, required: true
   attr :question_label, :string, required: true
   attr :update_notice, :any, required: true
   attr :token_label_class, :string, required: true
@@ -285,11 +292,12 @@ defmodule ReyCode.TUI.Components.MainScreen do
     end}
     >
       <box class="inline w-full overflow-hidden">
-        <box class="font-bold text-accent">{glyph(:corner, @ascii)} REYCODE // </box>
-        <.scan
+        <box class="font-bold text-identity">{glyph(:corner, @ascii)} REYCODE // </box>
+        <.boundary
           id="session-scan"
+          wall={@wall}
           width={min(max(@terminal_width - 34, 1), 80)}
-          motion={@motion == true and @activity.active?}
+          motion={@motion}
           ascii={@ascii}
           clip={{0, 0, @terminal_width, 1}}
         />
@@ -376,6 +384,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   attr :draft, :string, required: true
   attr :notice, :any, required: true
   attr :composer_status, :map, required: true
+  attr :wall, :map, required: true
   attr :motion, :boolean, required: true
   attr :ascii, :boolean, required: true
   attr :activity, :map, required: true
@@ -395,14 +404,13 @@ defmodule ReyCode.TUI.Components.MainScreen do
     >
       <box class="inline w-full">
         <box class="font-bold text-primary">{glyph(:corner, @ascii)} Message Assistant</box>
-        <.scan
+        <.boundary
           :if={@terminal_width >= 72}
           id="composer-signal"
-          kind={:signal}
+          wall={@wall}
           width={12}
-          motion={@motion == true and @activity.active?}
+          motion={@motion}
           ascii={@ascii}
-          class="text-accent"
           clip={{0, 0, @terminal_width, @terminal_height}}
         />
         <box :if={is_nil(@notice)} class={"w-full text-right " <> @composer_status.class}>

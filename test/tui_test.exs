@@ -2483,6 +2483,7 @@ defmodule ReyCode.TUITest do
 
     invocation = %{
       id: invocation_id,
+      message_id: assistant_message_id,
       notes: [],
       participant: %{
         id: "assistant",

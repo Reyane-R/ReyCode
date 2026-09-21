@@ -23,6 +23,7 @@ defmodule ReyCode.TUI.Render do
       providers={@providers}
       messages={@messages}
       activity={@activity}
+      wall={@blackwall}
       activity_frame={@activity_frame}
       motion={not @config.tui.reduced_motion?}
       ascii={@animation_style == :ascii}

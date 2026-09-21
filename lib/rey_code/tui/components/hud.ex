@@ -3,7 +3,7 @@ defmodule ReyCode.TUI.Components.HUD do
 
   use Breeze.Component
 
-  alias ReyCode.TUI.{Activity, Effects}
+  alias ReyCode.TUI.{Activity, Blackwall, Effects}
 
   @rail_width_count 30
   @rail_min_width_count 120
@@ -80,13 +80,13 @@ defmodule ReyCode.TUI.Components.HUD do
           effect-skip={@skip}
           effect-text={@logo}
           effect-clip={@clip}
-          class="w-42 h-3 bg text-accent font-bold"
+          class="w-42 h-3 bg text-identity font-bold"
         >
           {@logo}
         </box>
         <box class="pl-3 w-full">
           <box class="text-primary font-bold">TERMINAL // ORCHESTRATION</box>
-          <box class="text-muted">Your workspace. Your signal.</box>
+          <box class="text-muted">AT THE EDGE OF THE BLACKWALL</box>
           <box class="text-secondary">HUMAN + MACHINE</box>
         </box>
       </box>
@@ -101,6 +101,35 @@ defmodule ReyCode.TUI.Components.HUD do
         />
         <box class="text-muted"> // WORKBENCH</box>
       </box>
+    </box>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :wall, :map, required: true
+  attr :width, :integer, default: 24
+  attr :rows, :integer, default: 1
+  attr :motion, :boolean, required: true
+  attr :ascii, :boolean, default: false
+  attr :clip, :any, required: true
+
+  def boundary(assigns) do
+    ~H"""
+    <box
+      id={@id}
+      implicit={Effects}
+      effect-kind={:blackwall}
+      effect-phase={@wall.phase}
+      effect-started-ms={@wall.started_ms}
+      effect-identity={{@wall.session_id, @wall.work_id, @wall.phase, @wall.started_ms}}
+      effect-enabled={@motion == true and Blackwall.animated?(@wall)}
+      effect-width={@width}
+      effect-rows={@rows}
+      effect-ascii={@ascii}
+      effect-clip={@clip}
+      class={"bg-surface overflow-hidden text-" <> Blackwall.color(@wall)}
+      style={%{width: max(@width, 1), height: @rows}}
+    >
     </box>
     """
   end
@@ -140,13 +169,13 @@ defmodule ReyCode.TUI.Components.HUD do
   def home_rail(assigns) do
     ~H"""
     <box class="w-30 h-full bg-surface border-l border-accent px-2 overflow-hidden">
-      <box class="pt-1 font-bold text-accent">{glyph(:corner, @ascii)} NEURAL INTERFACE</box>
+      <box class="pt-1 font-bold text-accent">{glyph(:corner, @ascii)} BLACKWALL // INTERFACE</box>
       <box class="text-muted">REYCODE // LOCAL TERMINAL</box>
       <box
         id="home-emblem"
         implicit={Effects}
         effect-kind={:emblem}
-        effect-enabled={@motion}
+        effect-enabled={false}
         effect-ascii={@ascii}
         effect-clip={@clip}
         class="mt-1 h-7 w-24 bg-surface text-primary"
@@ -155,8 +184,8 @@ defmodule ReyCode.TUI.Components.HUD do
       <.scan
         id="home-carrier"
         width={24}
-        kind={:signal}
-        motion={@motion}
+        kind={:blackwall}
+        motion={false}
         ascii={@ascii}
         class="text-secondary"
         clip={@clip}
@@ -179,6 +208,7 @@ defmodule ReyCode.TUI.Components.HUD do
 
   attr :session, :map, required: true
   attr :activity, :map, required: true
+  attr :wall, :map, required: true
   attr :token_label, :string, required: true
   attr :motion, :boolean, required: true
   attr :ascii, :boolean, required: true
@@ -186,7 +216,7 @@ defmodule ReyCode.TUI.Components.HUD do
 
   def rail(assigns) do
     height = elem(assigns.clip, 3) - elem(assigns.clip, 1)
-    limit = min(@max_activity_rows_count, max(div(height - 17, 3), 0))
+    limit = min(@max_activity_rows_count, max(div(height - 21, 3), 0))
 
     items =
       assigns.activity.ordered_invocation_ids
@@ -197,11 +227,13 @@ defmodule ReyCode.TUI.Components.HUD do
 
     ~H"""
     <box class="w-30 h-full border-l border-accent bg-surface px-1 overflow-hidden">
-      <box class="text-accent font-bold">{glyph(:corner, @ascii)} SESSION // HUD</box>
-      <.scan
+      <box class="text-accent font-bold">{glyph(:corner, @ascii)} BLACKWALL // HUD</box>
+      <.boundary
         id="rail-scan"
+        wall={@wall}
         width={26}
-        motion={@motion == true and @activity.active?}
+        rows={5}
+        motion={@motion}
         ascii={@ascii}
         clip={@clip}
       />
