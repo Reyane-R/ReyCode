@@ -608,7 +608,7 @@ defmodule ReyCode.Orchestration.EngineTest do
   end
 
   @tag capture_log: true
-  test "records a worker crash and allows the turn to finish" do
+  test "replays a simulator request after its worker crashes" do
     %{engine: engine, agent_registry: agent_registry} =
       start_isolated_engine(agent_delay_ms: 100)
 
@@ -619,17 +619,20 @@ defmodule ReyCode.Orchestration.EngineTest do
 
     turn = Engine.snapshot(engine).turns[turn_id]
     invocation_id = hd(turn.invocation_order)
+
+    assert Wait.projection(engine, fn projection ->
+             case projection.invocations[invocation_id].provider_round_attempt do
+               %{state: :started} -> true
+               _attempt -> false
+             end
+           end)
+
     {pid, _value} = Wait.registry_entry(agent_registry, invocation_id)
     Process.exit(pid, :kill)
 
     terminal = wait_until_terminal_on(engine, turn_id, 5_000)
-    assert terminal.outcome == :failed
-    assert Engine.snapshot(engine).invocations[invocation_id].error.category == :worker_exit
-    assert {:ok, retry_turn_id} = Engine.retry_turn(turn_id, engine)
-
-    assert Wait.projection(engine, fn projection ->
-             projection.turns[retry_turn_id].retry_of_turn_id == turn_id
-           end)
+    assert terminal.outcome == :completed
+    assert Engine.snapshot(engine).invocations[invocation_id].error == nil
   end
 
   @tag capture_log: true

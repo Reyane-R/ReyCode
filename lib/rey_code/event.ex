@@ -831,7 +831,24 @@ defmodule ReyCode.Event do
 
   defp cross_field_rules(:provider_frame_recorded, _data), do: :ok
 
-  defp cross_field_rules(:provider_round_attempt_started, data) do
+  defp cross_field_rules(:squad_retry_scheduled, %{"kind" => "rework"} = data) do
+    rework_fields_valid? =
+      is_integer(data["target_stage"]) and data["target_stage"] >= 0 and
+        is_binary(data["target_phase"]) and
+        is_integer(data["cycle"]) and data["cycle"] >= 0
+
+    if rework_fields_valid? do
+      :ok
+    else
+      {:error,
+       "invalid squad_retry_scheduled event: rework retries require integer \"target_stage\", string \"target_phase\", and integer \"cycle\""}
+    end
+  end
+
+  defp cross_field_rules(:squad_retry_scheduled, _data), do: :ok
+  defp cross_field_rules(type, data), do: provider_round_cross_field_rules(type, data)
+
+  defp provider_round_cross_field_rules(:provider_round_attempt_started, data) do
     metrics_valid? =
       case data["request_metrics"] do
         nil -> true
@@ -849,7 +866,7 @@ defmodule ReyCode.Event do
     end
   end
 
-  defp cross_field_rules(:provider_round_retry_scheduled, data) do
+  defp provider_round_cross_field_rules(:provider_round_retry_scheduled, data) do
     with true <- bounded_retry_failure?(data["last_failure"]),
          true <- iso8601_timestamp?(data["retry_eligible_at"]) do
       :ok
@@ -860,22 +877,7 @@ defmodule ReyCode.Event do
     end
   end
 
-  defp cross_field_rules(:squad_retry_scheduled, %{"kind" => "rework"} = data) do
-    rework_fields_valid? =
-      is_integer(data["target_stage"]) and data["target_stage"] >= 0 and
-        is_binary(data["target_phase"]) and
-        is_integer(data["cycle"]) and data["cycle"] >= 0
-
-    if rework_fields_valid? do
-      :ok
-    else
-      {:error,
-       "invalid squad_retry_scheduled event: rework retries require integer \"target_stage\", string \"target_phase\", and integer \"cycle\""}
-    end
-  end
-
-  defp cross_field_rules(:squad_retry_scheduled, _data), do: :ok
-  defp cross_field_rules(_type, _data), do: :ok
+  defp provider_round_cross_field_rules(_type, _data), do: :ok
 
   # -- Field rules -----------------------------------------------------------
 
