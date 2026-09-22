@@ -8,7 +8,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   alias ReyCode.Failure
   alias ReyCode.Orchestration.StrategicReview
   alias ReyCode.Provider.Presentation
-  alias ReyCode.TUI.{Activity, MermaidASCII, TextSelection}
+  alias ReyCode.TUI.{Activity, Effects, MermaidASCII, TextSelection}
   import ReyCode.TUI.Components.HUD, only: [glyph: 2, wordmark: 1]
 
   @max_visible_notes 8
@@ -71,7 +71,17 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     >
       <box class="w-full py-1">
         <box :if={@messages == []} class="pt-4 w-full">
-          <box class="w-full h-3 font-bold text-boundary overflow-hidden">{wordmark(@ascii)}</box>
+          <box
+            id="empty-wordmark"
+            implicit={Effects}
+            effect-kind={:logo}
+            effect-enabled={@motion}
+            effect-text={wordmark(@ascii)}
+            effect-clip={@clip}
+            class="w-full h-3 font-bold text-boundary overflow-hidden"
+          >
+            {wordmark(@ascii)}
+          </box>
           <box class="pt-1 font-bold text-primary">Ready</box>
           <box class="pt-1 text-muted">
             Message the Assistant or delegate focused work with /task.

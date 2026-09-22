@@ -550,12 +550,19 @@ composer warn at 80 percent without stopping the Invocation.
 
 The conversation screen uses a Blackwall-inspired theme: burgundy-black panels,
 dim crimson boundaries, cyan focus and response accents, and yellow REYCODE
-branding. The header boundary is a still rule when idle and carries a sweep
-while work moves; it briefly intensifies when an operator message is accepted
-(including queued work) and becomes quieter when response text arrives. Wide
-terminals show a dense shaded interference field in the HUD, with brighter
-cells drifting through it during work; narrow terminals retain the header
-strip alone. Completion plays a short closing sweep before returning to idle. Errors,
+branding. Its motion language borrows from Cyberpunk 2077's netrunning.
+Sending a message is a **breach**: for 600 ms the header boundary rolls Breach
+Protocol hex bytes in red, then settles into an upload sweep that stays red
+while the model works and turns cyan once response text streams in. Completion
+plays a short closing sweep; a failed or cancelled turn leaves a broken rule
+behind it. Every Session carries a **relic tag**, four hex digits derived from
+its identity, shown after the wordmark and in the HUD; its digits roll during
+a breach and resolve left to right as the work settles. Wide terminals show a
+**Blackwall hex matrix** in the HUD: still bytes when idle, ICE cells flashing
+through it during a breach, and a scan drifting across it while data streams.
+The work pulse carries small signal bars while anything is active, and an empty
+conversation resolves its wordmark from scrambled glyphs. Narrow terminals
+retain the header strip and tag alone. Completion plays a short closing sweep before returning to idle. Errors,
 cancellations, tool activity, and approvals keep their explicit status labels;
 the effects are decorative, not connection telemetry. Transcript text, code,
 selection, and the draft are never distorted. Opening an existing Session does

@@ -140,6 +140,43 @@ defmodule ReyCode.TUI.Components.HUD do
     """
   end
 
+  @doc "A Session's relic tag: four hex digits derived from its identity."
+  @spec session_tag(String.t() | nil) :: String.t()
+  def session_tag(session_id) do
+    "0x" <>
+      (session_id
+       |> :erlang.phash2(65_536)
+       |> Integer.to_string(16)
+       |> String.pad_leading(4, "0"))
+  end
+
+  attr :id, :string, required: true
+  attr :wall, :map, required: true
+  attr :text, :string, required: true
+  attr :motion, :boolean, required: true
+  attr :class, :string, default: "text-muted"
+  attr :clip, :any, required: true
+
+  def tag(assigns) do
+    ~H"""
+    <box
+      id={@id}
+      implicit={Effects}
+      effect-kind={:tag}
+      effect-phase={@wall.phase}
+      effect-started-ms={@wall.started_ms}
+      effect-identity={{@wall.session_id, @wall.work_id, @wall.phase, @wall.started_ms}}
+      effect-enabled={@motion == true and Blackwall.animated?(@wall)}
+      effect-text={@text}
+      effect-clip={@clip}
+      class={"bg-surface overflow-hidden " <> @class}
+      style={%{width: String.length(@text), height: 1}}
+    >
+      {@text}
+    </box>
+    """
+  end
+
   attr :id, :string, required: true
   attr :width, :integer, default: 24
   attr :motion, :boolean, required: true
@@ -213,6 +250,7 @@ defmodule ReyCode.TUI.Components.HUD do
     """
   end
 
+  attr :session, :map, required: true
   attr :messages, :list, required: true
   attr :wall, :map, required: true
   attr :activity_frame, :string, required: true
@@ -231,7 +269,10 @@ defmodule ReyCode.TUI.Components.HUD do
 
     ~H"""
     <box class="w-30 h-full border-l bg-surface px-1 overflow-hidden">
-      <box class="text-boundary font-bold">{glyph(:corner, @ascii)} BLACKWALL // HUD</box>
+      <box class="inline w-full overflow-hidden">
+        <box class="text-boundary font-bold">{glyph(:corner, @ascii)} BLACKWALL // HUD</box>
+        <box class="w-full text-right text-muted">{session_tag(@session.id)}</box>
+      </box>
       <.boundary
         id="rail-scan"
         wall={@wall}

@@ -8,7 +8,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
   import ReyCode.TUI.OperatorQuestion, only: [question_panel: 1]
 
   import ReyCode.TUI.Components.HUD,
-    only: [hero: 1, rail: 1, home_rail: 1, scan: 1, boundary: 1, glyph: 2]
+    only: [hero: 1, rail: 1, home_rail: 1, scan: 1, boundary: 1, tag: 1, glyph: 2, session_tag: 1]
 
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Action, Activity, Cancellation, Notice, State, Verification}
@@ -125,6 +125,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
           </box>
           <.rail
             :if={@rail_width > 0}
+            session={@session}
             messages={@messages}
             wall={@wall}
             activity_frame={@activity_frame}
@@ -288,10 +289,19 @@ defmodule ReyCode.TUI.Components.MainScreen do
     >
       <box class="inline w-full overflow-hidden">
         <box class="font-bold text-identity">REYCODE </box>
+        <.tag
+          id="session-tag"
+          wall={@wall}
+          text={session_tag(@session.id)}
+          motion={@motion}
+          clip={{0, 0, @terminal_width, 1}}
+        />
+        <box>
+        </box>
         <.boundary
           id="session-scan"
           wall={@wall}
-          width={min(max(@terminal_width - 14, 1), 80)}
+          width={min(max(@terminal_width - 22, 1), 80)}
           motion={@motion}
           ascii={@ascii}
           clip={{0, 0, @terminal_width, 1}}
@@ -316,6 +326,18 @@ defmodule ReyCode.TUI.Components.MainScreen do
         <box class={work_pulse_class(@activity.header)}>
           {Activity.header_text(@activity.header, @activity_frame)}
         </box>
+        <box :if={pulsing?(@activity.header)}>
+        </box>
+        <.scan
+          :if={pulsing?(@activity.header)}
+          id="pulse-signal"
+          kind={:signal}
+          width={6}
+          motion={@motion}
+          ascii={@ascii}
+          class={work_pulse_class(@activity.header)}
+          clip={{0, 0, @terminal_width, 4}}
+        />
         <box :if={@question_label != ""} class="w-full text-right text-warning">
           {@question_label}
         </box>
@@ -499,6 +521,8 @@ defmodule ReyCode.TUI.Components.MainScreen do
   end
 
   defp header_token_class(class), do: "w-full h-1 overflow-hidden text-right " <> class
+  defp pulsing?(%Activity.Item{active?: true}), do: true
+  defp pulsing?(_item), do: false
   defp work_pulse_class(item), do: "text-#{Activity.color(item)}"
 
   defp workspace_context(path, max_length) do

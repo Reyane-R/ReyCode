@@ -190,6 +190,31 @@ defmodule ReyCode.TUI.Effects do
     end)
   end
 
+  # The relic tag: a session's hex identity. Its digits roll while a message
+  # is being accepted and resolve left to right as the work settles.
+  defp content(%{kind: :tag, enabled?: false} = state, _frame, _elapsed_ms), do: state.text
+
+  defp content(%{kind: :tag, phase: :breach} = state, frame, _elapsed_ms),
+    do: roll_tag(state.text, frame, 0)
+
+  defp content(%{kind: :tag, phase: :settling} = state, frame, elapsed_ms) do
+    revealed = div(String.length(state.text) * elapsed_ms, Blackwall.settle_ms())
+    roll_tag(state.text, frame, revealed)
+  end
+
+  defp content(%{kind: :tag} = state, _frame, _elapsed_ms), do: state.text
+
+  # The "0x" prefix and every revealed digit stay put; the rest roll as hex.
+  defp roll_tag(text, frame, revealed_count) do
+    text
+    |> String.graphemes()
+    |> Enum.with_index()
+    |> Enum.map_join(fn
+      {glyph, index} when index < 2 or index < revealed_count -> glyph
+      {_glyph, index} -> hex_cell({:tag, index + frame}, index)
+    end)
+  end
+
   defp scanner(state, frame) do
     position = Integer.mod(frame, state.width_count + 5)
     dim = if state.ascii?, do: "-", else: "─"
@@ -208,18 +233,32 @@ defmodule ReyCode.TUI.Effects do
   # Every phase without a live clock renders still; only moving work sweeps.
   @still_phases [:idle, :blocked, :failed, :cancelled, :completed]
 
-  # One-row boundary: a still rule while idle, a sweep while work moves.
+  # One-row boundary: a still rule while idle, Breach Protocol hex while a
+  # message is being accepted, then an upload sweep while work moves.
   defp wall_row(%{rows_count: 1} = state, {frame, elapsed_ms}, _row),
     do: strip_row(state, frame, elapsed_ms)
 
-  # Multi-row boundary: a dense shaded field; work shows as brighter cells
-  # drifting through it instead of sparse strokes on black.
+  # Multi-row boundary: a Blackwall hex matrix. Still when idle, ICE cells
+  # flash through it during a breach, and bytes tick while data streams.
   defp wall_row(state, {frame, elapsed_ms}, row), do: field_row(state, frame, elapsed_ms, row)
 
   defp strip_glyphs(true), do: {"-", "=", ">"}
   defp strip_glyphs(false), do: {"─", "━", "◆"}
-  defp field_glyphs(true), do: {".", ":", "#"}
-  defp field_glyphs(false), do: {"░", "▒", "▓"}
+  defp broken_rule(true), do: "-"
+  defp broken_rule(false), do: "╌"
+  defp ice_glyph(true), do: "#"
+  defp ice_glyph(false), do: "▓"
+  defp dim_glyph(true), do: ":"
+  defp dim_glyph(false), do: "▒"
+
+  defp strip_row(%{phase: :breach} = state, frame, _elapsed_ms) do
+    head = if state.ascii?, do: ">", else: "▸"
+    position = Integer.mod(frame * 2, state.width_count + 5)
+
+    Enum.map_join(0..(state.width_count - 1), fn index ->
+      if index == position, do: head, else: hex_cell({:strip, div(index, 3) + frame}, index)
+    end)
+  end
 
   defp strip_row(%{phase: :settling} = state, _frame, elapsed_ms) do
     {rule, trail, _head} = strip_glyphs(state.ascii?)
@@ -227,13 +266,17 @@ defmodule ReyCode.TUI.Effects do
     Enum.map_join(0..(state.width_count - 1), &if(&1 < settled, do: rule, else: trail))
   end
 
+  # A failed or cancelled turn leaves a broken rule behind it.
+  defp strip_row(%{phase: phase} = state, _frame, _elapsed_ms)
+       when phase in [:failed, :cancelled],
+       do: String.duplicate(broken_rule(state.ascii?), state.width_count)
+
   defp strip_row(%{phase: phase} = state, _frame, _elapsed_ms) when phase in @still_phases,
     do: state.ascii? |> strip_glyphs() |> elem(0) |> String.duplicate(state.width_count)
 
   defp strip_row(state, frame, _elapsed_ms) do
     {rule, trail, head} = strip_glyphs(state.ascii?)
-    speed = if state.phase == :breach, do: 2, else: 1
-    position = Integer.mod(frame * speed, state.width_count + 5)
+    position = Integer.mod(frame, state.width_count + 5)
 
     Enum.map_join(0..(state.width_count - 1), fn index ->
       cond do
@@ -244,23 +287,31 @@ defmodule ReyCode.TUI.Effects do
     end)
   end
 
-  defp field_row(%{phase: :settling} = state, _frame, elapsed_ms, _row) do
-    {low, mid, _high} = field_glyphs(state.ascii?)
+  defp field_row(%{phase: :settling} = state, _frame, elapsed_ms, row) do
     settled = div(elapsed_ms * state.width_count, Blackwall.settle_ms())
-    Enum.map_join(0..(state.width_count - 1), &if(&1 < settled, do: low, else: mid))
+
+    Enum.map_join(0..(state.width_count - 1), fn index ->
+      cond do
+        rem(index, 3) == 2 -> " "
+        index < settled -> hex_cell({:field, div(index, 3), row, 0}, index)
+        true -> dim_glyph(state.ascii?)
+      end
+    end)
   end
 
   defp field_row(state, frame, _elapsed_ms, row) do
-    {low, mid, high} = field_glyphs(state.ascii?)
     density = wall_density(state.phase)
     frame = if state.phase in @still_phases, do: 0, else: frame
 
     Enum.map_join(0..(state.width_count - 1), fn index ->
-      case Integer.mod(index * 7 + row * 3 + div(frame, 2), density) do
-        0 when frame > 0 -> high
-        0 -> mid
-        1 -> mid
-        _offset -> low
+      slot = div(index, 3)
+      offset = Integer.mod(slot * 7 + row * 3 + div(frame, 2), density)
+
+      cond do
+        rem(index, 3) == 2 -> " "
+        frame > 0 and offset == 0 -> ice_glyph(state.ascii?)
+        frame > 0 and offset == 1 -> dim_glyph(state.ascii?)
+        true -> hex_cell({:field, slot, row, 0}, index)
       end
     end)
   end
@@ -269,9 +320,20 @@ defmodule ReyCode.TUI.Effects do
   defp wall_density(:receiving), do: 17
   defp wall_density(_phase), do: 11
 
-  defp resolve_logo(text, frame, elapsed_ms) do
+  # One hex digit of a deterministic byte; the seed fixes the byte, the cell's
+  # position within its 3-cell slot picks the high or low digit.
+  defp hex_cell(seed, index), do: seed |> hex_byte() |> String.at(rem(index, 3))
+
+  defp hex_byte(seed) do
+    seed |> :erlang.phash2(256) |> Integer.to_string(16) |> String.pad_leading(2, "0")
+  end
+
+  defp resolve_logo(text, frame, elapsed_ms),
+    do: resolve_logo(text, frame, elapsed_ms, @entrance_ms)
+
+  defp resolve_logo(text, frame, elapsed_ms, duration_ms) do
     glyphs = String.graphemes(text)
-    revealed_count = div(length(glyphs) * elapsed_ms, @entrance_ms)
+    revealed_count = div(length(glyphs) * elapsed_ms, duration_ms)
 
     glyphs
     |> Enum.with_index()
