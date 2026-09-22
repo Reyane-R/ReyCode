@@ -157,14 +157,14 @@ mix rey_code.engine stop
 Clients reconnect with a fresh snapshot after a connection loss. Unacknowledged
 commands are never automatically replayed: inspect history before retrying them.
 All clients must match the engine's protocol, exact code build, storage path,
-and engine settings. A new build automatically replaces an idle compatible
-engine after closing new-work admission. Active work and unverifiable legacy
-engines fail with a normal diagnostic instead of a VM crash; stop those engines
-explicitly when interruption is safe. Configuration, protocol, and storage
-mismatches remain explicit failures. Terminal display settings remain
-client-local. Install updates retain immutable runtime directories under
-`~/.reycode/builds`, so active engines do not lose their files; old builds may be
-removed after their engines have stopped.
+and engine settings. A new build, or a changed engine configuration such as a
+different shell environment, automatically replaces an idle compatible engine
+after closing new-work admission. Active work, protocol, and storage mismatches,
+and unverifiable legacy engines, fail with a normal diagnostic instead of a VM
+crash; stop those engines explicitly when interruption is safe. Terminal display
+settings remain client-local. Install updates retain immutable runtime
+directories under `~/.reycode/builds`, so active engines do not lose their
+files; old builds may be removed after their engines have stopped.
 
 The first transition from an older standalone release requires quitting that
 old instance once. It cannot accept shared-engine connections. New releases do

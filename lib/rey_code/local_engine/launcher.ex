@@ -13,6 +13,10 @@ defmodule ReyCode.LocalEngine.Launcher do
         with :ok <- replace_idle_engine(path, version),
              do: start_engine(path, identity, config)
 
+      {:error, {:engine_configuration_mismatch, _fields}} when start? ->
+        with :ok <- replace_idle_engine(path, identity.version),
+             do: start_engine(path, identity, config)
+
       result ->
         result
     end
@@ -33,6 +37,9 @@ defmodule ReyCode.LocalEngine.Launcher do
 
       {:error, {:engine_build_mismatch, version}} ->
         replace_idle_engine(path, version)
+
+      {:error, {:engine_configuration_mismatch, _fields}} ->
+        replace_idle_engine(path, identity.version)
 
       {:error, reason} ->
         {:error, reason}

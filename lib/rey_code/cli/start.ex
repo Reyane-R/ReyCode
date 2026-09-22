@@ -61,7 +61,12 @@ defmodule ReyCode.CLI.Start do
   end
 
   defp fail(reason, halt) do
-    IO.puts(:stderr, "ReyCode could not prepare the shared engine: #{inspect(reason)}")
+    IO.puts(
+      :stderr,
+      "ReyCode could not prepare the shared engine: #{inspect(reason)}. " <>
+        "If a stale engine is running, `reycode engine stop` releases it when interruption is safe."
+    )
+
     halt.(1)
   end
 end

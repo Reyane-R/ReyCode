@@ -24,9 +24,10 @@ its Workspace. Shared snapshots do not share drafts, selection, panels, or scrol
 state. Client subscriptions are fed by bounded, versioned polling, and snapshot
 reads also publish newer projections. A closed connection does not replay commands
 or stop engine work. Closing the terminal stops the client VM; engine shutdown is
-an explicit lifecycle command. A mismatched build may replace an idle EngineHost:
-the host checks scoped resources, closes new-work admission, and then exits.
-Active work and configuration/protocol/storage mismatches fail closed.
+an explicit lifecycle command. A mismatched build or engine configuration may
+replace an idle EngineHost: the host checks scoped resources, closes new-work
+admission, and then exits. Active work and protocol/storage mismatches fail
+closed.
 
 `ResourceScopes` owns process/debugger/evaluation hubs by canonical Workspace and
 Session so names cannot collide across projects or independent conversations.

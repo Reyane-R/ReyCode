@@ -155,6 +155,39 @@ defmodule ReyCode.LocalEngineTest do
     assert {:error, :enoent} = Protocol.connect(socket)
   end
 
+  test "an idle engine hands off to a changed configuration before client startup", context do
+    socket = Path.expand(".reycode/config-test-#{System.unique_integer([:positive])}/socket")
+    server_name = Module.concat(__MODULE__, ConfigUpgradeServer)
+
+    on_exit(fn -> File.rm_rf!(Path.dirname(socket)) end)
+
+    start_supervised!(%{
+      id: server_name,
+      restart: :temporary,
+      start:
+        {Server, :start_link,
+         [
+           [
+             name: server_name,
+             path: socket,
+             config: context.config,
+             services: context.services,
+             shutdown: fn -> GenServer.stop(server_name, :normal) end
+           ]
+         ]}
+    })
+
+    identity = Protocol.identity(context.config)
+
+    mismatched = %{
+      identity
+      | policy_details: Map.put(identity.policy_details, "env:PATH", "changed")
+    }
+
+    assert :ok = Launcher.prepare(socket, mismatched)
+    assert {:error, :enoent} = Protocol.connect(socket)
+  end
+
   test "a mismatched build does not interrupt active engine work", context do
     {:ok, session_id} = Engine.ensure_workspace_session(context.tmp_dir, context.engine)
     assert :ok = Engine.run_owner_command(session_id, "sleep 2", context.engine)
@@ -168,6 +201,29 @@ defmodule ReyCode.LocalEngineTest do
 
     identity = %{Protocol.identity(context.config) | build: "new-build"}
     assert {:error, :engine_busy} = Launcher.prepare(socket, identity)
+    refute_receive :shutdown
+    assert Process.alive?(context.engine)
+  end
+
+  test "a changed configuration does not interrupt active engine work", context do
+    {:ok, session_id} = Engine.ensure_workspace_session(context.tmp_dir, context.engine)
+    assert :ok = Engine.run_owner_command(session_id, "sleep 2", context.engine)
+
+    socket = Path.expand(".reycode/busy-config-#{System.unique_integer([:positive])}/socket")
+    server_name = Module.concat(__MODULE__, BusyConfigServer)
+    test_pid = self()
+    on_exit(fn -> File.rm_rf!(Path.dirname(socket)) end)
+
+    start_upgrade_server(server_name, socket, context, fn -> send(test_pid, :shutdown) end)
+
+    identity = Protocol.identity(context.config)
+
+    mismatched = %{
+      identity
+      | policy_details: Map.put(identity.policy_details, "env:PATH", "changed")
+    }
+
+    assert {:error, :engine_busy} = Launcher.prepare(socket, mismatched)
     refute_receive :shutdown
     assert Process.alive?(context.engine)
   end
