@@ -203,6 +203,18 @@ defmodule ReyCode.TUI.Activity do
     |> Enum.join(" · ")
   end
 
+  @verb_column_count 11
+
+  @doc "Ledger row lead: state glyph and the verb padded to a fixed column."
+  @spec row_lead(Item.t(), String.t()) :: String.t()
+  def row_lead(%Item{} = item, frame),
+    do: glyph(item, frame) <> " " <> String.pad_trailing(item.label, @verb_column_count)
+
+  @doc "Ledger row tail: the target and elapsed time, if any."
+  @spec row_tail(Item.t()) :: String.t()
+  def row_tail(%Item{} = item),
+    do: [item.target, elapsed_label(item)] |> Enum.reject(&blank?/1) |> Enum.join(" · ")
+
   @doc """
   Renders the ambient header status.
 

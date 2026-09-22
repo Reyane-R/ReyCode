@@ -4,6 +4,9 @@ defmodule ReyCode.Theme do
   @unicode_activity_frames {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
   @ascii_activity_frames {"|", "/", "-", "\\"}
 
+  # Chrome recedes, content speaks: structural lines sit just above the
+  # background, cyan marks focus and interaction only, and bright red is
+  # reserved for state (errors, cancellation, the breach sweep).
   def default do
     Breeze.Theme.new(
       name: "reycode",
@@ -11,19 +14,19 @@ defmodule ReyCode.Theme do
       defaults: %{
         text: "#E8E2E3",
         background: "#090508",
-        border: "#73303C"
+        border: "#3B1119"
       },
       palette: %{
-        muted: "#8999AD",
+        muted: "#7D6E75",
         primary: "#25E0FF",
-        secondary: "#FF7185",
+        secondary: "#D96B7C",
         warning: "#FCEE09",
         identity: "#FCEE09",
-        boundary: "#A54A59",
+        boundary: "#5A1A24",
         error: "#FF5268",
         success: "#68E8AD",
         accent: "#FF2D3D",
-        surface: "#13090F",
+        surface: "#0E0709",
         panel: "#1C0D16"
       },
       extras: %{cursor: "#25E0FF"}

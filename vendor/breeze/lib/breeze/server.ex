@@ -1005,8 +1005,9 @@ defmodule Breeze.Server do
   defp enqueue_reader_data(state, data) do
     started_at = System.monotonic_time(:microsecond)
 
-    state
-    |> Input.enqueue(Breeze.Input.decode(data))
+    data
+    |> Breeze.Input.decode_all()
+    |> Enum.reduce(state, &Input.enqueue(&2, &1))
     |> Debug.put_stat(:last_input_us, System.monotonic_time(:microsecond) - started_at)
     |> schedule_input_flush()
   end

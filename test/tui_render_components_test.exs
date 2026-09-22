@@ -114,7 +114,9 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     assert Breeze.Test.metadata(session).focused == timeline_id
     Breeze.Test.input(session, "Home")
     Breeze.Test.input(session, "PageDown")
-    before_panel = session |> Breeze.Test.render!() |> plain()
+    # The header boundary sweeps in real time; compare everything below it.
+    below_header = fn screen -> screen |> String.split("\n") |> Enum.drop(1) end
+    before_panel = session |> Breeze.Test.render!() |> plain() |> below_header.()
     before_scroll = Map.fetch!(Breeze.Test.metadata(session).implicit_state, timeline_id)
     Breeze.Test.event(session, "verification_review", %{})
     Breeze.Test.input(session, "3")
@@ -125,7 +127,7 @@ defmodule ReyCode.TUI.RenderComponentsTest do
     assert Breeze.Test.metadata(session).assigns.verification.tab == :patch
     assert Breeze.Test.metadata(session).assigns.verification.decision == nil
     Breeze.Test.input(session, "Escape")
-    assert session |> Breeze.Test.render!() |> plain() == before_panel
+    assert session |> Breeze.Test.render!() |> plain() |> below_header.() == before_panel
     assert Breeze.Test.metadata(session).focused == timeline_id
     assert Map.fetch!(Breeze.Test.metadata(session).implicit_state, timeline_id) == before_scroll
     mouse_action(session, "/changes Review")

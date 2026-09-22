@@ -472,10 +472,15 @@ alternates, and an empty array disables the action:
 ### Cyberpunk terminal interface
 
 ReyCode's default interface takes inspiration from
-[CyberArch-Shell](https://github.com/ARCANGEL0/CyberArch-Shell): near-black panels,
-red structural accents, electric-cyan controls, and cut-corner input frames.
-Conversation text stays cool white; amber means waiting or review, green marks
-success, and error labels stay explicit alongside their red highlights.
+[CyberArch-Shell](https://github.com/ARCANGEL0/CyberArch-Shell) and Cyberpunk
+2077's Blackwall: near-black panels, cut-corner input frames, and one rule for
+color. Structural lines sit in dim crimson just above the background so the
+transcript leads. Electric cyan marks focus and interaction only: the focused
+composer frame, focused controls, and the palette scanner. Bright red is
+reserved for state, such as errors, cancellation, and the breach sweep. Amber
+means waiting or review, green marks success, and error labels stay explicit
+alongside their red highlights. Conversation text stays cool white, inline
+code is a pale sand tint, and metadata is warm gray.
 
 Tall terminals reveal a large wordmark that resolves from scrambled glyphs in
 700 ms. Typing immediately settles it without delaying or consuming input.
@@ -485,17 +490,19 @@ resource-usage measurements. The wordmark occasionally glitches while the
 composer is empty.
 
 At **120 columns × 28 rows** or larger, a side panel shows workspace context
-on home and real activity, execution links, and reported token usage during a
-Session. Active links carry moving pulses; blocked Message headers pulse amber
-attention brackets. Smaller windows reclaim the panel's space for the transcript.
-Menus share an animated red header, and the command palette has its own scanner.
+on home and, during a Session, the newest tool runs: the verb, its file or
+command, and elapsed time for active work. The header already carries state,
+usage, and workspace, so the panel never repeats them. Blocked Message headers
+pulse amber attention brackets. Smaller windows reclaim the panel's space for
+the transcript. Menus share a dim header strip, and the command palette has
+its own scanner.
 Animations use lightweight renderer decorations without rebuilding the
 conversation on every decorative frame. The existing `Ctrl+T` / `/theme`
 controls still cycle palettes.
 
-The Session header includes a scanning brand strip, the Assistant runtime,
-Workspace, branch, and token context, followed by a persistent work pulse
-derived from the Projection:
+The Session header includes the wordmark and a boundary strip, the Assistant
+runtime, Workspace, branch, and token context, followed by a persistent work
+pulse derived from the Projection:
 
 ```text
 ⠹ · Reading · lib/foo.ex · 5s
@@ -512,8 +519,9 @@ Each Message forms a compact transcript labeled `You` or by the Assistant or
 task participant's name. An Assistant Message places its execution ledger
 before the final response: native reasoning and tool lifecycle events remain in
 provider frame order, while a tool's start/update/completion lifecycle collapses
-to one recognizable row such as `⠹ · Reading · lib/foo.ex`,
-`Running · mix test`, or `Delegating · Luna`. The ledger keeps the eight newest
+to one recognizable row. Rows are aligned columns, with the state glyph, the
+verb, then the target in gray: `⠹ Reading    lib/foo.ex`,
+`✓ Ran        mix test`, or `⠹ Delegating Luna`. The ledger keeps the eight newest
 reasoning previews visible and reports older entries as `+k earlier thoughts`.
 Each preview wraps to the available terminal width, including wide Unicode
 characters and long unbroken tokens, rather than disappearing past the right edge.
@@ -536,11 +544,13 @@ order. A waiting-question indicator opens with `Ctrl+A`; the budget meter and
 composer warn at 80 percent without stopping the Invocation.
 
 The conversation screen uses a Blackwall-inspired theme: burgundy-black panels,
-crimson fractured boundaries, cyan focus and response accents, and yellow REYCODE
-branding. The boundary stays still when idle, briefly intensifies when an operator
-message is accepted (including queued work), and becomes quieter when response text arrives. Wide terminals show a
-confined interference field in the HUD; narrow terminals retain a compact header
-strip. Completion plays a short closing sweep before returning to idle. Errors,
+dim crimson boundaries, cyan focus and response accents, and yellow REYCODE
+branding. The header boundary is a still rule when idle and carries a sweep
+while work moves; it briefly intensifies when an operator message is accepted
+(including queued work) and becomes quieter when response text arrives. Wide
+terminals show a dense shaded interference field in the HUD, with brighter
+cells drifting through it during work; narrow terminals retain the header
+strip alone. Completion plays a short closing sweep before returning to idle. Errors,
 cancellations, tool activity, and approvals keep their explicit status labels;
 the effects are decorative, not connection telemetry. Transcript text, code,
 selection, and the draft are never distorted. Opening an existing Session does
@@ -608,7 +618,9 @@ working while reserving Shift-drag for terminal selection. See
 [Ghostty's mouse selection settings](https://ghostty.org/docs/config/reference#mouse-shift-capture).
 
 Answer and reasoning chunks are persisted as they arrive from the provider's
-byte/latency buffer, including before stream completion. Active thinking stays
+byte/latency buffer, including before stream completion. Answer text that
+resumes after a tool round starts a new paragraph, so sentences from separate
+rounds are never glued together. Active thinking stays
 visible; after completion it collapses under **Thinking · Show details**.
 
 ## Challenge a claim against evidence

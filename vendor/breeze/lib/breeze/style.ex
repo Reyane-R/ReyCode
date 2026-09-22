@@ -471,6 +471,9 @@ defmodule Breeze.Style do
   defp apply_style("scrollbar-arrows", {style, attrs}, _theme),
     do: {BackBreeze.Style.scrollbar(style, %{arrows: true}), attrs}
 
+  defp apply_style("scrollbar-plain", {style, attrs}, _theme),
+    do: {BackBreeze.Style.scrollbar(style, %{arrows: false}), attrs}
+
   defp apply_style("scrollbar-" <> color, acc, theme),
     do: apply_scrollbar_color(color, acc, theme)
 

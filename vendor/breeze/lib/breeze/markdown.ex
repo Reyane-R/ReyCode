@@ -6,7 +6,7 @@ defmodule Breeze.Markdown do
   import BackBreeze.Utils, only: [string_length: 1]
 
   @reset "\e[0m"
-  @code "\e[36m"
+  @code "\e[38;5;223m"
   @bold "\e[1m"
   @bullets [?*, ?-, ?+]
 

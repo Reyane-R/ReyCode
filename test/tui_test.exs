@@ -830,7 +830,7 @@ defmodule ReyCode.TUITest do
     assert screen =~ ~r/\d+s/
 
     refute screen =~ "TOOL /"
-    assert screen =~ "Read · <outside workspace>"
+    assert screen =~ ~r/Read\s+<outside workspace>/
     assert screen =~ "@@ patch 1 @@"
     assert screen =~ "-hello"
     assert screen =~ "+hello world"
@@ -1080,9 +1080,7 @@ defmodule ReyCode.TUITest do
 
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "Running · mix test"
-
-    assert Enum.count(String.split(screen, "\n"), &String.contains?(&1, "Running · mix test")) ==
-             2
+    assert screen =~ ~r/Running\s{2,}mix test/
   end
 
   test "renders native thoughts and tool steps in provider frame order" do
@@ -1134,7 +1132,7 @@ defmodule ReyCode.TUITest do
 
     screen = session |> Breeze.Test.render!() |> plain()
     before_index = :binary.match(screen, "Inspect the project")
-    tool_index = :binary.match(screen, "Read · mix.exs")
+    tool_index = :binary.match(screen, "Read       mix.exs")
     after_index = :binary.match(screen, "The project uses Mix")
     response_index = :binary.match(screen, "Long responses")
 
@@ -1285,16 +1283,16 @@ defmodule ReyCode.TUITest do
     open_first_session(session)
 
     screen = session |> Breeze.Test.render!() |> plain()
-    assert screen =~ "Reading · lib/a.ex"
-    assert screen =~ "Searching · needle"
-    assert screen =~ "Scanning · lib"
-    assert screen =~ "Scanning · test"
-    assert screen =~ "Running · mix test --trace"
-    assert screen =~ "Editing · lib/a.ex"
-    assert screen =~ "Writing · README.md"
-    assert screen =~ "Delegating · Luna"
-    assert screen =~ "Recording · storage"
-    assert screen =~ "Recorded · decision-log"
+    assert screen =~ ~r/Reading\s+lib\/a.ex/
+    assert screen =~ ~r/Searching\s+needle/
+    assert screen =~ ~r/Scanning\s+lib/
+    assert screen =~ ~r/Scanning\s+test/
+    assert screen =~ ~r/Running\s+mix test --trace/
+    assert screen =~ ~r/Editing\s+lib\/a\.ex/
+    assert screen =~ ~r/Writing\s+README\.md/
+    assert screen =~ ~r/Delegating\s+Luna/
+    assert screen =~ ~r/Recording\s+storage/
+    assert screen =~ ~r/Recorded\s+decision-log/
     assert Enum.all?(String.split(screen, "\n"), &(String.length(&1) <= 72))
   end
 

@@ -66,7 +66,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     <.scroll
       id={@timeline_id}
       scroll-autoscroll="bottom"
-      class="h-full w-full border-none overflow-scroll mute-scrollbar-40 px-2"
+      class="h-full w-full border-none overflow-scroll scrollbar-plain scrollbar-boundary mute-scrollbar-40 px-2"
     >
       <box class="w-full py-1">
         <box :if={@messages == []} class="pt-4 w-full">
@@ -82,7 +82,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
           </box>
           <box :if={item.kind == :message} class={message_class(item, index, @terminal_height)}>
             <box class="inline w-full overflow-hidden bg-surface">
-              <box class="text-accent">{glyph(:corner, @ascii)} </box>
+              <box class="text-boundary">{glyph(:corner, @ascii)} </box>
               <box class={author_name_class(item)}>{author_label(item)}</box>
               <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
               <box class={message_status_class(item)}>{message_status_label(item)}</box>
@@ -147,7 +147,9 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
               :for={row <- visible_execution_rows(item, @activity_frame, @message_width)}
               class="w-full"
             >
-              <box class={row.class}>{row.text}</box>
+              <box class="inline w-full h-1 overflow-hidden">
+                <box :for={{class, text} <- row.spans} class={class}>{text}</box>
+              </box>
               <box :for={line <- row.diff_lines} class={diff_line_class(line)}>{line}</box>
               <box :if={row.diff_truncated?} class="pl-4 w-full text-muted">
                 … Diff preview truncated · /runs to inspect
@@ -248,13 +250,12 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   defp challengeable?(_item), do: false
 
-  defp message_class(_message, 0, _height), do: "w-full border-l border-secondary overflow-hidden"
+  defp message_class(_message, 0, _height), do: "w-full border-l overflow-hidden"
 
   defp message_class(%{role: :user}, _index, height) when height >= 32,
-    do: "w-full pt-2 border-l border-secondary overflow-hidden"
+    do: "w-full pt-2 border-l overflow-hidden"
 
-  defp message_class(_message, _index, _height),
-    do: "w-full pt-1 border-l border-primary overflow-hidden"
+  defp message_class(_message, _index, _height), do: "w-full pt-1 border-l overflow-hidden"
 
   defp animated_activity?(%Activity.Item{state: state}) when state in [:active, :blocked],
     do: true
@@ -262,9 +263,8 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp animated_activity?(_activity), do: false
 
   defp author_name_class(%{role: :user}), do: "font-bold text-secondary"
-  defp author_name_class(%{author: %{id: "builder"}}), do: "font-bold text-primary"
   defp author_name_class(%{author: %{id: "critic"}}), do: "font-bold text-warning"
-  defp author_name_class(_message), do: "font-bold text-primary"
+  defp author_name_class(_message), do: "font-bold"
 
   defp message_status_label(%{activity: activity}) do
     case Activity.badge(activity) do
@@ -297,11 +297,23 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     end)
   end
 
+  # Glyph carries the state color, the verb stays body text, and the target
+  # recedes, so a ledger reads as aligned columns instead of dotted prose.
   defp render_execution_row(row, frame, _width) do
+    state_class = "text-#{Activity.color(row)}"
+
+    verb_class =
+      if row.state == :terminal and row.outcome == :completed, do: "", else: state_class
+
+    [glyph, verb] = row |> Activity.row_lead(frame) |> String.split(" ", parts: 2)
+
     [
       %{
-        class: "pl-2 w-full overflow-hidden text-#{Activity.color(row)}",
-        text: Activity.text(row, frame),
+        spans: [
+          {"pl-2 " <> state_class, glyph},
+          {"pl-1 " <> verb_class, verb},
+          {" text-muted", Activity.row_tail(row)}
+        ],
         diff_lines: row.diff_lines,
         diff_truncated?: row.diff_truncated?
       }
@@ -375,8 +387,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
 
   defp trace_note(marker, text, color) do
     %{
-      class: "pl-2 w-full overflow-hidden #{color}",
-      text: "#{marker} #{text}",
+      spans: [{"pl-2 #{color}", "#{marker} #{text}"}],
       diff_lines: [],
       diff_truncated?: false
     }

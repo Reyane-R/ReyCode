@@ -674,6 +674,102 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     end
   end
 
+  test "answer text resuming after a later provider round starts a new paragraph" do
+    participant = %{
+      "id" => "assistant",
+      "name" => "Assistant",
+      "perspective" => "primary",
+      "provider" => "demo",
+      "model" => nil
+    }
+
+    frame = fn sequence, frame_sequence, text ->
+      event(sequence, :provider_frame_recorded, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-agent",
+        "frame_sequence" => frame_sequence,
+        "kind" => "text_delta",
+        "data" => %{"text" => text}
+      })
+    end
+
+    round_started = fn sequence, round_index, frame_sequence_at_start ->
+      event(sequence, :provider_round_attempt_started, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-agent",
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "round_index" => round_index,
+        "attempt" => 1,
+        "frame_sequence_at_start" => frame_sequence_at_start,
+        "provider_id" => "demo",
+        "model_id" => "demo",
+        "request_metrics" => nil
+      })
+    end
+
+    events = [
+      event(1, :room_created, :room, "room-1", %{
+        "room_id" => "room-1",
+        "slug" => "alpha",
+        "title" => "Alpha",
+        "workspace" => "/tmp/alpha",
+        "participants" => [participant]
+      }),
+      event(2, :message_posted, :room, "room-1", %{
+        "message_id" => "msg-user",
+        "room_id" => "room-1",
+        "turn_id" => "turn-1",
+        "author_name" => "You",
+        "body" => "Fix it"
+      }),
+      event(3, :turn_queued, :turn, "turn-1", %{
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "user_message_id" => "msg-user",
+        "mode" => "compare",
+        "context_through_sequence" => 2
+      }),
+      event(4, :turn_started, :turn, "turn-1", %{"turn_id" => "turn-1", "room_id" => "room-1"}),
+      event(5, :assistant_message_opened, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-agent",
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "participant" => participant,
+        "stage" => 0,
+        "label" => "response",
+        "system_prompt" => "Respond",
+        "attempt" => 1
+      }),
+      event(6, :invocation_started, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-agent"
+      }),
+      round_started.(7, 0, 0),
+      frame.(8, 1, "Let me look."),
+      frame.(9, 2, " Checking now."),
+      event(10, :provider_round_recorded, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-agent",
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "round_index" => 0,
+        "text" => "Let me look. Checking now.",
+        "tool_calls" => [],
+        "usage" => %{"output_tokens" => 2}
+      }),
+      round_started.(11, 1, 2),
+      frame.(12, 3, "Found it."),
+      frame.(13, 4, " Fixing.")
+    ]
+
+    state = Projector.replay(events)
+
+    assert state.messages["msg-agent"].body ==
+             "Let me look. Checking now.\n\nFound it. Fixing."
+  end
+
   defp event(sequence, type, aggregate_type, aggregate_id, data) do
     %Event{
       id: Integer.to_string(sequence),

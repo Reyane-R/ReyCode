@@ -989,13 +989,34 @@ defmodule ReyCode.Orchestration.Projector do
       end
 
     if frame_data["kind"] == "text_delta" && invocation do
-      update_message(state, invocation.message_id, fn message ->
-        %{message | body: message.body <> frame_data["data"]["text"], status: :streaming}
+      round_index = current_round_index(invocation)
+      new_round? = round_index != invocation.text_round_index
+
+      state
+      |> update_invocation(invocation_id, &%{&1 | text_round_index: round_index})
+      |> update_message(invocation.message_id, fn message ->
+        text = frame_data["data"]["text"]
+        %{message | body: join_round_text(message.body, text, new_round?), status: :streaming}
       end)
     else
       state
     end
   end
+
+  # Text from a later ProviderRound is a new paragraph: the model stopped to
+  # run tools between them, so joining the two verbatim glues sentences.
+  defp join_round_text("", text, _new_round?), do: text
+  defp join_round_text(body, text, false), do: body <> text
+
+  defp join_round_text(body, text, true) do
+    if String.ends_with?(body, "\n"), do: body <> text, else: body <> "\n\n" <> text
+  end
+
+  defp current_round_index(%{provider_round_attempt: %{round_index: index}})
+       when is_integer(index),
+       do: index
+
+  defp current_round_index(invocation), do: length(invocation.rounds)
 
   defp opened_message(data, event, participant) do
     %Message{
@@ -1053,6 +1074,7 @@ defmodule ReyCode.Orchestration.Projector do
       provider_round_attempt: nil,
       last_request_metrics: nil,
       last_frame_sequence: 0,
+      text_round_index: nil,
       error: nil,
       delegation_depth: value_or(data["delegation_depth"], 0),
       delegated_from_invocation_id: data["delegated_from_invocation_id"],

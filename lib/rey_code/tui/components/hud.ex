@@ -8,7 +8,7 @@ defmodule ReyCode.TUI.Components.HUD do
   @rail_width_count 30
   @rail_min_width_count 120
   @rail_min_height_count 28
-  @max_activity_rows_count 4
+  @max_tool_rows_count 10
   @logo """
   █▀▀▄ █▀▀▀ █   █ ▄▀▀▀ █▀▀█ █▀▀▄ █▀▀▀
   █▄▄▀ █▄▄   ▀█▀  █    █  █ █  █ █▄▄
@@ -91,12 +91,13 @@ defmodule ReyCode.TUI.Components.HUD do
         </box>
       </box>
       <box class="inline w-full pt-1">
-        <box class="text-accent">{glyph(:corner, @ascii)} REYCODE </box>
+        <box class="text-identity">{glyph(:corner, @ascii)} REYCODE </box>
         <.scan
           id="home-scan"
           width={min(@width - 30, 96)}
           motion={@motion}
           ascii={@ascii}
+          class="text-boundary"
           clip={@clip}
         />
         <box class="text-muted"> // WORKBENCH</box>
@@ -167,10 +168,16 @@ defmodule ReyCode.TUI.Components.HUD do
   attr :clip, :any, required: true
 
   def home_rail(assigns) do
+    assigns =
+      Map.put(assigns, :deck, [
+        {"/agent", "Create teammate"},
+        {"/task", "Delegate work"},
+        {"/resume", "Session archive"}
+      ])
+
     ~H"""
-    <box class="w-30 h-full bg-surface border-l border-accent px-2 overflow-hidden">
-      <box class="pt-1 font-bold text-accent">{glyph(:corner, @ascii)} BLACKWALL // INTERFACE</box>
-      <box class="text-muted">REYCODE // LOCAL TERMINAL</box>
+    <box class="w-30 h-full bg-surface border-l px-2 overflow-hidden">
+      <box class="pt-1 font-bold text-boundary">{glyph(:corner, @ascii)} BLACKWALL // INTERFACE</box>
       <box
         id="home-emblem"
         implicit={Effects}
@@ -187,47 +194,39 @@ defmodule ReyCode.TUI.Components.HUD do
         kind={:blackwall}
         motion={false}
         ascii={@ascii}
-        class="text-secondary"
+        class="text-boundary"
         clip={@clip}
       />
       <box class="pt-1 text-muted">// WORKSPACE LINK</box>
       <box class="font-bold">{Path.basename(@session.workspace)}</box>
-      <box class="pt-1 text-primary">[ YOU ]</box>
-      <box class="text-accent">    {glyph(:vertical, @ascii)}</box>
-      <box class="text-primary">[ ASSISTANT ]</box>
-      <box class="text-muted">    {glyph(:vertical, @ascii)}</box>
-      <box class="text-secondary">[ TOOLS + TEAMMATES ]</box>
       <box class="pt-1 text-muted">// COMMAND DECK</box>
-      <box class="text-primary">/agent   Create teammate</box>
-      <box class="text-primary">/task    Delegate work</box>
-      <box class="text-primary">/resume  Session archive</box>
-      <box class="pt-1 text-muted">HUMAN INTENT. MACHINE SPEED.</box>
+      <box :for={{command, label} <- @deck} class="inline w-full">
+        <box class="w-9 text-primary">{command}</box>
+        <box>{label}</box>
+      </box>
     </box>
     """
   end
 
-  attr :session, :map, required: true
-  attr :activity, :map, required: true
+  attr :messages, :list, required: true
   attr :wall, :map, required: true
-  attr :token_label, :string, required: true
+  attr :activity_frame, :string, required: true
   attr :motion, :boolean, required: true
   attr :ascii, :boolean, required: true
   attr :clip, :any, required: true
 
+  # The header already carries state, usage, and workspace. The rail shows
+  # what it cannot: the newest tool runs, so files touched and commands run
+  # stay visible while the transcript scrolls.
   def rail(assigns) do
     height = elem(assigns.clip, 3) - elem(assigns.clip, 1)
-    limit = min(@max_activity_rows_count, max(div(height - 21, 3), 0))
-
-    items =
-      assigns.activity.ordered_invocation_ids
-      |> Enum.map(&Activity.invocation(assigns.activity, &1))
-      |> Enum.take(limit)
-
-    assigns = Map.put(assigns, :items, items)
+    limit = height |> Kernel.-(9) |> max(0) |> min(@max_tool_rows_count)
+    rows = recent_tool_rows(assigns.messages)
+    assigns = Map.merge(assigns, %{rows: Enum.take(rows, -limit), total: length(rows)})
 
     ~H"""
-    <box class="w-30 h-full border-l border-accent bg-surface px-1 overflow-hidden">
-      <box class="text-accent font-bold">{glyph(:corner, @ascii)} BLACKWALL // HUD</box>
+    <box class="w-30 h-full border-l bg-surface px-1 overflow-hidden">
+      <box class="text-boundary font-bold">{glyph(:corner, @ascii)} BLACKWALL // HUD</box>
       <.boundary
         id="rail-scan"
         wall={@wall}
@@ -237,41 +236,21 @@ defmodule ReyCode.TUI.Components.HUD do
         ascii={@ascii}
         clip={@clip}
       />
-      <box class="pt-1 text-muted">01 / ACTIVITY</box>
-      <box class={"font-bold text-" <> Activity.color(@activity.header)}>
-        {if @activity.header do
-          @activity.header.label
-        else
-          "Idle"
-        end}
+      <box class="pt-1 text-muted">TOOL RUNS · {@total}</box>
+      <box :if={@rows == []} class="text-muted">None yet</box>
+      <box :for={row <- @rows} class="inline w-full h-1 overflow-hidden">
+        <box class={"text-" <> Activity.color(row)}>{Activity.row_lead(row, @activity_frame)}</box>
+        <box class="text-muted">{Activity.row_tail(row)}</box>
       </box>
-      <box class="pt-1 text-muted">02 / REPORTED USAGE</box>
-      <box class="h-2 overflow-hidden text-primary">{@token_label}</box>
-      <box class="pt-1 text-muted">03 / WORKSPACE</box>
-      <box class="h-1 overflow-hidden">{Path.basename(@session.workspace)}</box>
-      <box class="pt-1 text-muted">04 / EXECUTION LINKS</box>
-      <box class="text-primary">[ YOU ] {glyph(:connection, @ascii)} [ ASSISTANT ]</box>
-      <box :if={@activity.ordered_invocation_ids == []} class="text-muted">No invocations yet</box>
-      <box :for={item <- @items} class="pt-1">
-        <box class="inline">
-          <.scan
-            id={"link-" <> item.id}
-            kind={:link}
-            width={8}
-            motion={@motion == true and item.active?}
-            ascii={@ascii}
-            class={"text-" <> Activity.color(item)}
-            clip={@clip}
-          />
-          <box class="pl-1">{item.label}</box>
-        </box>
-        <box class="text-muted overflow-hidden">{item.target}</box>
-      </box>
-      <box :if={length(@activity.ordered_invocation_ids) > length(@items)} class="text-secondary">
-        More in /hub · /runs
-      </box>
+      <box :if={@total > length(@rows)} class="pt-1 text-muted">Older in /runs</box>
     </box>
     """
+  end
+
+  defp recent_tool_rows(messages) do
+    messages
+    |> Enum.flat_map(&Map.get(&1, :execution_rows, []))
+    |> Enum.filter(&(Map.get(&1, :kind) == :tool))
   end
 
   attr :term, :map, required: true
@@ -283,18 +262,20 @@ defmodule ReyCode.TUI.Components.HUD do
     ~H"""
     <box
       :if={@term.modal not in [nil, :slash, :operator_question]}
-      class="h-1 bg-surface text-accent overflow-hidden"
+      class="h-1 bg-surface text-boundary overflow-hidden"
       style={%{position: :fixed, top: 0, left: 0, width: @term.breeze.terminal.width, layer: 60}}
     >
       <box class="inline w-full">
-        <box class="font-bold">{glyph(:corner, @term.animation_style == :ascii)} REYCODE // </box>
+        <box class="font-bold text-identity">
+          {glyph(:corner, @term.animation_style == :ascii)} REYCODE //
+        </box>
         <.scan
           id="modal-scan"
           width={min(max(@term.breeze.terminal.width - 14, 1), 96)}
           identity={@term.modal}
           motion={not @term.config.tui.reduced_motion?}
           ascii={@term.animation_style == :ascii}
-          class="text-accent"
+          class="text-boundary"
           clip={{0, 0, @term.breeze.terminal.width, 1}}
         />
       </box>

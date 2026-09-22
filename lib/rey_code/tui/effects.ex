@@ -214,36 +214,69 @@ defmodule ReyCode.TUI.Effects do
     end)
   end
 
-  defp wall_glyphs(true), do: {"-", "/", ":"}
-  defp wall_glyphs(false), do: {"─", "╱", "░"}
+  # Every phase without a live clock renders still; only moving work sweeps.
+  @still_phases [:idle, :blocked, :failed, :cancelled, :completed]
 
-  defp wall_row(state, {frame, elapsed_ms}, row) do
-    glyphs = wall_glyphs(state.ascii?)
-    density = wall_density(state.phase)
-    frame = if state.phase in [:idle, :blocked, :failed, :cancelled], do: 0, else: frame
+  # One-row boundary: a still rule while idle, a sweep while work moves.
+  defp wall_row(%{rows_count: 1} = state, {frame, elapsed_ms}, _row),
+    do: strip_row(state, frame, elapsed_ms)
+
+  # Multi-row boundary: a dense shaded field; work shows as brighter cells
+  # drifting through it instead of sparse strokes on black.
+  defp wall_row(state, {frame, elapsed_ms}, row), do: field_row(state, frame, elapsed_ms, row)
+
+  defp strip_glyphs(true), do: {"-", "=", ">"}
+  defp strip_glyphs(false), do: {"─", "━", "◆"}
+  defp field_glyphs(true), do: {".", ":", "#"}
+  defp field_glyphs(false), do: {"░", "▒", "▓"}
+
+  defp strip_row(%{phase: :settling} = state, _frame, elapsed_ms) do
+    {rule, trail, _head} = strip_glyphs(state.ascii?)
+    settled = div(elapsed_ms * state.width_count, Blackwall.settle_ms())
+    Enum.map_join(0..(state.width_count - 1), &if(&1 < settled, do: rule, else: trail))
+  end
+
+  defp strip_row(%{phase: phase} = state, _frame, _elapsed_ms) when phase in @still_phases,
+    do: state.ascii? |> strip_glyphs() |> elem(0) |> String.duplicate(state.width_count)
+
+  defp strip_row(state, frame, _elapsed_ms) do
+    {rule, trail, head} = strip_glyphs(state.ascii?)
+    speed = if state.phase == :breach, do: 2, else: 1
+    position = Integer.mod(frame * speed, state.width_count + 5)
 
     Enum.map_join(0..(state.width_count - 1), fn index ->
-      offset = Integer.mod(index * 7 + row * 3 + div(frame, 2), density)
+      cond do
+        index == position -> head
+        index in (position - 3)..(position - 1) -> trail
+        true -> rule
+      end
+    end)
+  end
 
-      wall_cell(state, glyphs, {index, offset}, elapsed_ms)
+  defp field_row(%{phase: :settling} = state, _frame, elapsed_ms, _row) do
+    {low, mid, _high} = field_glyphs(state.ascii?)
+    settled = div(elapsed_ms * state.width_count, Blackwall.settle_ms())
+    Enum.map_join(0..(state.width_count - 1), &if(&1 < settled, do: low, else: mid))
+  end
+
+  defp field_row(state, frame, _elapsed_ms, row) do
+    {low, mid, high} = field_glyphs(state.ascii?)
+    density = wall_density(state.phase)
+    frame = if state.phase in @still_phases, do: 0, else: frame
+
+    Enum.map_join(0..(state.width_count - 1), fn index ->
+      case Integer.mod(index * 7 + row * 3 + div(frame, 2), density) do
+        0 when frame > 0 -> high
+        0 -> mid
+        1 -> mid
+        _offset -> low
+      end
     end)
   end
 
   defp wall_density(:breach), do: 3
   defp wall_density(:receiving), do: 17
   defp wall_density(_phase), do: 11
-
-  defp wall_cell(%{phase: :settling} = state, glyphs, {index, _offset}, elapsed_ms) do
-    if index < div(elapsed_ms * state.width_count, Blackwall.settle_ms()),
-      do: elem(glyphs, 0),
-      else: elem(glyphs, 2)
-  end
-
-  defp wall_cell(_state, glyphs, {_index, 0}, _frame), do: elem(glyphs, 1)
-  defp wall_cell(_state, glyphs, {_index, 1}, _frame), do: elem(glyphs, 2)
-
-  defp wall_cell(state, glyphs, _position, _frame),
-    do: if(state.rows_count > 1, do: " ", else: elem(glyphs, 0))
 
   defp resolve_logo(text, frame, elapsed_ms) do
     glyphs = String.graphemes(text)

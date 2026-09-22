@@ -240,7 +240,13 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
     Breeze.Test.render!(session)
     Breeze.Test.input(session, "Home")
     Breeze.Test.input(session, "PageDown")
-    before = Breeze.Test.render!(session)
+    # The scrollbar thumb legitimately shrinks as content grows below the
+    # viewport; only the transcript column must stay put.
+    without_scrollbar = fn screen ->
+      screen |> String.split("\n") |> Enum.map_join("\n", &String.slice(&1, 0..-2//1))
+    end
+
+    before = session |> Breeze.Test.render!() |> without_scrollbar.()
     {_, scroll} = Breeze.Test.metadata(session).implicit_state["timeline"]
     refute scroll.pinned_bottom
 
@@ -250,16 +256,16 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
         {:messages, [history, %{active | body: String.duplicate("Streaming\n\n", count)}]}
       )
 
-      assert Breeze.Test.render!(session) == before
+      assert session |> Breeze.Test.render!() |> without_scrollbar.() == before
 
       assert Breeze.Test.metadata(session).implicit_state["timeline"] ==
                {Breeze.Implicit.Scroll, scroll}
     end
 
     Breeze.Test.info(session, {:messages, [history, message("answer", [tool(:completed)])]})
-    assert Breeze.Test.render!(session) == before
+    assert session |> Breeze.Test.render!() |> without_scrollbar.() == before
     Breeze.Test.event(session, "execution_details_toggle", %{message_id: "answer"})
-    assert Breeze.Test.render!(session) == before
+    assert session |> Breeze.Test.render!() |> without_scrollbar.() == before
     Breeze.Test.input(session, "End")
     assert Breeze.Test.render!(session) =~ "Final response"
     {_, following} = Breeze.Test.metadata(session).implicit_state["timeline"]
