@@ -295,6 +295,52 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
     assert State.select_session(expanded, "session").assigns.expanded_message_ids == []
   end
 
+  test "fenced code inside reasoning collapses to one row behind a single rail" do
+    notes =
+      Enum.map(
+        ["Let me check the emitter.", "```ts", "const x = 1;", "```", "That fakes a node."],
+        &%{kind: :note, text: &1}
+      )
+
+    active = %{message("answer", notes ++ [tool(:running)]) | status: :streaming}
+    screen = [active] |> start(30) |> Breeze.Test.render!() |> plain()
+
+    assert screen =~ "┆ Let me check the emitter."
+    assert screen =~ "┆ code omitted"
+    assert screen =~ "┆ That fakes a node."
+    refute screen =~ "```"
+    refute screen =~ "const x"
+  end
+
+  test "consecutive completed runs of one verb fold until details are expanded" do
+    rows = [tool(:completed), tool(:completed), tool(:completed), tool(:running)]
+    active = %{message("answer", rows) | status: :streaming}
+    session = start([active], 30)
+    screen = session |> Breeze.Test.render!() |> plain()
+
+    assert screen =~ ~r/✓ Read ×3\s+secret\.ex, secret\.ex, secret\.ex/
+    assert screen =~ "4 tool actions · Show details"
+
+    Breeze.Test.event(session, "execution_details_toggle", %{message_id: "answer"})
+    screen = session |> Breeze.Test.render!() |> plain()
+
+    refute screen =~ "×3"
+    assert length(Regex.scan(~r/✓ Read\s+secret\.ex/, screen)) == 3
+    assert screen =~ "Hide details"
+  end
+
+  test "fenced code in the answer sits on the panel surface" do
+    reply = %{message("answer", []) | body: "Intro\n\n```\ncode line\n```\n\nOutro"}
+    lines = [reply] |> start(30) |> Breeze.Test.render!() |> String.split("\n")
+    code = Enum.find(lines, &String.contains?(&1, "code line"))
+    intro = Enum.find(lines, &String.contains?(&1, "Intro"))
+
+    assert code =~ ~r/\e\[48;[^m]*m[^\e]*code line/
+    refute intro =~ ~r/\e\[48;[^m]*m[^\e]*Intro/
+  end
+
+  defp plain(screen), do: String.replace(screen, ~r/\e\[[0-?]*[ -\/]*[@-~]/, "")
+
   defp start(messages, height) do
     session =
       Breeze.Test.start!(TimelineView, size: {80, height}, start_opts: [messages: messages])

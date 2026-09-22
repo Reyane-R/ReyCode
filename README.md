@@ -492,9 +492,8 @@ composer is empty.
 At **120 columns × 28 rows** or larger, a side panel shows workspace context
 on home and, during a Session, the newest tool runs: the verb, its file or
 command, and elapsed time for active work. The header already carries state,
-usage, and workspace, so the panel never repeats them. Blocked Message headers
-pulse amber attention brackets. Smaller windows reclaim the panel's space for
-the transcript. Menus share a dim header strip, and the command palette has
+usage, and workspace, so the panel never repeats them. Smaller windows reclaim
+the panel's space for the transcript. Menus share a dim header strip, and the command palette has
 its own scanner.
 Animations use lightweight renderer decorations without rebuilding the
 conversation on every decorative frame. The existing `Ctrl+T` / `/theme`
@@ -521,10 +520,14 @@ before the final response: native reasoning and tool lifecycle events remain in
 provider frame order, while a tool's start/update/completion lifecycle collapses
 to one recognizable row. Rows are aligned columns, with the state glyph, the
 verb, then the target in gray: `⠹ Reading    lib/foo.ex`,
-`✓ Ran        mix test`, or `⠹ Delegating Luna`. The ledger keeps the eight newest
-reasoning previews visible and reports older entries as `+k earlier thoughts`.
-Each preview wraps to the available terminal width, including wide Unicode
-characters and long unbroken tokens, rather than disappearing past the right edge.
+`✓ Ran        mix test`, or `⠹ Delegating Luna`. Consecutive completed runs of
+one verb fold into a single counted row such as `✓ Ran ×4` followed by their
+targets until **Show details** expands them. Reasoning previews sit behind a
+single `┆` rail as a quiet block; a fenced code block inside a preview collapses
+to one `code omitted` row. The ledger keeps the eight newest reasoning previews
+visible and reports older entries as `+k earlier thoughts`. Each preview wraps
+to the available terminal width, including wide Unicode characters and long
+unbroken tokens, rather than disappearing past the right edge.
 
 Successful completed execution collapses to a tool-action count and a **Show
 details** control. Clicking it, or pressing Enter/Space while it is focused,
@@ -532,7 +535,9 @@ reveals the execution ledger; active and failed work remains visible. Scrolling
 away from the bottom suspends automatic following; End returns to the latest
 output. Expansion is transient and clears when selecting another Session.
 The composer grows with multiline drafts within a bounded height and labels
-submission as Send or Queue according to ordinary Session scheduling.
+submission as Send or Queue according to ordinary Session scheduling. Its
+state, such as `[ Ready ]`, sits bracketed at the right edge of the composer
+header in the state color.
 
 Expanded `edit` and `write` ToolRuns render bounded exact before/after
 fragments directly below their activity row. The full ToolRun remains available
@@ -595,9 +600,12 @@ round or continues after terminal ToolRuns without repeating them.
 
 The conversation view separates exchanges with whitespace and marks your
 message text with a subtle `│` rail. On terminals at least 32 rows tall,
-answers have an extra row below their header and exchanges have a two-row
-gap; shorter terminals use compact spacing. The session header reserves less
-empty space so more of the transcript stays visible.
+answers have an extra row below their header and each exchange opens with a
+dim rule carrying the time after one blank row; shorter terminals drop the blank
+row. Fenced code in an answer sits on the panel surface with one cell of
+padding. A conversation with no messages yet shows the wordmark above `Ready`.
+The session header reserves less empty space so more of the transcript stays
+visible.
 
 Completed replies use a compact checkmark. Thinking-only replies disclose
 `Thinking · Show details`, tool activity shows an action count, and replies

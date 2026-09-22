@@ -816,7 +816,7 @@ defmodule ReyCode.TUITest do
 
     screen = session |> Breeze.Test.render!() |> plain()
     lines = String.split(screen, "\n")
-    user_line = Enum.find_index(lines, &String.contains?(&1, "You ·"))
+    user_line = Enum.find_index(lines, &String.contains?(&1, "╱ You"))
     assistant_line = Enum.find_index(lines, &String.contains?(&1, "Assistant ·"))
 
     assert Enum.all?(lines, &(String.length(&1) <= 120))
@@ -1015,8 +1015,8 @@ defmodule ReyCode.TUITest do
 
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "+2 earlier thoughts"
-    assert screen =~ "· reasoning step 3"
-    assert screen =~ "· reasoning step 10"
+    assert screen =~ "┆ reasoning step 3"
+    assert screen =~ "┆ reasoning step 10"
     refute Regex.match?(~r/reasoning step 1\s/, screen)
 
     assert :binary.match(screen, "reasoning step 10") < :binary.match(screen, "Long responses")
@@ -1167,15 +1167,15 @@ defmodule ReyCode.TUITest do
 
     push_projection(session, projection)
     open_first_session(session)
-    assert session |> Breeze.Test.render!() |> plain() =~ "· Inspect"
+    assert session |> Breeze.Test.render!() |> plain() =~ "┆ Inspect"
 
     projection =
       put_in(projection, [:invocations, "inv-layout", :provider_activity_events], [second, first])
 
     push_projection(session, projection)
     screen = session |> Breeze.Test.render!() |> plain()
-    assert screen =~ "· Inspect the project"
-    assert length(Regex.scan(~r/· Inspect/, screen)) == 1
+    assert screen =~ "┆ Inspect the project"
+    assert length(Regex.scan(~r/┆ Inspect/, screen)) == 1
   end
 
   test "renders agent-initiated delegation as a delegate tool row" do

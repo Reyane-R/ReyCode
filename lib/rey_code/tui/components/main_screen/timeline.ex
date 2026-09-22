@@ -9,9 +9,10 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   alias ReyCode.Orchestration.StrategicReview
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Activity, MermaidASCII, TextSelection}
-  import ReyCode.TUI.Components.HUD, only: [scan: 1, glyph: 2]
+  import ReyCode.TUI.Components.HUD, only: [glyph: 2, wordmark: 1]
 
   @max_visible_notes 8
+  @code_omitted "code omitted"
 
   defmodule Disclosure do
     @moduledoc false
@@ -70,7 +71,8 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     >
       <box class="w-full py-1">
         <box :if={@messages == []} class="pt-4 w-full">
-          <box class="font-bold text-primary">Ready</box>
+          <box class="w-full h-3 font-bold text-boundary overflow-hidden">{wordmark(@ascii)}</box>
+          <box class="pt-1 font-bold text-primary">Ready</box>
           <box class="pt-1 text-muted">
             Message the Assistant or delegate focused work with /task.
           </box>
@@ -80,26 +82,18 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
             Context compacted · /context to inspect
             <box class="pl-2 text-muted">{boundary_preview(item.summary)}</box>
           </box>
+          <box
+            :if={item.kind == :message and item.role == :user}
+            class={rule_class(index, @terminal_height)}
+          >
+            {exchange_rule(item, @message_width)}
+          </box>
           <box :if={item.kind == :message} class={message_class(item, index, @terminal_height)}>
             <box class="inline w-full overflow-hidden bg-surface">
               <box class="text-boundary">{glyph(:corner, @ascii)} </box>
               <box class={author_name_class(item)}>{author_label(item)}</box>
               <box :if={message_metadata(item) != ""} class="text-muted">{metadata_label(item)}</box>
               <box class={message_status_class(item)}>{message_status_label(item)}</box>
-              <.scan
-                :if={animated_activity?(item.activity)}
-                id={"message-scan-" <> item.id}
-                width={8}
-                kind={if item.activity.state == :blocked do
-      :attention
-    else
-      :link
-    end}
-                motion={@motion}
-                ascii={@ascii}
-                class={"text-" <> Activity.color(item.activity)}
-                clip={@clip}
-              />
               <box
                 :if={item.role == :assistant and item.body != ""}
                 id={"copy-#{item.id}"}
@@ -126,7 +120,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
               </box>
             </box>
             <box
-              :if={collapsible?(item)}
+              :if={collapsible?(item) or foldable?(item)}
               id={"execution-details-#{item.id}"}
               implicit={Disclosure}
               focusable
@@ -144,7 +138,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
               +{note_overflow(item)} earlier thoughts
             </box>
             <box
-              :for={row <- visible_execution_rows(item, @activity_frame, @message_width)}
+              :for={row <- visible_execution_rows(item, @activity_frame, @message_width, @ascii)}
               class="w-full"
             >
               <box class="inline w-full h-1 overflow-hidden">
@@ -164,7 +158,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
                   <box>│ </box>
                   <box id={line.id}>{line.spans}</box>
                 </box>
-                <box :if={item.role != :user} id={line.id}>{line.spans}</box>
+                <box :if={item.role != :user} id={line.id} class={line_class(line)}>{line.spans}</box>
               </box>
             </box>
             <box :if={show_placeholder?(item)} class="pl-2 w-full text-muted">
@@ -224,11 +218,8 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp message_placeholder(%{activity: activity}, frame),
     do: Activity.header_text(activity, frame)
 
-  defp message_metadata(%{role: :user, created_at: created_at, turn: %{mode: :delegate}}) do
-    [timestamp(created_at), "task"] |> Enum.reject(&(&1 == "")) |> Enum.join(" · ")
-  end
-
-  defp message_metadata(%{role: :user, created_at: created_at}), do: timestamp(created_at)
+  defp message_metadata(%{role: :user, turn: %{mode: :delegate}}), do: "task"
+  defp message_metadata(%{role: :user}), do: ""
 
   defp message_metadata(%{invocation: invocation}) when not is_nil(invocation) do
     Presentation.short_runtime_label(invocation.participant)
@@ -251,16 +242,28 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp challengeable?(_item), do: false
 
   defp message_class(_message, 0, _height), do: "w-full border-l overflow-hidden"
-
-  defp message_class(%{role: :user}, _index, height) when height >= 32,
-    do: "w-full pt-2 border-l overflow-hidden"
-
+  defp message_class(%{role: :user}, _index, _height), do: "w-full border-l overflow-hidden"
   defp message_class(_message, _index, _height), do: "w-full pt-1 border-l overflow-hidden"
 
-  defp animated_activity?(%Activity.Item{state: state}) when state in [:active, :blocked],
-    do: true
+  # The exchange rule carries the breathing room a user message used to.
+  defp rule_class(0, _height), do: "w-full h-1 text-boundary overflow-hidden"
 
-  defp animated_activity?(_activity), do: false
+  defp rule_class(_index, height) when height >= 32,
+    do: "w-full pt-1 h-2 text-boundary overflow-hidden"
+
+  defp rule_class(_index, _height), do: "w-full h-1 text-boundary overflow-hidden"
+
+  # Each exchange opens with a dim rule carrying the time, so the transcript
+  # has rhythm without more chrome in the message header.
+  defp exchange_rule(item, width) do
+    stamp = timestamp(item.created_at)
+    lead = if stamp == "", do: "──", else: "── " <> stamp <> " "
+    lead <> String.duplicate("─", max(width - String.length(lead), 0))
+  end
+
+  # Fenced code sits on the panel surface; prose stays on the background.
+  defp line_class(%{code?: true}), do: "w-full bg-panel px-1"
+  defp line_class(_line), do: ""
 
   defp author_name_class(%{role: :user}), do: "font-bold text-secondary"
   defp author_name_class(%{author: %{id: "critic"}}), do: "font-bold text-warning"
@@ -282,24 +285,101 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp diff_line_class("@@" <> _line), do: "pl-4 w-full text-secondary"
   defp diff_line_class(_line), do: "pl-4 w-full text-muted"
 
-  defp visible_execution_rows(item, frame, width) do
+  defp visible_execution_rows(item, frame, width, ascii?) do
     if(details_visible?(item), do: item.execution_rows, else: [])
     |> drop_hidden_notes(visible_note_overflow(item.execution_rows))
-    |> Enum.flat_map(&render_execution_row(&1, frame, width))
+    |> collapse_fenced_notes()
+    |> fold_repeated_tools(expanded?(item))
+    |> Enum.flat_map(&render_execution_row(&1, frame, width, ascii?))
   end
 
-  defp render_execution_row(%{kind: :note, text: text}, _frame, width) do
+  # Reasoning previews arrive a line at a time, so a fenced block would show
+  # as a fence row, code rows, and a closing fence. Collapse it to one row.
+  defp collapse_fenced_notes(rows) do
+    {rows, _in_fence?} =
+      Enum.flat_map_reduce(rows, false, fn
+        %{kind: :note, text: text} = row, in_fence? ->
+          case {fence_count(text), in_fence?} do
+            {0, false} -> {[row], false}
+            {0, true} -> {[], true}
+            {count, false} -> {[%{row | text: @code_omitted}], rem(count, 2) == 1}
+            {_count, true} -> {[], false}
+          end
+
+        row, in_fence? ->
+          {[row], in_fence?}
+      end)
+
+    rows
+  end
+
+  defp fence_count(text), do: length(Regex.scan(~r/(^|\s)```/, text))
+
+  # Consecutive completed runs of one verb fold into a single counted row
+  # until the operator expands the details.
+  defp fold_repeated_tools(rows, true), do: rows
+
+  defp fold_repeated_tools(rows, false) do
+    rows
+    |> Enum.chunk_by(&fold_key/1)
+    |> Enum.flat_map(fn
+      [first, _second | _rest] = group ->
+        case fold_key(first) do
+          {:fold, _label} ->
+            [
+              %{
+                kind: :folded,
+                row: first,
+                count: length(group),
+                targets: Enum.map(group, & &1.target)
+              }
+            ]
+
+          {:solo, _row} ->
+            group
+        end
+
+      group ->
+        group
+    end)
+  end
+
+  defp fold_key(%{kind: :tool, state: :terminal, outcome: :completed, label: label}),
+    do: {:fold, label}
+
+  defp fold_key(row), do: {:solo, row}
+
+  # The control stays while expanded so the operator can fold rows again.
+  defp foldable?(item),
+    do: fold_repeated_tools(item.execution_rows, false) != item.execution_rows
+
+  defp expanded?(item), do: Map.get(item, :execution_details_expanded?, false)
+
+  defp render_execution_row(%{kind: :note, text: text}, _frame, width, ascii?) do
+    rail = if ascii?, do: ":", else: "┆"
+
     text
     |> wrap_note(max(width - 2, 1))
-    |> Enum.with_index()
-    |> Enum.map(fn {line, index} ->
-      trace_note(if(index == 0, do: "·", else: " "), line, "text-muted")
-    end)
+    |> Enum.map(&trace_note(rail, &1, "text-muted"))
+  end
+
+  defp render_execution_row(%{kind: :folded} = folded, frame, _width, _ascii?) do
+    [glyph, verb] = folded.row |> Activity.row_lead(frame) |> String.split(" ", parts: 2)
+    verb = String.pad_trailing(String.trim_trailing(verb) <> " ×#{folded.count}", 11)
+    targets = folded.targets |> Enum.reject(&(&1 in [nil, ""])) |> Enum.join(", ")
+
+    [
+      %{
+        spans: [{"pl-2 text-success", glyph}, {"pl-1", verb}, {" text-muted", targets}],
+        diff_lines: [],
+        diff_truncated?: false
+      }
+    ]
   end
 
   # Glyph carries the state color, the verb stays body text, and the target
   # recedes, so a ledger reads as aligned columns instead of dotted prose.
-  defp render_execution_row(row, frame, _width) do
+  defp render_execution_row(row, frame, _width, _ascii?) do
     state_class = "text-#{Activity.color(row)}"
 
     verb_class =
@@ -376,7 +456,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
     do: not collapsible?(item) or Map.get(item, :execution_details_expanded?, false)
 
   defp disclosure_label(item) do
-    action = if details_visible?(item), do: "Hide details", else: "Show details"
+    action = if expanded?(item), do: "Hide details", else: "Show details"
 
     case Enum.count(item.execution_rows, &(&1.kind == :tool)) do
       0 -> "Thinking · " <> action

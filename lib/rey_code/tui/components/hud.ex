@@ -23,6 +23,11 @@ defmodule ReyCode.TUI.Components.HUD do
 
   def rail_width(_width, _height), do: 0
 
+  @doc "The block-letter wordmark, with a plain spelling for basic terminals."
+  @spec wordmark(boolean()) :: String.t()
+  def wordmark(true), do: "R E Y C O D E //"
+  def wordmark(_ascii), do: @logo
+
   @doc "Decorative glyphs share the terminal's ASCII policy."
   def glyph(:corner, true), do: "/"
   def glyph(:corner, _ascii), do: "╱"
@@ -67,7 +72,7 @@ defmodule ReyCode.TUI.Components.HUD do
 
   def hero(assigns) do
     assigns = Map.put(assigns, :large?, assigns.width >= 72 and assigns.height >= 30)
-    assigns = Map.put(assigns, :logo, if(assigns.ascii, do: "R E Y C O D E //", else: @logo))
+    assigns = Map.put(assigns, :logo, wordmark(assigns.ascii))
 
     ~H"""
     <box :if={@large?} class="pt-1 w-full overflow-hidden">

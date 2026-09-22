@@ -392,7 +392,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
     <box class={"h-#{@input_height + 4} w-full bg-surface border-t px-2 overflow-hidden"}>
       <box class="inline w-full">
         <box class="text-muted">{glyph(:corner, @ascii)} Message Assistant</box>
-        <box class={"w-full text-right " <> @composer_status.class}>{@composer_status.label}</box>
+        <box class={"w-full text-right " <> @composer_status.class}>[ {@composer_status.label} ]</box>
       </box>
       <.textarea
         id="prompt"

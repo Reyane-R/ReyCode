@@ -141,7 +141,9 @@ defmodule ReyCode.TUI.TextSelection do
     Enum.reverse([%{line | spans: Enum.reverse(current)} | rows])
     |> Enum.with_index()
     |> Enum.map(fn {row, index} ->
-      Map.put(row, :copy_skip, if(index == 0, do: Map.get(line, :copy_skip, 0), else: 0))
+      row
+      |> Map.put(:copy_skip, if(index == 0, do: Map.get(line, :copy_skip, 0), else: 0))
+      |> Map.put(:code?, Map.get(line, :code?, false))
     end)
   end
 
@@ -149,7 +151,7 @@ defmodule ReyCode.TUI.TextSelection do
     count = max(Ucwidth.width(span.text), 0)
 
     if cells > 0 and cells + count > width,
-      do: {[%{spans: Enum.reverse(current), separator: ""} | rows], [span], count},
+      do: {[%{spans: Enum.reverse(current), separator: "", code?: false} | rows], [span], count},
       else: {rows, [span | current], cells + count}
   end
 

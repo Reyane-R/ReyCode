@@ -190,15 +190,6 @@ defmodule ReyCode.TUI.Effects do
     end)
   end
 
-  defp content(%{kind: :link, ascii?: true}, frame, _elapsed_ms),
-    do: elem({"--o---->", "---o--->", "----o-->", "-----o->"}, rem(frame, 4))
-
-  defp content(%{kind: :link}, frame, _elapsed_ms),
-    do: elem({"──◆────▸", "───◆───▸", "────◆──▸", "─────◆─▸"}, rem(frame, 4))
-
-  defp content(%{kind: :attention}, frame, _elapsed_ms),
-    do: elem({"[ ! ]", "[ ! ]", "  !  ", "  !  "}, rem(div(frame, 3), 4))
-
   defp scanner(state, frame) do
     position = Integer.mod(frame, state.width_count + 5)
     dim = if state.ascii?, do: "-", else: "─"

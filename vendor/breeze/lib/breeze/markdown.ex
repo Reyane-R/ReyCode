@@ -44,8 +44,12 @@ defmodule Breeze.Markdown do
         do: String.length(text) - String.length(String.trim_leading(text, " ")),
         else: 0
 
-    {%{spans: line_spans(text), separator: separator, copy_skip: skip}, separator == " "}
+    {%{spans: line_spans(text), separator: separator, copy_skip: skip, code?: code_line?(text)},
+     separator == " "}
   end
+
+  defp code_line?(@code <> "    " <> _code), do: true
+  defp code_line?(_text), do: false
 
   defp line_spans(@code <> "    " <> code), do: spans_from_ansi(@code <> code)
   defp line_spans(text), do: spans_from_ansi(text)
@@ -222,7 +226,7 @@ defmodule Breeze.Markdown do
         {spans, %{}}
 
       @code, {spans, style} ->
-        {spans, Map.put(style, :foreground_color, 6)}
+        {spans, Map.put(style, :foreground_color, "#E9DCC0")}
 
       @bold, {spans, style} ->
         {spans, Map.put(style, :bold, true)}

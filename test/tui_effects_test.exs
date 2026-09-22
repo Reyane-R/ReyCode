@@ -47,7 +47,7 @@ defmodule ReyCode.TUI.EffectsTest do
   end
 
   test "reduced motion registers no decoration timer and every effect stays still" do
-    for kind <- [:logo, :scanner, :signal, :link, :attention, :emblem, :blackwall],
+    for kind <- [:logo, :scanner, :signal, :emblem, :blackwall],
         ascii? <- [true, false] do
       {state, []} =
         effect(kind, %{"effect-enabled": false, "effect-ascii": ascii?, "effect-text": "REYCODE"})
@@ -57,7 +57,7 @@ defmodule ReyCode.TUI.EffectsTest do
   end
 
   test "links, attention brackets and emblem change without changing dimensions" do
-    for kind <- [:link, :attention, :emblem], ascii? <- [true, false] do
+    for kind <- [:emblem], ascii? <- [true, false] do
       {state, _options} = effect(kind, %{"effect-ascii": ascii?})
       first = animate(state, 0)
       second = animate(state, 700)
