@@ -2,6 +2,7 @@ defmodule ReyCode.Security.VerifiedChangeBoundaryTest do
   use ExUnit.Case, async: false
 
   alias ReyCode.{EventStore, Hashing, RuntimeConfig, ToolRegistry}
+  alias ReyCode.Tool.Result
 
   alias ReyCode.Orchestration.{
     Engine,
@@ -291,6 +292,29 @@ defmodule ReyCode.Security.VerifiedChangeBoundaryTest do
 
     refute File.exists?(Path.join(context.source, "forbidden"))
     refute Enum.any?(EventStore.load(store), &(&1.type == :tool_run_started))
+  end
+
+  test "an unencodable tool failure is refused without crashing the Engine", context do
+    {engine, _store, session_id} = start_engine(context, [write_call()], :ordinary)
+    {:ok, _turn_id} = Engine.post_message(session_id, "Write", :direct, engine)
+    invocation = waiting(engine)
+    [run] = Map.values(invocation.tool_runs)
+    approve_without_admission(engine, invocation, run)
+    assert :ok = Client.tool_run_started(engine, invocation.id, run.id)
+
+    raw = %{"ok" => false, "error" => {:missing_argument, :source_hash}, "metadata" => %{}}
+
+    assert {:error, :invalid_tool_run_payload} =
+             Client.tool_run_failed(engine, invocation.id, run.id, raw)
+
+    assert Process.alive?(engine)
+
+    wire = Result.to_wire(Result.error({:missing_argument, :source_hash}))
+
+    assert :ok = Client.tool_run_failed(engine, invocation.id, run.id, wire)
+    failed = Engine.snapshot(engine).invocations[invocation.id].tool_runs[run.id]
+    assert failed.status == :failed
+    assert failed.error["error"] == "missing_argument: source_hash"
   end
 
   test "already approved ordinary write is rebound to persisted verified worktree at start",

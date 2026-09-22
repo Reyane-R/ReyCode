@@ -1308,7 +1308,15 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     end
   end
 
-  defp ensure_wire_map(value) when is_map(value), do: :ok
+  # A payload the store cannot encode is the worker's defect, not the engine's:
+  # refuse it here so one bad tool result never takes every Session down.
+  defp ensure_wire_map(value) when is_map(value) do
+    case Jason.encode(value) do
+      {:ok, _json} -> :ok
+      {:error, _reason} -> {:error, :invalid_tool_run_payload}
+    end
+  end
+
   defp ensure_wire_map(_value), do: {:error, :invalid_tool_run_payload}
 
   defp resumable_run(invocation, review) do

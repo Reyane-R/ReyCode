@@ -54,10 +54,25 @@ defmodule ReyCode.Tool.Result do
     %{
       "ok" => false,
       "output" => nil,
-      "error" => result.error,
+      "error" => wire_error(result.error),
       "truncated" => result.truncated,
       "metadata" => result.metadata
     }
+  end
+
+  # Adapters return free-form error terms such as `{:missing_argument, :path}`;
+  # the durable store only accepts JSON, so anything else becomes text here
+  # rather than failing the append inside the engine.
+  defp wire_error(nil), do: nil
+  defp wire_error(error) when is_binary(error), do: error
+  defp wire_error(error) when is_atom(error), do: Atom.to_string(error)
+  defp wire_error({tag, detail}) when is_atom(tag) and is_atom(detail), do: "#{tag}: #{detail}"
+
+  defp wire_error(error) do
+    case Jason.encode(error) do
+      {:ok, _json} -> error
+      {:error, _reason} -> inspect(error)
+    end
   end
 
   defp json_metadata(metadata) when is_map(metadata) do
