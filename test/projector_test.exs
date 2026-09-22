@@ -17,6 +17,7 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     Message,
     Participant,
     Projector,
+    ProviderRoundAttempt,
     Session,
     SquadRun,
     ToolAsk,
@@ -388,6 +389,142 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert state.messages["msg-agent"].body == "Hello"
     assert invocation.usage == %{"output_tokens" => 4}
     assert invocation.last_frame_sequence == 2
+  end
+
+  test "provider round attempts project retries and clear when the round is recorded" do
+    failure = Failure.new(:rate_limited, "Try later", true)
+
+    invocation_started =
+      event(5, :invocation_started, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-assistant"
+      })
+
+    started =
+      event(6, :provider_round_attempt_started, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-assistant",
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "round_index" => 0,
+        "attempt" => 1,
+        "frame_sequence_at_start" => 0,
+        "provider_id" => "openai",
+        "model_id" => "gpt-5",
+        "request_metrics" => %{
+          "prompt_bytes" => 8_000,
+          "estimated_prompt_tokens" => 2_000
+        }
+      })
+
+    scheduled =
+      event(7, :provider_round_retry_scheduled, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-assistant",
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "round_index" => 0,
+        "attempt" => 1,
+        "retry_eligible_at" => "2026-08-03T00:00:00Z",
+        "last_failure" => Failure.to_wire(failure)
+      })
+
+    retry_started =
+      event(8, :provider_round_attempt_started, :invocation, "inv-1", %{
+        started.data
+        | "attempt" => 2,
+          "request_metrics" => nil
+      })
+
+    round =
+      event(9, :provider_round_recorded, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-assistant",
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "round_index" => 0,
+        "text" => "complete",
+        "tool_calls" => [],
+        "usage" => %{"output_tokens" => 2}
+      })
+
+    started_state = Projector.replay(opened_invocation_events() ++ [invocation_started, started])
+    attempt = started_state.invocations["inv-1"].provider_round_attempt
+
+    assert %ProviderRoundAttempt{state: :started, attempt: 1} = attempt
+
+    assert %ProviderRoundAttempt.RequestMetrics{
+             prompt_bytes: 8_000,
+             estimated_prompt_tokens: 2_000
+           } = attempt.request_metrics
+
+    assert started_state.invocations["inv-1"].last_request_metrics_sequence == started.sequence
+
+    scheduled_state = Projector.apply(scheduled, started_state)
+    scheduled_attempt = scheduled_state.invocations["inv-1"].provider_round_attempt
+    assert scheduled_attempt.state == :retry_scheduled
+    assert scheduled_attempt.retry_eligible_at == "2026-08-03T00:00:00Z"
+    assert scheduled_attempt.last_failure == failure
+
+    retry_state = Projector.apply(retry_started, scheduled_state)
+    assert retry_state.invocations["inv-1"].provider_round_attempt.attempt == 2
+    assert retry_state.invocations["inv-1"].provider_round_attempt.state == :started
+
+    recorded_state = Projector.apply(round, retry_state)
+    assert recorded_state.invocations["inv-1"].provider_round_attempt == nil
+    assert [%{index: 0, text: "complete"}] = recorded_state.invocations["inv-1"].rounds
+  end
+
+  test "terminal invocation events clear an active provider round attempt" do
+    invocation_started =
+      event(5, :invocation_started, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-assistant"
+      })
+
+    started =
+      event(6, :provider_round_attempt_started, :invocation, "inv-1", %{
+        "invocation_id" => "inv-1",
+        "message_id" => "msg-assistant",
+        "turn_id" => "turn-1",
+        "room_id" => "room-1",
+        "round_index" => 0,
+        "attempt" => 1,
+        "frame_sequence_at_start" => 0,
+        "provider_id" => "simulator",
+        "model_id" => nil,
+        "request_metrics" => nil
+      })
+
+    terminal_events = [
+      {:invocation_completed, %{"metadata" => %{}}},
+      {:invocation_failed, %{"error" => Failure.to_wire(Failure.new(:provider_error, "failed"))}},
+      {:invocation_cancelled, %{"reason" => "cancelled"}}
+    ]
+
+    for {type, terminal_data} <- terminal_events do
+      state = Projector.replay(opened_invocation_events() ++ [invocation_started, started])
+
+      terminal =
+        event(
+          7,
+          type,
+          :invocation,
+          "inv-1",
+          Map.merge(
+            %{
+              "invocation_id" => "inv-1",
+              "message_id" => "msg-assistant",
+              "turn_id" => "turn-1",
+              "room_id" => "room-1"
+            },
+            terminal_data
+          )
+        )
+
+      projected = Projector.apply(terminal, state)
+      assert projected.invocations["inv-1"].provider_round_attempt == nil
+    end
   end
 
   test "replays a legacy projection snapshot" do

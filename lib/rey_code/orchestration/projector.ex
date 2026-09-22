@@ -24,6 +24,8 @@ defmodule ReyCode.Orchestration.Projector do
     PeerMessage,
     Projection,
     ProviderRound,
+    ProviderRoundAttempt,
+    ProviderRoundRecovery,
     Session,
     SquadRun,
     Steering,
@@ -338,6 +340,56 @@ defmodule ReyCode.Orchestration.Projector do
     |> put_sequence(event.sequence)
   end
 
+  def apply(%Event{type: :provider_round_attempt_started, data: data} = event, state) do
+    attempt =
+      ProviderRoundAttempt.from_map(%{
+        round_index: data["round_index"],
+        attempt: data["attempt"],
+        frame_sequence_at_start: data["frame_sequence_at_start"],
+        provider_id: data["provider_id"],
+        model_id: data["model_id"],
+        request_metrics: data["request_metrics"],
+        state: :started
+      })
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      validate_provider_round_attempt_start!(invocation, attempt, event.recorded_at)
+
+      %{
+        invocation
+        | provider_round_attempt: attempt,
+          last_request_metrics: attempt.request_metrics,
+          last_request_metrics_sequence: event.sequence
+      }
+    end)
+    |> put_sequence(event.sequence)
+  end
+
+  def apply(%Event{type: :provider_round_retry_scheduled, data: data} = event, state) do
+    failure = failure_from_wire!(data["last_failure"])
+    true = Failure.retryable?(failure)
+
+    state
+    |> update_invocation(data["invocation_id"], fn invocation ->
+      %ProviderRoundAttempt{state: :started} = attempt = invocation.provider_round_attempt
+      true = attempt.round_index == data["round_index"]
+      true = attempt.attempt == data["attempt"]
+      true = attempt.attempt < ProviderRoundRecovery.maximum_attempt_count()
+
+      %{
+        invocation
+        | provider_round_attempt: %{
+            attempt
+            | state: :retry_scheduled,
+              retry_eligible_at: data["retry_eligible_at"],
+              last_failure: failure
+          }
+      }
+    end)
+    |> put_sequence(event.sequence)
+  end
+
   def apply(%Event{type: :provider_round_recorded, data: data} = event, state) do
     steering = Enum.map(data["steering"] || [], &Steering.from_map/1)
 
@@ -354,9 +406,12 @@ defmodule ReyCode.Orchestration.Projector do
 
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
+      validate_recorded_provider_round!(invocation.provider_round_attempt, round.index)
+
       %{
         invocation
         | rounds: invocation.rounds ++ [round],
+          provider_round_attempt: nil,
           pending_steering:
             Enum.reject(invocation.pending_steering, &MapSet.member?(consumed_ids, &1.id)),
           usage: data["usage"] || invocation.usage
@@ -622,6 +677,7 @@ defmodule ReyCode.Orchestration.Projector do
         %{
           invocation
           | status: :completed,
+            provider_round_attempt: nil,
             completion_metadata: data["metadata"],
             coordination: coordination
         }
@@ -637,7 +693,14 @@ defmodule ReyCode.Orchestration.Projector do
     state
     |> update_invocation(data["invocation_id"], fn invocation ->
       coordination = %{invocation.coordination | pending_question: nil}
-      %{invocation | status: :failed, error: error, coordination: coordination}
+
+      %{
+        invocation
+        | status: :failed,
+          provider_round_attempt: nil,
+          error: error,
+          coordination: coordination
+      }
     end)
     |> update_message(data["message_id"], &%{&1 | status: :failed, error: error})
     |> put_sequence(event.sequence)
@@ -653,6 +716,7 @@ defmodule ReyCode.Orchestration.Projector do
       %{
         invocation
         | status: :cancelled,
+          provider_round_attempt: nil,
           error: failure,
           pending_tool_review: nil,
           coordination: coordination
@@ -986,6 +1050,8 @@ defmodule ReyCode.Orchestration.Projector do
       tool_run_order: [],
       pending_tool_review: nil,
       completion_metadata: nil,
+      provider_round_attempt: nil,
+      last_request_metrics: nil,
       last_frame_sequence: 0,
       error: nil,
       delegation_depth: value_or(data["delegation_depth"], 0),
@@ -1111,6 +1177,39 @@ defmodule ReyCode.Orchestration.Projector do
       {:ok, failure} -> failure
       {:error, :invalid_failure} -> raise ArgumentError, "invalid durable failure"
     end
+  end
+
+  defp validate_provider_round_attempt_start!(invocation, attempt, recorded_at) do
+    true = invocation.status == :running
+    true = attempt.round_index == length(invocation.rounds)
+    true = attempt.frame_sequence_at_start == invocation.last_frame_sequence
+    true = attempt.attempt <= ProviderRoundRecovery.maximum_attempt_count()
+
+    case invocation.provider_round_attempt do
+      nil ->
+        true = attempt.attempt == 1
+
+      %ProviderRoundAttempt{state: :retry_scheduled} = scheduled ->
+        true = attempt.round_index == scheduled.round_index
+        true = attempt.attempt == scheduled.attempt + 1
+        true = attempt.provider_id == scheduled.provider_id
+        true = attempt.model_id == scheduled.model_id
+        true = retry_eligible?(recorded_at, scheduled.retry_eligible_at)
+    end
+  end
+
+  defp validate_recorded_provider_round!(nil, _round_index), do: :ok
+
+  defp validate_recorded_provider_round!(
+         %ProviderRoundAttempt{state: :started, round_index: round_index},
+         round_index
+       ),
+       do: :ok
+
+  defp retry_eligible?(recorded_at, retry_eligible_at) do
+    {:ok, recorded_at, _offset} = DateTime.from_iso8601(recorded_at)
+    {:ok, retry_eligible_at, _offset} = DateTime.from_iso8601(retry_eligible_at)
+    DateTime.compare(recorded_at, retry_eligible_at) != :lt
   end
 
   defp merge_decision("apply"), do: :apply

@@ -360,6 +360,47 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert emitted == []
     end
 
+    test "a retryable failure after buffered text becomes non-retryable" do
+      failure = Failure.new(:server_error, "connection ended", true)
+
+      FakeTransport.set_stream_script([
+        {:chunks_then_error, [~s(data: {"choices":[{"delta":{"content":"buffered"}}]}\n\n)],
+         failure}
+      ])
+
+      {result, emitted} =
+        collect_frames(fn emit ->
+          wire_result(
+            OpenAICompatible.stream(
+              runtime(
+                openai_compatible_chunk_bytes: 1_000,
+                openai_compatible_chunk_latency_ms: 1_000
+              ),
+              request(),
+              emit
+            )
+          )
+        end)
+
+      assert {:error, %{"category" => "server_error", "retryable" => false}} = result
+      assert emitted == []
+    end
+
+    test "a retryable failure after a parsed tool call becomes non-retryable" do
+      failure = Failure.new(:server_error, "connection ended", true)
+
+      FakeTransport.set_stream_script([
+        {:chunks_then_error,
+         [
+           ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"type":"function","function":{"name":"bash","arguments":"{\\"cmd\\":\\"date\\"}"}}]}}]}\n\n),
+           ~s(data: {"choices":[{"finish_reason":"tool_calls","delta":{}}]}\n\n)
+         ], failure}
+      ])
+
+      assert {:error, %{"category" => "server_error", "retryable" => false}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+    end
+
     test "assembles several parallel calls from one round in order" do
       FakeTransport.set_stream([
         ~s(data: {"choices":[{"delta":{"tool_calls":[{"id":"call-1","index":0,"type":"function","function":{"name":"read","arguments":"{\\"path\\":\\"a.txt\\"}"}}]}}]}\n\n),
@@ -828,14 +869,24 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       "data: [DONE]\n\n"
     ]
 
-    test "retries once without stream_options on HTTP 400 and keeps tools" do
+    test "returns capability negotiation to the durable retry lifecycle" do
       FakeTransport.set_stream_script([
         {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
         {:chunks, @success_stream}
       ])
 
+      assert {:error, %Failure{category: :unsupported_stream_options, retryable?: true} = failure} =
+               OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end)
+
+      assert length(FakeTransport.requests()) == 1
+      RequestShape.clear()
+
+      retry_request = %{request() | provider_retry_failure: failure}
+
       assert {:ok, %Response{text: "ok"}} =
-               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+               wire_result(
+                 OpenAICompatible.stream(runtime(), retry_request, fn _frame -> :ok end)
+               )
 
       assert [first, second] = Enum.map(FakeTransport.requests(), &Jason.decode!(&1.body))
       assert Map.has_key?(first, "stream_options")
@@ -989,10 +1040,13 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         {:chunks, @success_stream}
       ])
 
+      assert {:error, %{"retryable" => true}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
+
       assert {:ok, %Response{}} =
                wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
-      # The second round must succeed on its first attempt: no repeated 400.
+      # The next round must succeed on its first attempt: no repeated 400.
       FakeTransport.set_stream_script([{:chunks, @success_stream}])
 
       assert {:ok, %Response{}} =
@@ -1012,6 +1066,9 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
         {:status, 400, ~s({"error":{"message":"function calling is not supported"}})}
       ])
+
+      assert {:error, %{"category" => "unsupported_stream_options", "retryable" => true}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
       assert {:error,
               %{
@@ -1150,6 +1207,9 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
         {:status, 400, ~s({"error":{"message":"unknown field stream_options"}})},
         {:chunks, @success_stream}
       ])
+
+      assert {:error, %{"retryable" => true}} =
+               wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
 
       assert {:ok, %Response{}} =
                wire_result(OpenAICompatible.stream(runtime(), request(), fn _frame -> :ok end))
@@ -1296,6 +1356,47 @@ defmodule ReyCode.Provider.OpenAICompatibleTest do
       assert {:ok, prepared} = OpenAICompatible.prepare(scoped_runtime, request())
       assert prepared.budget.input_budget_tokens == 12_000
       assert is_integer(prepared.budget.model_context_percent)
+    end
+
+    test "exact model override drives request preflight without changing profile limits" do
+      scoped_runtime =
+        runtime(
+          openai_compatible_model_budget_overrides: %{
+            deepseek: %{
+              "deepseek-chat" => %{
+                max_prompt_bytes: 1_000_000,
+                context_window_tokens: 16_000,
+                output_reserve_tokens: 4_000
+              }
+            }
+          }
+        )
+
+      assert {:ok, prepared} = OpenAICompatible.prepare(scoped_runtime, request())
+      assert prepared.budget.max_prompt_bytes == 1_000_000
+      assert prepared.budget.input_budget_tokens == 12_000
+
+      assert {:ok, profile} = Profile.fetch(:deepseek, scoped_runtime.config)
+      assert profile.max_prompt_bytes == 128_000
+      assert profile.context_window_tokens == nil
+      assert profile.output_reserve_tokens == 16_384
+    end
+
+    test "an explicit model capability sends the planned output reserve" do
+      scoped_runtime =
+        runtime(
+          openai_compatible_model_budget_overrides: %{
+            deepseek: %{
+              "deepseek-chat" => %{
+                output_reserve_tokens: 4_096,
+                output_limit_parameter: :max_tokens
+              }
+            }
+          }
+        )
+
+      assert {:ok, prepared} = OpenAICompatible.prepare(scoped_runtime, request())
+      assert Jason.decode!(prepared.body)["max_tokens"] == 4_096
     end
 
     test "validates model context capacity against its output reserve" do
@@ -1577,6 +1678,12 @@ defmodule ReyCode.OpenAICompatible.FakeTransport do
 
       {:chunks, chunks} ->
         reduce_stream(on_event, acc, chunks)
+
+      {:chunks_then_error, chunks, error} ->
+        case reduce_stream(on_event, acc, chunks) do
+          {:ok, _next, _response} -> {:error, error}
+          {:error, failure} -> {:error, failure}
+        end
 
       nil ->
         case :persistent_term.get({__MODULE__, :stream_status}, nil) do

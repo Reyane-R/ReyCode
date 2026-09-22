@@ -9,6 +9,7 @@ defmodule ReyCode.Orchestration.Invocation do
     InvocationExecution,
     Participant,
     ProviderRound,
+    ProviderRoundAttempt,
     Steering,
     ToolAsk,
     ToolRun
@@ -38,6 +39,9 @@ defmodule ReyCode.Orchestration.Invocation do
     :provider_activity_events,
     :notes,
     :rounds,
+    :provider_round_attempt,
+    :last_request_metrics,
+    :last_request_metrics_sequence,
     :pending_steering,
     :tool_runs,
     :tool_run_order,
@@ -50,6 +54,8 @@ defmodule ReyCode.Orchestration.Invocation do
     :delegated_from_tool_run_id
   ]
 
+  # This aggregate owns the active provider attempt so checkpoints cannot split its lifecycle.
+  # credo:disable-for-next-line Credo.Check.Warning.StructFieldAmount
   defstruct id: nil,
             session_id: nil,
             turn_id: nil,
@@ -71,6 +77,9 @@ defmodule ReyCode.Orchestration.Invocation do
             provider_activity_events: [],
             notes: [],
             rounds: [],
+            provider_round_attempt: nil,
+            last_request_metrics: nil,
+            last_request_metrics_sequence: nil,
             pending_steering: [],
             tool_runs: %{},
             tool_run_order: [],
@@ -104,6 +113,9 @@ defmodule ReyCode.Orchestration.Invocation do
           provider_activity_events: [map()],
           notes: [String.t()],
           rounds: [ProviderRound.t()],
+          provider_round_attempt: ProviderRoundAttempt.t() | nil,
+          last_request_metrics: ProviderRoundAttempt.RequestMetrics.t() | nil,
+          last_request_metrics_sequence: non_neg_integer() | nil,
           tool_runs: %{optional(String.t()) => ToolRun.t()},
           tool_run_order: [String.t()],
           pending_steering: [Steering.t()],
@@ -139,6 +151,9 @@ defmodule ReyCode.Orchestration.Invocation do
       | participant: participant(invocation.participant),
         pending_steering: Enum.map(invocation.pending_steering || [], &Steering.from_map/1),
         rounds: Enum.map(invocation.rounds || [], &ProviderRound.from_map/1),
+        provider_round_attempt:
+          optional_provider_round_attempt(invocation.provider_round_attempt),
+        last_request_metrics: optional_request_metrics(invocation.last_request_metrics),
         tool_runs:
           Map.new(invocation.tool_runs || %{}, fn {id, run} ->
             {id, ToolRun.from_map(run)}
@@ -219,6 +234,14 @@ defmodule ReyCode.Orchestration.Invocation do
 
   defp optional_failure(nil), do: nil
   defp optional_failure(value), do: Failure.from_map(value)
+
+  defp optional_provider_round_attempt(nil), do: nil
+  defp optional_provider_round_attempt(value), do: ProviderRoundAttempt.from_map(value)
+
+  defp optional_request_metrics(nil), do: nil
+
+  defp optional_request_metrics(value),
+    do: ProviderRoundAttempt.RequestMetrics.from_map(value)
 
   defp optional_tool_ask(nil), do: nil
   defp optional_tool_ask(review), do: ToolAsk.from_map(review)

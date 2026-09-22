@@ -56,7 +56,7 @@ defmodule ReyCode.Provider.ContextBudget do
 
     status =
       cond do
-        prompt_bytes > max_prompt_bytes ->
+        prompt_bytes > max_prompt_bytes or estimated_prompt_tokens > input_budget_tokens ->
           :too_large
 
         prompt_bytes >= maintenance_prompt_bytes or

@@ -131,6 +131,73 @@ defmodule ReyCode.RuntimeConfigTest do
     end
   end
 
+  test "validates exact model budget override shapes without normalizing model IDs" do
+    overrides = %{
+      zai: %{
+        "Model-A" => %{
+          max_prompt_bytes: 64_000,
+          context_window_tokens: 32_000,
+          output_reserve_tokens: 8_000
+        }
+      }
+    }
+
+    config = RuntimeConfig.fresh(openai_compatible_model_budget_overrides: overrides)
+    assert config.open_ai.model_budget_overrides == overrides
+
+    for {value, expectation} <- [
+          {%{"fixture" => %{"Model-A" => %{context_window_tokens: 32_000}}},
+           ~r/expected %\{provider_atom/},
+          {%{fixture: %{model_a: %{context_window_tokens: 32_000}}}, ~r/expected model string/},
+          {%{fixture: %{"Model-A" => %{context_tokens: 32_000}}},
+           ~r/unknown model budget keys.*context_tokens/},
+          {%{
+             fixture: %{
+               "Model-A" => %{context_window_tokens: 8_000, output_reserve_tokens: 8_000}
+             }
+           }, ~r/output_reserve_tokens.*less than context_window_tokens/},
+          {%{fixture: %{"Model-A" => %{max_prompt_bytes: 0}}}, ~r/max_prompt_bytes.*>= 1/}
+        ] do
+      assert_raise ArgumentError, expectation, fn ->
+        RuntimeConfig.fresh(openai_compatible_model_budget_overrides: value)
+      end
+    end
+
+    profile = %{
+      id: :fixture,
+      name: "Fixture",
+      base_url: "https://fixture.example.test/v1",
+      key_env: "FIXTURE_API_KEY",
+      context_window_tokens: 32_000,
+      output_reserve_tokens: 8_000
+    }
+
+    assert_raise ArgumentError, ~r/output_reserve_tokens.*less than context_window_tokens/, fn ->
+      RuntimeConfig.fresh(
+        openai_compatible_providers: [profile],
+        openai_compatible_model_budget_overrides: %{
+          fixture: %{"model-a" => %{context_window_tokens: 8_000}}
+        }
+      )
+    end
+
+    assert_raise ArgumentError, ~r/model_budget_overrides\.missing.*unknown provider/, fn ->
+      RuntimeConfig.fresh(
+        openai_compatible_model_budget_overrides: %{
+          missing: %{"model-a" => %{context_window_tokens: 8_000}}
+        }
+      )
+    end
+
+    assert_raise ArgumentError, ~r/output_limit_parameter/, fn ->
+      RuntimeConfig.fresh(
+        openai_compatible_model_budget_overrides: %{
+          zai: %{"glm-4.7" => %{output_limit_parameter: :unsupported}}
+        }
+      )
+    end
+  end
+
   test "environment capability flags override one field without erasing configured siblings" do
     config =
       load_with(
@@ -213,6 +280,7 @@ defmodule ReyCode.RuntimeConfigTest do
       openai_compatible_chunk_latency_ms: config.open_ai.chunk_latency_ms,
       openai_compatible_base_url_overrides: config.open_ai.base_url_overrides,
       openai_compatible_capability_overrides: config.open_ai.capability_overrides,
+      openai_compatible_model_budget_overrides: config.open_ai.model_budget_overrides,
       openai_compatible_providers: config.open_ai.profiles,
       openai_compatible_transport: config.open_ai.transport,
       squad_release_gate_human: config.squad.release_gate_human?,

@@ -58,6 +58,7 @@ defmodule ReyCode.RuntimeConfig.OpenAICompatible do
     :context_budget_tokens,
     :base_url_overrides,
     :capability_overrides,
+    :model_budget_overrides,
     :profiles,
     :transport
   ]
@@ -74,6 +75,7 @@ defmodule ReyCode.RuntimeConfig.OpenAICompatible do
           context_budget_tokens: pos_integer(),
           base_url_overrides: map(),
           capability_overrides: %{optional(atom()) => capability()},
+          model_budget_overrides: map(),
           profiles: [map()],
           transport: module() | nil
         }

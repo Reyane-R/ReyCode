@@ -4,10 +4,11 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   alias ReyCode.{Failure, ProjectInstructions}
 
   alias ReyCode.Orchestration.{
-    ContextCompaction,
     Delegation,
     EventEntries,
     Mode,
+    ProviderRoundAttempt,
+    ProviderRoundRecovery,
     ToolRuns,
     Validation,
     VerifiedChange
@@ -337,17 +338,33 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
   end
 
   defp recover_missing_execution(state, invocation) do
-    if replayable?(invocation.participant.provider) do
-      Admission.enqueue(state, invocation.id)
-    else
-      error =
-        Failure.new(
-          :interrupted,
-          "The provider invocation was interrupted and cannot be replayed safely"
-        )
+    cond do
+      match?(%ProviderRoundAttempt{state: :retry_scheduled}, invocation.provider_round_attempt) ->
+        Admission.enqueue(state, invocation.id)
 
-      DelegationFinalization.finalize_invocation(state, invocation.id, {:failed, error})
+      ProviderRoundRecovery.durable_continuation?(invocation) ->
+        Admission.enqueue(state, invocation.id)
+
+      match?(%ProviderRoundAttempt{state: :started}, invocation.provider_round_attempt) and
+          not replayable?(invocation.participant.provider) ->
+        fail_interrupted_provider(state, invocation)
+
+      replayable?(invocation.participant.provider) ->
+        Admission.enqueue(state, invocation.id)
+
+      true ->
+        fail_interrupted_provider(state, invocation)
     end
+  end
+
+  defp fail_interrupted_provider(state, invocation) do
+    error =
+      Failure.new(
+        :interrupted,
+        "The provider invocation was interrupted and cannot be replayed safely"
+      )
+
+    DelegationFinalization.finalize_invocation(state, invocation.id, {:failed, error})
   end
 
   defp start_turn(state, turn_id) do
@@ -364,8 +381,6 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
     invocation_entries = build_invocation_entries(session, turn, specs)
     turn_entry = EventEntries.turn_started(turn)
 
-    context_entries = context_entries(state, session, turn)
-
     state =
       if turn.mode == :squad do
         squad_config = [
@@ -379,28 +394,13 @@ defmodule ReyCode.Orchestration.Engine.Lifecycle do
 
         Persistence.append_and_apply!(
           state,
-          context_entries ++
-            [turn_entry | EventEntries.squad_start(turn, squad_config)] ++ invocation_entries
+          [turn_entry | EventEntries.squad_start(turn, squad_config)] ++ invocation_entries
         )
       else
-        Persistence.append_and_apply!(state, context_entries ++ [turn_entry | invocation_entries])
+        Persistence.append_and_apply!(state, [turn_entry | invocation_entries])
       end
 
     start_invocation_workers(state, invocation_entries)
-  end
-
-  defp context_entries(_state, _session, %{strategy_review: packet}) when not is_nil(packet),
-    do: []
-
-  defp context_entries(state, session, _turn) do
-    case ContextCompaction.entry(
-           session,
-           state.projection,
-           state.config.orchestration.context_budget_tokens
-         ) do
-      :unchanged -> []
-      {:compact, entry} -> [entry]
-    end
   end
 
   defp retire_legacy_turn(state, turn) do

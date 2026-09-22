@@ -11,9 +11,9 @@ defmodule ReyCode.AgentLoop do
   """
 
   alias ReyCode.{Agent, ArtifactStore, Failure}
+  alias ReyCode.Orchestration.{ContextCompaction, InvocationContextBoundary, ProviderRoundAttempt}
   alias ReyCode.Orchestration.Engine.Client
   alias ReyCode.Orchestration.Engine.SourceTask
-  alias ReyCode.Orchestration.InvocationContextBoundary
   alias ReyCode.Provider
   alias ReyCode.Provider.{Catalog, ContextBudget, Response}
   alias ReyCode.Tool.{Request, Result}
@@ -42,6 +42,11 @@ defmodule ReyCode.AgentLoop do
   end
 
   defp handle_tool_action({:ok, :none}, state, request), do: stream_round(state, request)
+
+  defp handle_tool_action({:ok, :complete}, state, _request) do
+    :ok = Client.complete_invocation(state.engine, state.invocation_id, %{})
+    {:stop, state}
+  end
 
   defp handle_tool_action({:ok, {:execute, run}}, state, request) do
     Agent.execute_tool_run(Map.put(state, :session_id, request.session_id), run)
@@ -90,14 +95,55 @@ defmodule ReyCode.AgentLoop do
 
   defp preflight_context(state, request, runtime) do
     case Provider.context_budget(runtime, request) do
-      {:ok, %ContextBudget{status: :ready}} -> stream_provider(state, request, runtime)
-      {:ok, %ContextBudget{} = budget} -> maintain_context(state, request, runtime, budget)
-      :unassessed -> stream_provider(state, request, runtime)
-      {:error, reason} -> fail_context_maintenance(state, reason)
+      {:ok, %ContextBudget{status: :ready} = budget} ->
+        stream_provider(state, request, runtime, budget)
+
+      {:ok, %ContextBudget{} = budget} ->
+        maintain_context(state, request, runtime, budget)
+
+      :unassessed ->
+        stream_provider(state, request, runtime, nil)
+
+      {:error, reason} ->
+        fail_context_maintenance(state, reason)
     end
   end
 
   defp maintain_context(state, request, runtime, budget) do
+    max_session_summary_bytes = session_summary_allowance(request, budget)
+
+    case Client.compact_session_context(
+           state.engine,
+           state.invocation_id,
+           max_session_summary_bytes
+         ) do
+      :ok -> rebuild_after_context_boundary(state, runtime)
+      :unchanged -> maintain_invocation_context(state, request, runtime, budget)
+      {:error, :invocation_terminal} -> {:stop, state}
+      {:error, reason} -> fail_context_maintenance(state, reason)
+    end
+  end
+
+  defp session_summary_allowance(request, budget) do
+    current_summary_bytes = request.session_context_summary_bytes || 0
+
+    excess_bytes =
+      max(
+        max(budget.prompt_bytes - budget.target_prompt_bytes, 0),
+        max(budget.estimated_prompt_tokens - budget.target_input_tokens, 0) * 4
+      )
+
+    requested_bytes =
+      if current_summary_bytes > 0 and excess_bytes > 0 do
+        max(current_summary_bytes - excess_bytes, 1)
+      else
+        max(div(budget.target_prompt_bytes, 4), 1)
+      end
+
+    min(ContextCompaction.maximum_summary_bytes(), requested_bytes)
+  end
+
+  defp maintain_invocation_context(state, request, runtime, budget) do
     max_summary_bytes =
       min(
         InvocationContextBoundary.maximum_summary_bytes(),
@@ -105,10 +151,17 @@ defmodule ReyCode.AgentLoop do
       )
 
     case Client.prepare_context_boundary(state.engine, state.invocation_id, max_summary_bytes) do
-      {:ok, boundary} -> record_context_boundary(state, runtime, boundary)
-      :unchanged -> stream_provider(state, request, runtime)
-      {:error, :context_summary_budget_too_small} -> stream_provider(state, request, runtime)
-      {:error, reason} -> fail_context_maintenance(state, reason)
+      {:ok, boundary} ->
+        record_context_boundary(state, runtime, boundary)
+
+      :unchanged ->
+        stream_or_fail_oversized(state, request, runtime, budget)
+
+      {:error, :context_summary_budget_too_small} ->
+        stream_or_fail_oversized(state, request, runtime, budget)
+
+      {:error, reason} ->
+        fail_context_maintenance(state, reason)
     end
   end
 
@@ -144,11 +197,11 @@ defmodule ReyCode.AgentLoop do
     case Provider.context_budget(runtime, request) do
       {:ok, %ContextBudget{} = budget} ->
         if context_target_reached?(budget),
-          do: stream_provider(state, request, runtime),
+          do: stream_provider(state, request, runtime, budget),
           else: maintain_context(state, request, runtime, budget)
 
       :unassessed ->
-        stream_provider(state, request, runtime)
+        stream_provider(state, request, runtime, nil)
 
       {:error, reason} ->
         fail_context_maintenance(state, reason)
@@ -160,15 +213,75 @@ defmodule ReyCode.AgentLoop do
       budget.estimated_prompt_tokens <= budget.target_input_tokens
   end
 
-  defp stream_provider(state, request, runtime) do
+  defp stream_or_fail_oversized(
+         state,
+         _request,
+         _runtime,
+         %ContextBudget{status: :too_large} = budget
+       ) do
+    Agent.fail(
+      state,
+      Failure.new(
+        :prompt_too_large,
+        "Provider prompt is #{budget.prompt_bytes} bytes; maximum is #{budget.max_prompt_bytes} " <>
+          "bytes. Estimated prompt occupancy is #{budget.estimated_prompt_tokens} tokens; " <>
+          "input budget is #{budget.input_budget_tokens} tokens. No eligible older Session or " <>
+          "Invocation history remains reducible"
+      )
+    )
+
+    {:stop, state}
+  end
+
+  defp stream_or_fail_oversized(state, request, runtime, budget),
+    do: stream_provider(state, request, runtime, budget)
+
+  defp stream_provider(state, request, runtime, budget) do
+    metrics = request_metrics(budget)
+    provider_id = runtime.provider_id || state.provider
+    provider_id = if is_atom(provider_id), do: Atom.to_string(provider_id), else: provider_id
+
+    case Client.start_provider_round_attempt(
+           state.engine,
+           state.invocation_id,
+           provider_id,
+           request.participant.model,
+           metrics
+         ) do
+      {:ok, _attempt} -> perform_provider_stream(state, request, runtime)
+      {:wait, wait_ms} -> wait_for_retry(state, wait_ms)
+      {:error, :invocation_terminal} -> {:stop, state}
+      {:error, reason} -> fail_context_maintenance(state, reason)
+    end
+  end
+
+  defp perform_provider_stream(state, request, runtime) do
     case Agent.stream(state, request, runtime) do
       {:ok, %Response{} = response} ->
         record_round(state, request, response)
 
       {:error, error} ->
-        Agent.fail(state, error)
+        _result = Client.provider_round_failed(state.engine, state.invocation_id, error)
         {:stop, state}
     end
+  end
+
+  defp wait_for_retry(state, wait_ms) do
+    receive do
+    after
+      wait_ms -> run(state)
+    end
+  end
+
+  defp request_metrics(nil), do: nil
+
+  defp request_metrics(%ContextBudget{} = budget) do
+    ProviderRoundAttempt.RequestMetrics.new(
+      budget.prompt_bytes,
+      budget.estimated_prompt_tokens,
+      budget.max_prompt_bytes,
+      budget.input_budget_tokens
+    )
   end
 
   defp fail_context_maintenance(state, reason) do

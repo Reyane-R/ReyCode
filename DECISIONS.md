@@ -20,6 +20,42 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D50 - ProviderRound retries are durable and replay-safe (Policy - 2026-09-22)
+
+Each external request for one ProviderRound begins with a durable
+ProviderRoundAttempt. An explicitly retryable zero-output failure may schedule at
+most two later attempts, after 1,000 ms and 3,000 ms, for three total requests.
+The schedule is appended before another request and carries the original frame
+baseline, provider/model identity, eligibility time, bounded failure, and exact
+request occupancy when available. Starting the next attempt revalidates that no
+frame arrived and no ToolRun became indeterminate.
+
+Timeout after dispatch, observed provider output, a started ToolRun, or an
+in-flight real-provider request after worker/Engine loss is not replayed. A
+replayable simulator may resume its same attempt for deterministic tests. A
+durable ProviderRound resumes from state: terminal ToolRuns feed the legitimate
+next request, while a final no-tool round completes without calling the provider
+again. Squad's older whole-Invocation retry remains only when no ToolRun ever
+started; it cannot recreate already executed side effects.
+
+### D49 - Request admission resolves exact model budgets (Policy - 2026-09-22)
+
+OpenAI-compatible preflight resolves one ModelBudget by exact provider/model ID.
+Configured exact-ID overrides win over trusted built-ins, which win over the
+ProviderProfile fallback; model-name prefix, case-folding, and substring inference
+are prohibited. A budget owns the request-body ceiling, optional model context,
+planned output reserve, and optional output-limit parameter. The encoded body is
+measured exactly in bytes and conservatively estimated at four bytes per token.
+Either hard ceiling fails closed before transport after eligible Session and
+Invocation history is exhausted.
+
+GLM-4.7 on the standard and Coding Z.ai profiles has a trusted 200,000-token
+context and 2,000,000-byte request ceiling. Its published 128K maximum output is
+a capability, not the amount every request reserves; ReyCode keeps the configured
+planned reserve (16,384 by default) and sends that reserve through `max_tokens`.
+Cumulative provider-reported Session usage remains informational and is never
+used as current request occupancy.
+
 ### D48 - Active Invocations compact only complete round prefixes (Policy - 2026-09-21)
 
 An Invocation may record one current InvocationContextBoundary over a completed
@@ -38,10 +74,12 @@ extends D46's unbounded useful round count without weakening context bounds and
 keeps Session ContextBoundary semantics separate from Invocation continuation.
 Before each provider continuation, adapters that support exact preflight report
 the encoded request budget. At the 80 percent maintenance threshold, the Agent
-Loop advances durable boundaries toward the 60 percent target before streaming;
-it rebuilds and reassesses after every append. If no complete older prefix remains,
-requests below the hard byte ceiling continue, while oversized requests retain the
-adapter's existing fail-closed rejection.
+Loop first advances the Session boundary over eligible earlier Messages, then
+advances Invocation boundaries over complete older rounds toward the 60 percent
+target; it rebuilds and reassesses after every append. Current inputs of every
+nonterminal Turn remain verbatim, and frozen strategic reviews do not mutate
+Session context. If no eligible history remains, requests below both hard ceilings
+continue, while byte or estimated-token overflow fails before transport.
 
 ### D47 - Operator questions are atomic grouped requests with client-local drafts (Policy - 2026-09-18)
 

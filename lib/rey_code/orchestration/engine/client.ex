@@ -11,7 +11,7 @@ defmodule ReyCode.Orchestration.Engine.Client do
   """
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.InvocationContextBoundary
+  alias ReyCode.Orchestration.{InvocationContextBoundary, ProviderRoundAttempt}
 
   alias ReyCode.Provider.Frame
 
@@ -33,6 +33,29 @@ defmodule ReyCode.Orchestration.Engine.Client do
   @spec record_frame(GenServer.server(), String.t(), Frame.t()) :: :ok | {:error, term()}
   def record_frame(server, invocation_id, %Frame{} = frame) do
     record_frames(server, invocation_id, [frame])
+  end
+
+  @doc "Durably records the attempt before one external provider request begins."
+  @spec start_provider_round_attempt(
+          GenServer.server(),
+          String.t(),
+          String.t(),
+          String.t() | nil,
+          ProviderRoundAttempt.RequestMetrics.t() | nil
+        ) :: {:ok, pos_integer()} | {:wait, pos_integer()} | {:error, term()}
+  def start_provider_round_attempt(server, invocation_id, provider_id, model_id, request_metrics) do
+    GenServer.call(
+      server,
+      {:start_provider_round_attempt, invocation_id, provider_id, model_id, request_metrics},
+      :infinity
+    )
+  end
+
+  @doc "Durably schedules a replay-safe retry or terminalizes the Invocation."
+  @spec provider_round_failed(GenServer.server(), String.t(), Failure.t()) ::
+          {:retry_scheduled, pos_integer()} | :failed
+  def provider_round_failed(server, invocation_id, %Failure{} = failure) do
+    GenServer.call(server, {:provider_round_failed, invocation_id, failure}, :infinity)
   end
 
   @doc """
@@ -62,16 +85,28 @@ defmodule ReyCode.Orchestration.Engine.Client do
     GenServer.call(server, {:record_context_boundary, invocation_id, boundary}, :infinity)
   end
 
+  @doc "Compacts an eligible Session prefix under an exact preflight allowance."
+  @spec compact_session_context(GenServer.server(), String.t(), pos_integer()) ::
+          :ok | :unchanged | {:error, term()}
+  def compact_session_context(server, invocation_id, max_summary_bytes) do
+    GenServer.call(
+      server,
+      {:compact_session_context, invocation_id, max_summary_bytes},
+      :infinity
+    )
+  end
+
   @doc """
   Claims the next actionable tool run of the latest round.
 
-  Replies `{:ok, :none}` when every recorded call has a terminal run, or
+  Replies `{:ok, :complete}` when a final ProviderRound only needs its durable
+  Invocation completion, `{:ok, :none}` when the next ProviderRound is due, or
   `{:ok, {:execute | :await | :denied | :busy, run}}` for the next call in
   order. The awaiting decision is persisted before replying, so a pause is
   durable even if the worker dies immediately afterwards.
   """
   @spec take_tool_run(GenServer.server(), String.t()) ::
-          {:ok, :none}
+          {:ok, :none | :complete}
           | {:ok, {atom(), map()}}
           | {:waiting, atom()}
           | {:error, term()}

@@ -10,6 +10,7 @@ defmodule ReyCode.Orchestration.EventEntries do
     OperatorQuestion,
     OperatorQuestions,
     Participant,
+    ProviderRoundAttempt,
     Session,
     Squad,
     StrategicReview,
@@ -51,7 +52,7 @@ defmodule ReyCode.Orchestration.EventEntries do
         "source_message_count" => metrics.source_message_count,
         "source_bytes" => metrics.source_bytes,
         "summary_bytes" => byte_size(summary),
-        "generator" => "extractive-v1"
+        "generator" => "extractive-v2"
       },
       :room,
       session.id,
@@ -455,6 +456,61 @@ defmodule ReyCode.Orchestration.EventEntries do
         "tool_calls" => round_data["tool_calls"],
         "usage" => round_data["usage"],
         "steering" => Map.get(round_data, "steering", [])
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the event marking the start of one provider-round attempt."
+  @spec provider_round_attempt_started(Invocation.t(), ProviderRoundAttempt.t()) :: event_entry()
+  def provider_round_attempt_started(
+        invocation,
+        %ProviderRoundAttempt{
+          state: :started,
+          retry_eligible_at: nil,
+          last_failure: nil
+        } = attempt
+      ) do
+    invocation_event(
+      :provider_round_attempt_started,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.session_id,
+        "round_index" => attempt.round_index,
+        "attempt" => attempt.attempt,
+        "frame_sequence_at_start" => attempt.frame_sequence_at_start,
+        "provider_id" => attempt.provider_id,
+        "model_id" => attempt.model_id,
+        "request_metrics" => request_metrics_wire(attempt.request_metrics)
+      },
+      invocation
+    )
+  end
+
+  @doc "Builds the event scheduling a retry of the current provider-round attempt."
+  @spec provider_round_retry_scheduled(Invocation.t(), ProviderRoundAttempt.t()) :: event_entry()
+  def provider_round_retry_scheduled(
+        invocation,
+        %ProviderRoundAttempt{
+          state: :retry_scheduled,
+          retry_eligible_at: retry_eligible_at,
+          last_failure: %Failure{} = failure
+        } = attempt
+      )
+      when is_binary(retry_eligible_at) do
+    invocation_event(
+      :provider_round_retry_scheduled,
+      %{
+        "invocation_id" => invocation.id,
+        "message_id" => invocation.message_id,
+        "turn_id" => invocation.turn_id,
+        "room_id" => invocation.session_id,
+        "round_index" => attempt.round_index,
+        "attempt" => attempt.attempt,
+        "retry_eligible_at" => retry_eligible_at,
+        "last_failure" => Failure.to_wire(failure)
       },
       invocation
     )
@@ -972,6 +1028,11 @@ defmodule ReyCode.Orchestration.EventEntries do
       correlation_id: correlation_id
     ]
   end
+
+  defp request_metrics_wire(nil), do: nil
+
+  defp request_metrics_wire(%ProviderRoundAttempt.RequestMetrics{} = metrics),
+    do: ProviderRoundAttempt.RequestMetrics.to_wire(metrics)
 
   defp event(type, data, aggregate_type, aggregate_id, session_id, correlation_id) do
     {

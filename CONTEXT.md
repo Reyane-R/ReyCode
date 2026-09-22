@@ -98,6 +98,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ProviderRound** — One normalized provider response containing text, ToolCalls, and usage.
 
+**ProviderRoundAttempt** — Current durable attempt to obtain the next ProviderRound. It records the round index, attempt number, provider/model identity, starting frame sequence, optional request occupancy, and either an in-flight or retry-scheduled state. A scheduled retry is permission to make one later request only while its recorded replay-safety predicates remain true.
+
 **ToolCall** — Provider request to invoke a named tool with arguments.
 
 **ToolRun** — Durable authorization and execution lifecycle for one ToolCall.
@@ -160,6 +162,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **ProviderRuntime** — Frozen invocation-time adapter capability and focused policy.
 
+**ModelBudget** — Exact provider-and-model request limits used for preflight: request-body bytes, optional context-window tokens, planned output reserve, and optional output-limit wire parameter. Exact configured overrides take precedence over trusted exact-ID built-ins, which take precedence over the ProviderProfile fallback.
+
 ## Squad workflow
 
 **Role** — Stable squad responsibility definition.
@@ -215,6 +219,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - A Steering belongs to one active Invocation and is recorded into exactly one ProviderRound when consumed.
 - A DelegationContract belongs to exactly one delegated child Invocation; its IsolationWorktree, when present, has the same owner.
 - An Invocation owns ordered ProviderRounds and ToolRuns.
+- An Invocation has at most one current ProviderRoundAttempt. Recording its ProviderRound clears the attempt; a retry schedule may advance it only when no provider frame or ToolRun start made replay uncertain.
 - An Invocation has at most one current InvocationContextBoundary; later boundaries strictly advance it without deleting ProviderRounds or ToolRuns.
 - A ToolArtifact belongs to one successful ToolRun output; it is retained by bounded count and bytes rather than projected as business state.
 - A Session has at most one current ContextBoundary; later boundaries supersede it for provider-context reconstruction without deleting Events.

@@ -338,7 +338,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
   end
 
   defp timeout_error,
-    do: HTTP.error(:timeout, "HTTP request exceeded its deadline", true)
+    do: HTTP.error(:timeout, "HTTP request exceeded its deadline", false)
 
   defp request_error(:timeout), do: timeout_error()
 
@@ -355,7 +355,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC do
           nil
       end)
 
-    Failure.new(:request_failed, "HTTP connection failed: #{reason}", false, reason)
+    Failure.new(:request_failed, "HTTP connection failed: #{reason}", true, reason)
   end
 
   defp request_error(reason), do: HTTP.error(:request_failed, inspect(reason), false)

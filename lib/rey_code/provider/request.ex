@@ -1,6 +1,7 @@
 defmodule ReyCode.Provider.Request do
   @moduledoc "Normalized input for one provider round."
 
+  alias ReyCode.Failure
   alias ReyCode.Orchestration.Participant
   alias ReyCode.Provider.Message
 
@@ -33,6 +34,8 @@ defmodule ReyCode.Provider.Request do
     :cycle,
     :logical_work_id,
     :model_tier,
+    :provider_retry_failure,
+    :session_context_summary_bytes,
     :tool_names,
     system_prompt_mode: :augmented,
     agent_delay_ms: nil,
@@ -60,6 +63,8 @@ defmodule ReyCode.Provider.Request do
           cycle: non_neg_integer() | nil,
           logical_work_id: String.t() | nil,
           model_tier: :smol | :default | :slow,
+          provider_retry_failure: Failure.t() | nil,
+          session_context_summary_bytes: non_neg_integer() | nil,
           tool_names: [String.t()] | nil,
           agent_delay_ms: non_neg_integer() | nil,
           simulator_opts: keyword() | nil,

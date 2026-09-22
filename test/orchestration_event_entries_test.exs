@@ -1,7 +1,17 @@
 defmodule ReyCode.Orchestration.EventEntriesTest do
   use ExUnit.Case, async: true
 
-  alias ReyCode.Orchestration.{EventEntries, Squad, Turn}
+  alias ReyCode.Failure
+
+  alias ReyCode.Orchestration.{
+    EventEntries,
+    Invocation,
+    ProviderRoundAttempt,
+    Squad,
+    Turn
+  }
+
+  alias ProviderRoundAttempt.RequestMetrics
   alias ReyCode.Provider.Frame
 
   @turn_metadata [
@@ -154,6 +164,75 @@ defmodule ReyCode.Orchestration.EventEntriesTest do
                  "message_id" => "msg-1",
                  "turn_id" => "turn-1",
                  "room_id" => "room-1"
+               },
+               invocation_metadata("inv-1")
+             }
+  end
+
+  test "builds provider round attempt lifecycle entries with fixed payloads" do
+    invocation = %Invocation{
+      id: "inv-1",
+      message_id: "msg-1",
+      turn_id: "turn-1",
+      session_id: "room-1"
+    }
+
+    started = %ProviderRoundAttempt{
+      round_index: 2,
+      attempt: 1,
+      frame_sequence_at_start: 9,
+      provider_id: "openai",
+      model_id: "gpt-5",
+      request_metrics: RequestMetrics.new(8_000, 2_000),
+      state: :started
+    }
+
+    assert EventEntries.provider_round_attempt_started(invocation, started) ==
+             {
+               :provider_round_attempt_started,
+               %{
+                 "invocation_id" => "inv-1",
+                 "message_id" => "msg-1",
+                 "turn_id" => "turn-1",
+                 "room_id" => "room-1",
+                 "round_index" => 2,
+                 "attempt" => 1,
+                 "frame_sequence_at_start" => 9,
+                 "provider_id" => "openai",
+                 "model_id" => "gpt-5",
+                 "request_metrics" => %{
+                   "prompt_bytes" => 8_000,
+                   "estimated_prompt_tokens" => 2_000
+                 }
+               },
+               invocation_metadata("inv-1")
+             }
+
+    failure = Failure.new(:rate_limited, "Try later", true)
+
+    scheduled = %{
+      started
+      | state: :retry_scheduled,
+        retry_eligible_at: "2026-09-22T12:00:01.000Z",
+        last_failure: failure
+    }
+
+    assert EventEntries.provider_round_retry_scheduled(invocation, scheduled) ==
+             {
+               :provider_round_retry_scheduled,
+               %{
+                 "invocation_id" => "inv-1",
+                 "message_id" => "msg-1",
+                 "turn_id" => "turn-1",
+                 "room_id" => "room-1",
+                 "round_index" => 2,
+                 "attempt" => 1,
+                 "retry_eligible_at" => "2026-09-22T12:00:01.000Z",
+                 "last_failure" => %{
+                   "category" => "rate_limited",
+                   "message" => "Try later",
+                   "retryable" => true
+                 }
                },
                invocation_metadata("inv-1")
              }

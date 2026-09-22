@@ -183,6 +183,61 @@ defmodule ReyCode.Orchestration.AgentLoopIntegrationTest do
     end
   end
 
+  defmodule RetryCatalog do
+    use GenServer
+
+    alias ReyCode.Orchestration.AgentLoopIntegrationTest.RetryProvider
+    alias ReyCode.Provider.Runtime
+
+    def start_link(opts) do
+      state = %{
+        test_pid: Keyword.fetch!(opts, :test_pid),
+        count: 0,
+        fail_until: Keyword.get(opts, :fail_until, 1)
+      }
+
+      GenServer.start_link(__MODULE__, state)
+    end
+
+    @impl true
+    def init(state), do: {:ok, state}
+
+    @impl true
+    def handle_call({action, _provider, _model}, _from, state)
+        when action in [:resolve, :resolve_when_ready, :resolve_continuation] do
+      runtime = %Runtime{
+        module: RetryProvider,
+        provider_id: :simulator,
+        status: :available,
+        config: %{counter: self()}
+      }
+
+      {:reply, {:ok, runtime}, state}
+    end
+
+    def handle_call(:next_attempt, _from, state) do
+      next = state.count + 1
+      {:reply, {state.test_pid, next, state.fail_until}, %{state | count: next}}
+    end
+  end
+
+  defmodule RetryProvider do
+    @behaviour ReyCode.Provider
+
+    alias ReyCode.Failure
+    alias ReyCode.Provider.{Response, Runtime}
+
+    @impl true
+    def stream(%Runtime{config: %{counter: counter}}, _request, _emit) do
+      {test_pid, attempt, fail_until} = GenServer.call(counter, :next_attempt)
+      send(test_pid, {:retry_provider_attempt, attempt})
+
+      if attempt <= fail_until,
+        do: {:error, Failure.new(:rate_limited, "try again", true)},
+        else: {:ok, Response.new(text: "recovered")}
+    end
+  end
+
   test "executes a scripted tool round durably and completes on the next provider round" do
     workspace = Path.join(System.tmp_dir!(), "agent_loop_#{System.unique_integer([:positive])}")
     File.mkdir_p!(workspace)
@@ -324,5 +379,187 @@ defmodule ReyCode.Orchestration.AgentLoopIntegrationTest do
       end)
 
     assert boundary_event.sequence < final_round_event.sequence
+  end
+
+  test "retries a zero-frame transient provider failure in the same Invocation" do
+    workspace =
+      Path.join(System.tmp_dir!(), "agent_loop_retry_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace)
+    on_exit(fn -> File.rm_rf!(workspace) end)
+
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_agent_loop_retry_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
+      )
+
+    store = start_supervised!({EventStore, name: nil, path: path})
+    start_supervised!({Registry, keys: :unique, name: @agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: @event_registry})
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
+    catalog = start_supervised!({RetryCatalog, test_pid: self()})
+
+    start_supervised!(
+      {Engine,
+       name: @engine,
+       event_store: store,
+       agent_supervisor: @agent_supervisor,
+       agent_registry: @agent_registry,
+       event_registry: @event_registry,
+       provider_catalog: catalog,
+       agent_delay_ms: 0,
+       config: RuntimeConfig.fresh(workspace_roots: [workspace])}
+    )
+
+    assert {:ok, session_id} = Engine.create_blank_session("Retry Room", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Recover once", :direct, @engine)
+    assert Wait.terminal_turn(@engine, turn_id, 5_000).outcome == :completed
+
+    assert_received {:retry_provider_attempt, 1}
+    assert_received {:retry_provider_attempt, 2}
+    refute_received {:retry_provider_attempt, 3}
+
+    snapshot = Engine.snapshot(@engine)
+    [invocation_id] = snapshot.turns[turn_id].invocation_order
+    assert snapshot.invocations[invocation_id].status == :completed
+
+    events = EventStore.load(store)
+
+    assert [first, second] =
+             Enum.filter(events, fn event ->
+               event.type == :provider_round_attempt_started and
+                 event.data["invocation_id"] == invocation_id
+             end)
+
+    assert first.data["attempt"] == 1
+    assert second.data["attempt"] == 2
+
+    [scheduled] =
+      Enum.filter(events, fn event ->
+        event.type == :provider_round_retry_scheduled and
+          event.data["invocation_id"] == invocation_id
+      end)
+
+    assert first.sequence < scheduled.sequence
+    assert scheduled.sequence < second.sequence
+  end
+
+  test "bounds a persistently retryable ProviderRound to three attempts" do
+    workspace =
+      Path.join(System.tmp_dir!(), "agent_loop_retry_bound_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace)
+    on_exit(fn -> File.rm_rf!(workspace) end)
+
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_agent_loop_retry_bound_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
+      )
+
+    store = start_supervised!({EventStore, name: nil, path: path})
+    start_supervised!({Registry, keys: :unique, name: @agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: @event_registry})
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
+    catalog = start_supervised!({RetryCatalog, test_pid: self(), fail_until: 3})
+
+    start_supervised!(
+      {Engine,
+       name: @engine,
+       event_store: store,
+       agent_supervisor: @agent_supervisor,
+       agent_registry: @agent_registry,
+       event_registry: @event_registry,
+       provider_catalog: catalog,
+       agent_delay_ms: 0,
+       config: RuntimeConfig.fresh(workspace_roots: [workspace])}
+    )
+
+    assert {:ok, session_id} = Engine.create_blank_session("Retry Bound", workspace, @engine)
+    assert {:ok, turn_id} = Engine.post_message(session_id, "Keep failing", :direct, @engine)
+    assert Wait.terminal_turn(@engine, turn_id, 8_000).outcome == :failed
+
+    assert_received {:retry_provider_attempt, 1}
+    assert_received {:retry_provider_attempt, 2}
+    assert_received {:retry_provider_attempt, 3}
+    refute_received {:retry_provider_attempt, 4}
+
+    snapshot = Engine.snapshot(@engine)
+    [invocation_id] = snapshot.turns[turn_id].invocation_order
+    events = EventStore.load(store)
+
+    assert Enum.count(events, fn event ->
+             event.type == :provider_round_attempt_started and
+               event.data["invocation_id"] == invocation_id
+           end) == 3
+
+    assert Enum.count(events, fn event ->
+             event.type == :provider_round_retry_scheduled and
+               event.data["invocation_id"] == invocation_id
+           end) == 2
+  end
+
+  test "a durably scheduled retry survives an Engine restart" do
+    workspace =
+      Path.join(
+        System.tmp_dir!(),
+        "agent_loop_retry_restart_#{System.unique_integer([:positive])}"
+      )
+
+    File.mkdir_p!(workspace)
+    on_exit(fn -> File.rm_rf!(workspace) end)
+
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_agent_loop_retry_restart_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
+      )
+
+    store = start_supervised!({EventStore, name: nil, path: path})
+    start_supervised!({Registry, keys: :unique, name: @agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: @event_registry})
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
+    catalog = start_supervised!({RetryCatalog, test_pid: self()})
+
+    opts = [
+      name: @engine,
+      event_store: store,
+      agent_supervisor: @agent_supervisor,
+      agent_registry: @agent_registry,
+      event_registry: @event_registry,
+      provider_catalog: catalog,
+      agent_delay_ms: 0,
+      config: RuntimeConfig.fresh(workspace_roots: [workspace])
+    ]
+
+    start_supervised!({Engine, opts}, restart: :temporary)
+
+    assert {:ok, session_id} = Engine.create_blank_session("Retry Restart", workspace, @engine)
+
+    assert {:ok, turn_id} =
+             Engine.post_message(session_id, "Recover after restart", :direct, @engine)
+
+    assert_receive {:retry_provider_attempt, 1}, 2_000
+
+    invocation_id =
+      Wait.projection(@engine, fn projection ->
+        [invocation_id] = projection.turns[turn_id].invocation_order
+        attempt = projection.invocations[invocation_id].provider_round_attempt
+        if attempt && attempt.state == :retry_scheduled, do: invocation_id
+      end)
+
+    stop_supervised!(Engine)
+    start_supervised!({Engine, opts}, restart: :temporary)
+
+    assert_receive {:retry_provider_attempt, 2}, 2_000
+    assert Wait.terminal_turn(@engine, turn_id, 5_000).outcome == :completed
+
+    events = EventStore.load(store)
+
+    assert Enum.count(events, fn event ->
+             event.type == :provider_round_attempt_started and
+               event.data["invocation_id"] == invocation_id
+           end) == 2
   end
 end

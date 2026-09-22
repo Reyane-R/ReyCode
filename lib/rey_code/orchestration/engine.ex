@@ -620,6 +620,23 @@ defmodule ReyCode.Orchestration.Engine do
   def handle_call({:record_frame, invocation_id, frame}, _from, state),
     do: Loop.record_frame(state, invocation_id, frame)
 
+  def handle_call(
+        {:start_provider_round_attempt, invocation_id, provider_id, model_id, request_metrics},
+        _from,
+        state
+      ),
+      do:
+        Loop.start_provider_round_attempt(
+          state,
+          invocation_id,
+          provider_id,
+          model_id,
+          request_metrics
+        )
+
+  def handle_call({:provider_round_failed, invocation_id, failure}, _from, state),
+    do: Loop.provider_round_failed(state, invocation_id, failure)
+
   def handle_call({:record_round, invocation_id, round_index, response_wire}, _from, state),
     do: Loop.record_round(state, invocation_id, round_index, response_wire)
 
@@ -628,6 +645,9 @@ defmodule ReyCode.Orchestration.Engine do
 
   def handle_call({:record_context_boundary, invocation_id, boundary}, _from, state),
     do: Loop.record_context_boundary(state, invocation_id, boundary)
+
+  def handle_call({:compact_session_context, invocation_id, max_summary_bytes}, _from, state),
+    do: Loop.compact_session_context(state, invocation_id, max_summary_bytes)
 
   def handle_call({:take_tool_run, invocation_id}, _from, state),
     do: Loop.take_tool_run(state, invocation_id)

@@ -12,6 +12,8 @@ defmodule ReyCode.RuntimeConfig do
   directly by `ReyCode.Application` while assembling the supervision tree.
   """
 
+  alias ReyCode.Provider.OpenAICompatible.Profile
+
   alias ReyCode.RuntimeConfig.{
     Artifacts,
     Logging,
@@ -134,6 +136,20 @@ defmodule ReyCode.RuntimeConfig do
   end
 
   defp assemble(values) do
+    open_ai =
+      %OpenAICompatible{
+        chunk_bytes: values.openai_compatible_chunk_bytes,
+        chunk_latency_ms: values.openai_compatible_chunk_latency_ms,
+        context_budget_tokens: values.context_budget_tokens,
+        base_url_overrides: values.openai_compatible_base_url_overrides,
+        capability_overrides: values.openai_compatible_capability_overrides,
+        model_budget_overrides: values.openai_compatible_model_budget_overrides,
+        profiles: values.openai_compatible_providers,
+        transport: values.openai_compatible_transport
+      }
+
+    validate_model_budget_overrides!(open_ai)
+
     %__MODULE__{
       orchestration: %Orchestration{
         context_budget_tokens: values.context_budget_tokens,
@@ -152,15 +168,7 @@ defmodule ReyCode.RuntimeConfig do
         default_provider: values.default_provider,
         discovery?: values.provider_discovery
       },
-      open_ai: %OpenAICompatible{
-        chunk_bytes: values.openai_compatible_chunk_bytes,
-        chunk_latency_ms: values.openai_compatible_chunk_latency_ms,
-        context_budget_tokens: values.context_budget_tokens,
-        base_url_overrides: values.openai_compatible_base_url_overrides,
-        capability_overrides: values.openai_compatible_capability_overrides,
-        profiles: values.openai_compatible_providers,
-        transport: values.openai_compatible_transport
-      },
+      open_ai: open_ai,
       squad: %Squad{
         release_gate_human?: values.squad_release_gate_human,
         rework_budget: values.squad_rework_budget,
@@ -263,6 +271,31 @@ defmodule ReyCode.RuntimeConfig do
       workspace: %Workspace{roots: values.workspace_roots},
       logging: %Logging{enabled?: values.file_logging, log_dir: values.log_dir}
     }
+  end
+
+  defp validate_model_budget_overrides!(%OpenAICompatible{model_budget_overrides: overrides})
+       when map_size(overrides) == 0,
+       do: :ok
+
+  defp validate_model_budget_overrides!(%OpenAICompatible{} = policy) do
+    profiles = Map.new(Profile.all(policy), &{&1.id, &1})
+
+    Enum.each(policy.model_budget_overrides, fn {provider_id, models} ->
+      profile =
+        case Map.fetch(profiles, provider_id) do
+          {:ok, profile} ->
+            profile
+
+          :error ->
+            raise ArgumentError,
+                  "invalid openai_compatible_model_budget_overrides.#{provider_id}: " <>
+                    "unknown provider"
+        end
+
+      Enum.each(models, fn {model_id, _override} ->
+        Profile.model_budget(profile, model_id, policy)
+      end)
+    end)
   end
 
   defp canonical_roots(nil), do: nil

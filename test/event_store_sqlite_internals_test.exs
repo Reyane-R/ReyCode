@@ -19,6 +19,7 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
     Participant,
     Projection,
     ProviderRound,
+    ProviderRoundAttempt,
     Session,
     SquadRun,
     ToolRun,
@@ -219,6 +220,67 @@ defmodule ReyCode.EventStore.SQLiteInternalsTest do
                  Checkpoint.projection_version(),
                  7,
                  Hashing.sha256_hex(encoded_missing),
+                 1_000_000
+               )
+    end
+
+    test "rejects malformed provider attempt state inside an invocation" do
+      projection = %Projection{
+        sequence: 7,
+        invocations: %{
+          "inv-invalid" => %Invocation{
+            id: "inv-invalid",
+            status: :running,
+            provider_round_attempt: %ProviderRoundAttempt{
+              round_index: 0,
+              attempt: 4,
+              frame_sequence_at_start: 0,
+              provider_id: "openai",
+              state: :started
+            }
+          }
+        }
+      }
+
+      encoded = Jason.encode!(Checkpoint.encode_term(projection))
+
+      assert {:error, :invalid_checkpoint} =
+               Checkpoint.decode(
+                 encoded,
+                 Checkpoint.projection_version(),
+                 7,
+                 Hashing.sha256_hex(encoded),
+                 1_000_000
+               )
+    end
+
+    test "returns an invalid checkpoint error for malformed nested request metrics" do
+      projection = %Projection{
+        sequence: 7,
+        invocations: %{
+          "inv-invalid" => %{
+            id: "inv-invalid",
+            status: :running,
+            provider_round_attempt: %{
+              round_index: 0,
+              attempt: 1,
+              frame_sequence_at_start: 0,
+              provider_id: "openai",
+              request_metrics: %{prompt_bytes: 10},
+              state: :started
+            }
+          }
+        }
+      }
+
+      encoded = Jason.encode!(Checkpoint.encode_term(projection))
+
+      assert {:error, :invalid_checkpoint} =
+               Checkpoint.decode(
+                 encoded,
+                 Checkpoint.projection_version(),
+                 7,
+                 Hashing.sha256_hex(encoded),
                  1_000_000
                )
     end

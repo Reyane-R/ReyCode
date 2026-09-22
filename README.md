@@ -558,18 +558,30 @@ its review tab, Enter and Space belong to the picker even if a transcript contro
 still has keyboard focus. Multi-select questions use Space to select options and
 Enter to advance.
 
-Token usage is summed from durable provider usage records against the
-configured `context_budget_tokens` budget
-(`REYCODE_CONTEXT_BUDGET_TOKENS`). Before an over-budget Turn starts, ReyCode
-records a bounded extractive ContextSummary and a durable ContextBoundary. The
-timeline keeps the complete transcript and inserts a visible compaction divider;
-`/context` shows the summary sent with later Messages.
+Token usage in the header is cumulative provider-reported processing for the
+Session; it is informational and is not current context occupancy. When exact
+preflight is available, the header separately shows the latest encoded request's
+estimated token occupancy or its tighter byte ceiling.
+
+Before each provider request, ReyCode assesses the exact encoded body against the
+resolved provider/model limits. At 80 percent it first records a bounded
+extractive ContextSummary and durable ContextBoundary over eligible earlier
+Messages, reducing toward 60 percent. Current inputs for active or queued Turns
+remain verbatim. The timeline keeps the complete transcript and inserts a visible
+compaction divider; `/context` shows the summary sent with later Messages.
 
 Long-running provider/tool loops also maintain their active Invocation context.
 Before a continuation is sent, providers with exact preflight support trigger a
 durable summary at 80 percent of the request budget and reduce toward 60 percent.
 Only complete older rounds are summarized; the newest round, full execution
 ledger, ToolRuns, Events, and visible transcript remain intact.
+
+Transient provider failures retry only when durable state proves that the failed
+request produced no output and started no tool. ReyCode records the retry before
+waiting 1 second and then 3 seconds, for at most three requests per ProviderRound.
+Dispatched timeouts, partial output, and interrupted real-provider requests fail
+closed instead of being replayed. A restart completes an already-recorded final
+round or continues after terminal ToolRuns without repeating them.
 
 The conversation view separates exchanges with whitespace and marks your
 message text with a subtle `│` rail. On terminals at least 32 rows tall,
@@ -977,6 +989,29 @@ config :rey_code,
   ]
 ```
 
+Profiles are the fallback request limits. Exact model IDs can override them
+without guessing from model-name prefixes:
+
+```elixir
+config :rey_code,
+  openai_compatible_model_budget_overrides: %{
+    openai: %{
+      "gpt-example" => %{
+        max_prompt_bytes: 1_000_000,
+        context_window_tokens: 128_000,
+        output_reserve_tokens: 16_384,
+        output_limit_parameter: :max_completion_tokens
+      }
+    }
+  }
+```
+
+Resolution order is profile fallback, trusted exact-ID built-in, then configured
+exact-ID override. `output_limit_parameter` is `:none`, `:max_tokens`, or
+`:max_completion_tokens`. The built-in Z.ai and Z.ai Coding `glm-4.7` budget uses
+a 200,000-token context, a 2,000,000-byte request ceiling, and sends the planned
+output reserve through `max_tokens`.
+
 Override any profile's base URL at runtime without changing config:
 
 ```sh
@@ -1009,11 +1044,11 @@ export REYCODE_VLLM_LOCAL_SUPPORTS_TOOLS=false
 ```
 
 Unpinned, ReyCode fails loudly rather than silently degrading: if a server
-rejects `stream_options`, the request is retried once without it and the
-working shape is remembered for later rounds; if the server then still rejects
-the request while tools were offered, the invocation fails non-retryably with
-`tool_calls_unsupported`, naming the flag to pin. Dropping tools silently to
-degrade into chat-only mode never happens.
+rejects `stream_options`, the stricter shape is remembered and the durable
+ProviderRound retry lifecycle makes the next bounded request without it. If the
+server then still rejects the request while tools were offered, the invocation
+fails non-retryably with `tool_calls_unsupported`, naming the flag to pin.
+Dropping tools silently to degrade into chat-only mode never happens.
 
 Fresh Sessions copy the current Assistant and task-agent runtime assignments.
 Sending is blocked only when the addressed agent has no ready runtime. The

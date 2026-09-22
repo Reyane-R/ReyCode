@@ -12,6 +12,7 @@ These are design envelopes, not benchmarks. Changes to a data-plane path update 
 | Text chunk target | 8,192 bytes |
 | Text flush latency | 50 ms |
 | Provider rounds | No local count quota; each request remains byte/token bounded |
+| Attempts per ProviderRound | 3 total; retry waits 1,000 ms then 3,000 ms |
 
 Design intent: network latency dominates. Buffer short text to reduce event transactions while flushing within interactive latency. Output caps bound binary retention and parsing.
 
@@ -24,16 +25,19 @@ Historical provider activity remains readable, bounded to the newest 256 events
 per Invocation. New model API calls return text and ToolCalls; tool activity is
 recorded through ReyCode's durable ToolRun lifecycle.
 
-### Active Invocation context maintenance
+### Provider context maintenance
 
 OpenAI-compatible preflight encodes the same body as the first stream attempt.
 It adds no network request and retains only that bounded request body until the
 assessment returns. At 80 percent of either request budget, one maintenance pass
-canonicalizes at most 64 complete old ProviderRounds, writes one bounded summary
-event of at most 32,768 bytes, rebuilds the request, and reassesses toward 60
-percent. Additional passes strictly advance the boundary, so their count is
-bounded by the finite retained round list; if no prefix remains, the existing
-provider byte ceiling decides whether streaming proceeds.
+first replaces eligible earlier Session Messages with a bounded extractive
+summary, then canonicalizes at most 64 complete old ProviderRounds and writes one
+Invocation summary event of at most 32,768 bytes. It rebuilds the request and
+reassesses toward 60 percent after every event. Session boundaries stop before
+the earliest current input of any nonterminal Turn. Additional Invocation passes
+strictly advance their boundary, so their count is bounded by the finite retained
+round list. If no source remains, either byte or estimated-token overflow fails
+before transport; maintenance-only pressure may proceed.
 
 Network traffic is unchanged. Storage adds at most one bounded event per pass;
 all original events remain under the existing unbounded database-retention policy.
@@ -43,6 +47,17 @@ than rescanning all ToolRuns per call. The Agent Loop performs no provider strea
 until the rebuilt request has been assessed. Tests cover no-preflight adapters,
 maintenance with no eligible prefix, hard-limit recovery, exact OpenAI encoding,
 multi-pass advancement, durable event ordering, and adapter-fault containment.
+
+### ProviderRound recovery
+
+Each request adds one bounded attempt event before network dispatch. A safe retry
+adds one bounded schedule event and no network traffic during its 1,000 ms or
+3,000 ms wait. Attempt count, wait duration, failure text (4,096 bytes), request
+metrics, and retained frame output are bounded. A late frame, observed buffered
+output, started ToolRun, or dispatched timeout terminates automatic retry rather
+than issuing an uncertain duplicate request. Restart work is proportional to the
+one projected current attempt; historical attempts remain ordinary Events under
+the existing database-retention policy.
 
 ## Local engine transport
 

@@ -4,6 +4,7 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
   alias ReyCode.Failure
   alias ReyCode.Orchestration.Squad.Seat
   alias ReyCode.Orchestration.SquadRun
+  alias ReyCode.Orchestration.ToolRun
   alias ReyCode.Orchestration.Workflow.Squad
   alias ReyCode.Orchestration.Workflow.Squad.Finalizer
 
@@ -110,6 +111,41 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
     assert error_wire == Failure.to_wire(error)
   end
 
+  test "does not retry a retryable failure after a tool execution started" do
+    run = %ToolRun{id: "run-1", status: :completed, started_at: "2026-09-22T10:00:00Z"}
+
+    invocation =
+      invocation("analyst", "stories")
+      |> Map.merge(%{tool_run_order: [run.id], tool_runs: %{run.id => run}})
+
+    error = Failure.new(:server_error, "unavailable", true)
+
+    assert {:advance, [{:invocation_failed, %{"error" => error_wire}, _metadata}]} =
+             Squad.finalize(invocation, %{body: ""}, {:failed, error},
+               human_release_review?: true
+             )
+
+    assert error_wire == Failure.to_wire(error)
+  end
+
+  test "does not retry invalid squad output after a tool execution started" do
+    run = %ToolRun{id: "run-1", status: :completed, started_at: "2026-09-22T10:00:00Z"}
+
+    invocation =
+      invocation("analyst", "stories")
+      |> Map.merge(%{tool_run_order: [run.id], tool_runs: %{run.id => run}})
+
+    assert {:advance,
+            [
+              {:invocation_failed,
+               %{"error" => %{"category" => "invalid_squad_output", "retryable" => true}},
+               _metadata}
+            ]} =
+             Squad.finalize(invocation, %{body: "not json"}, {:completed, %{}},
+               human_release_review?: true
+             )
+  end
+
   test "completes when the newest invocation failed without a retry" do
     failed = %{
       status: :failed,
@@ -214,7 +250,9 @@ defmodule ReyCode.Orchestration.SquadWorkflowTest do
       label: phase,
       system_prompt: "prompt",
       completion_metadata: nil,
-      status: :running
+      status: :running,
+      tool_run_order: [],
+      tool_runs: %{}
     }
   end
 end

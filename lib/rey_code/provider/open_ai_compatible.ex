@@ -77,7 +77,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
         config: policy
       }
 
-      run_stream(context, initial_shape(profile))
+      run_stream(context, initial_shape(profile, request))
     end
   end
 
@@ -89,7 +89,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
         %Request{} = request
       ) do
     with {:ok, profile} <- Profile.fetch(provider_id, policy) do
-      {:ok, prepare_request(request, profile, policy, initial_shape(profile))}
+      {:ok, prepare_request(request, profile, policy, initial_shape(profile, request))}
     end
   end
 
@@ -102,11 +102,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
   end
 
   # Strict servers may reject `stream_options` or `tools` with HTTP 400 before
-  # any side effect. The ladder retries once without `stream_options`; if the
-  # server still refuses while tools were offered, the invocation fails loudly
-  # with `tool_calls_unsupported` instead of degrading to a silent chat-only
-  # round. Non-400 failures keep their existing semantics. A shape that worked
-  # is remembered via RequestShape for later rounds and invocations.
+  # any side effect. A rejected optional shape is remembered and returned as a
+  # retryable zero-output failure so the durable ProviderRound retry lifecycle,
+  # rather than this adapter, owns the next external request. Tool rejection
+  # fails loudly instead of degrading to a silent chat-only round.
   defp run_stream(%Stream.Context{} = context, shape) do
     prepared = prepare_request(context.request, context.profile, context.config, shape)
 
@@ -129,7 +128,16 @@ defmodule ReyCode.Provider.OpenAICompatible do
     cond do
       shape.stream_options? and
           rejection_mentions?(error, ["stream_options", "stream options", "include_usage"]) ->
-        run_stream(context, %{default_shape(context.profile) | stream_options?: false})
+        downgraded = %{default_shape(context.profile) | stream_options?: false}
+        remember_downgrade(context.profile, downgraded)
+
+        {:error,
+         Failure.new(
+           :unsupported_stream_options,
+           error.message <> "; retrying durably without stream_options",
+           true,
+           error.cause
+         )}
 
       shape.tools? and
           rejection_mentions?(error, ["tools", "tool calling", "function calling", "functions"]) ->
@@ -150,20 +158,25 @@ defmodule ReyCode.Provider.OpenAICompatible do
   # A remembered shape only ever suppresses features the server rejected, so
   # it intersects with today's profile: an explicit pin always wins over the
   # memory of an older downgrade.
-  defp initial_shape(profile) do
+  defp initial_shape(profile, request) do
     default = default_shape(profile)
 
-    case RequestShape.get(profile) do
-      nil ->
-        default
+    remembered = RequestShape.get(profile) || default
 
-      remembered ->
-        %{
-          tools?: default.tools? and remembered.tools?,
-          stream_options?: default.stream_options? and remembered.stream_options?
-        }
-    end
+    %{
+      tools?: default.tools? and remembered.tools?,
+      stream_options?:
+        default.stream_options? and remembered.stream_options? and
+          not stream_options_rejected?(request)
+    }
   end
+
+  defp stream_options_rejected?(%Request{
+         provider_retry_failure: %Failure{category: :unsupported_stream_options}
+       }),
+       do: true
+
+  defp stream_options_rejected?(_request), do: false
 
   defp default_shape(profile),
     do: %{tools?: profile.supports_tools, stream_options?: profile.supports_stream_options}
@@ -305,6 +318,7 @@ defmodule ReyCode.Provider.OpenAICompatible do
   # pinned strict-server profile omits them from the first attempt.
   defp prepare_request(request, profile, policy, shape) do
     names = request.tool_names || ToolRegistry.wire_tool_names()
+    model_budget = Profile.model_budget(profile, request.participant.model, policy)
 
     body =
       %{
@@ -314,15 +328,16 @@ defmodule ReyCode.Provider.OpenAICompatible do
       }
       |> maybe_put("tools", tool_definitions(names), shape.tools? and names != [])
       |> maybe_put("stream_options", %{"include_usage" => true}, shape.stream_options?)
+      |> maybe_put_output_limit(model_budget)
       |> Jason.encode!()
 
     budget =
       ContextBudget.assess(
         byte_size(body),
-        profile.max_prompt_bytes,
+        model_budget.max_prompt_bytes,
         policy.context_budget_tokens,
-        profile.context_window_tokens,
-        profile.output_reserve_tokens
+        model_budget.context_window_tokens,
+        model_budget.output_reserve_tokens
       )
 
     %PreparedRequest{body: body, budget: budget}
@@ -341,6 +356,13 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp maybe_put(map, _key, _value, false), do: map
   defp maybe_put(map, key, value, true), do: Map.put(map, key, value)
+
+  defp maybe_put_output_limit(body, %{output_limit_parameter: :none}), do: body
+
+  defp maybe_put_output_limit(body, %{output_limit_parameter: parameter} = budget)
+       when parameter in [:max_tokens, :max_completion_tokens] do
+    Map.put(body, Atom.to_string(parameter), budget.output_reserve_tokens)
+  end
 
   defp chat_messages(request) do
     [%{"role" => "system", "content" => system_prompt(request)}] ++

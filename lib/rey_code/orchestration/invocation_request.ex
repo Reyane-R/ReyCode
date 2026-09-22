@@ -52,12 +52,22 @@ defmodule ReyCode.Orchestration.InvocationRequest do
       cycle: invocation.cycle,
       logical_work_id: invocation.logical_work_id,
       model_tier: invocation.execution_context.model_tier,
+      provider_retry_failure: provider_retry_failure(invocation),
+      session_context_summary_bytes: optional_byte_size(session.context_summary),
       agent_delay_ms: request_policy.agent_delay_ms,
       simulator_opts: request_policy.simulator_opts,
       dependencies: invocation.dependencies,
       steering: Enum.map(invocation.pending_steering, &Steering.to_wire/1)
     }
   end
+
+  defp provider_retry_failure(%{provider_round_attempt: %{state: :retry_scheduled} = attempt}),
+    do: attempt.last_failure
+
+  defp provider_retry_failure(_invocation), do: nil
+
+  defp optional_byte_size(nil), do: nil
+  defp optional_byte_size(value), do: byte_size(value)
 
   defp system_prompt(invocation, nil), do: system_prompt(invocation)
 

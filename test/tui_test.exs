@@ -1335,6 +1335,103 @@ defmodule ReyCode.TUITest do
     assert assigns.token_label == "reported 25k tok · session"
   end
 
+  test "usage label distinguishes cumulative processing from estimated context occupancy" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    metrics = %ReyCode.Orchestration.ProviderRoundAttempt.RequestMetrics{
+      prompt_bytes: 129_809,
+      max_prompt_bytes: 2_000_000,
+      estimated_prompt_tokens: 32_453,
+      input_budget_tokens: 183_616
+    }
+
+    projection =
+      session
+      |> long_response_projection()
+      |> put_in([:invocations, "inv-layout", :usage], %{"total_tokens" => 336_500})
+      |> put_in([:invocations, "inv-layout", :last_request_metrics], metrics)
+
+    push_projection(session, projection)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+
+    assert assigns.token_label ==
+             "reported 336.5k tok · session · ctx ~32.5k/183.6k tok"
+  end
+
+  test "usage label exposes a tighter byte ceiling" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    metrics = %ReyCode.Orchestration.ProviderRoundAttempt.RequestMetrics{
+      prompt_bytes: 120_000,
+      max_prompt_bytes: 128_000,
+      estimated_prompt_tokens: 30_000,
+      input_budget_tokens: 200_000
+    }
+
+    projection =
+      session
+      |> long_response_projection()
+      |> put_in([:invocations, "inv-layout", :last_request_metrics], metrics)
+
+    push_projection(session, projection)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+
+    assert assigns.token_label =~ "ctx 120k/128k bytes"
+  end
+
+  test "usage label does not present older occupancy for a newer unassessed request" do
+    %{engine: engine} = start_isolated_stack([])
+    session = start_session({120, 32}, engine: engine)
+    on_exit(fn -> Breeze.Test.stop(session) end)
+
+    metrics = %ReyCode.Orchestration.ProviderRoundAttempt.RequestMetrics{
+      prompt_bytes: 120_000,
+      max_prompt_bytes: 128_000,
+      estimated_prompt_tokens: 30_000,
+      input_budget_tokens: 200_000
+    }
+
+    projection = long_response_projection(session)
+    session_id = Breeze.Test.metadata(session).assigns.selected_session_id
+    session_record = projection.sessions[session_id]
+    older = projection.invocations["inv-layout"]
+
+    newer_message = %{
+      projection.messages[older.message_id]
+      | id: "msg-newer",
+        created_sequence: 12
+    }
+
+    newer =
+      Map.merge(older, %{
+        id: "inv-newer",
+        message_id: newer_message.id,
+        usage: nil,
+        last_request_metrics: nil,
+        last_request_metrics_sequence: nil
+      })
+
+    projection =
+      projection
+      |> put_in([:invocations, "inv-layout", :last_request_metrics], metrics)
+      |> put_in([:invocations, "inv-layout", :last_request_metrics_sequence], 11)
+      |> put_in([:invocations, newer.id], newer)
+      |> put_in([:messages, newer_message.id], newer_message)
+      |> put_in(
+        [:sessions, session_id],
+        %{session_record | message_order: [newer_message.id | session_record.message_order]}
+      )
+
+    push_projection(session, projection)
+    assigns = session |> Breeze.Test.metadata() |> Map.fetch!(:assigns) |> State.prepare_render()
+
+    refute assigns.token_label =~ "ctx "
+  end
+
   test "plain drag copies transcript text even when release crosses into the composer" do
     %{engine: engine} = start_isolated_stack([])
     owner = self()

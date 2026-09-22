@@ -27,7 +27,7 @@ defmodule ReyCode.Orchestration.VerifiedChangeContextTest do
     session = %Session{
       id: "session",
       verified_change: record,
-      message_order: ["goal", "recent"]
+      message_order: ["recent", "goal"]
     }
 
     projection = %Projection{
@@ -44,7 +44,7 @@ defmodule ReyCode.Orchestration.VerifiedChangeContextTest do
     }
 
     assert {:compact, {:context_compacted, data, metadata}} =
-             ContextCompaction.entry(session, projection, 100)
+             ContextCompaction.entry(session, projection.turns["turn"], projection, 100)
 
     projection = Projector.apply(Event.new(5, :context_compacted, data, metadata), projection)
     compacted = projection.sessions[session.id]

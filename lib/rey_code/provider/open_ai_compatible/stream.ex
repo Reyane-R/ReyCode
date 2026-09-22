@@ -8,7 +8,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   defmodule Context do
     @moduledoc false
 
-    # `body` is built per attempt by the capability downgrade ladder in
+    # `body` is built per attempt by capability negotiation in
     # OpenAICompatible, so the initial context may carry nil.
     @enforce_keys [:transport, :profile, :key, :request, :emit, :config]
     defstruct [:transport, :profile, :key, :request, :body, :emit, :config]
@@ -131,7 +131,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
     cond do
       now >= session.deadline ->
-        timeout(session)
+        timeout(session, state)
 
       is_integer(flush_deadline) and now >= flush_deadline ->
         flush_and_continue(session, state, now)
@@ -147,8 +147,8 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
     case call_before(fn -> flush_due(state, emit, now) end, session.deadline) do
       {:ok, next} -> await_stream(session, next)
-      {:error, error} -> halt_stream(session, error)
-      :timeout -> timeout(session)
+      {:error, error} -> halt_stream(session, state, error)
+      :timeout -> timeout(session, state)
     end
   end
 
@@ -184,21 +184,21 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   defp handle_relay_result(
          {:ok, {:halt, _next, error}},
          session,
-         _state,
+         state,
          relay,
          acknowledgement
        ),
-       do: halt_relay(session, relay, acknowledgement, error)
+       do: halt_relay(session, state, relay, acknowledgement, error)
 
-  defp handle_relay_result({:error, error}, session, _state, relay, acknowledgement),
-    do: halt_relay(session, relay, acknowledgement, error)
+  defp handle_relay_result({:error, error}, session, state, relay, acknowledgement),
+    do: halt_relay(session, state, relay, acknowledgement, error)
 
-  defp handle_relay_result(:timeout, session, _state, relay, acknowledgement),
-    do: halt_relay(session, relay, acknowledgement, timeout_error(session.timeout))
+  defp handle_relay_result(:timeout, session, state, relay, acknowledgement),
+    do: halt_relay(session, state, relay, acknowledgement, timeout_error(session.timeout))
 
-  defp halt_relay(%Session{} = session, relay, acknowledgement, error) do
+  defp halt_relay(%Session{} = session, state, relay, acknowledgement, error) do
     send(relay, {session.tag, acknowledgement, {:halt, error}})
-    halt_stream(session, error)
+    halt_stream(session, state, error)
   end
 
   defp finish_stream({:ok, _final}, %Session{} = session, state) do
@@ -206,31 +206,32 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
          do: finish_valid_stream(session, state)
   end
 
-  defp finish_stream({:error, error}, _session, _state), do: {:error, error}
+  defp finish_stream({:error, error}, _session, state),
+    do: {:error, replay_safe_failure(error, state)}
 
   defp finish_valid_stream(%Session{} = session, state) do
     emit = session.context.emit
 
     case call_before(fn -> flush_pending(state, emit) end, session.deadline) do
       {:ok, state} -> {:ok, response(state)}
-      {:error, error} -> {:error, error}
-      :timeout -> {:error, timeout_error(session.timeout)}
+      {:error, error} -> {:error, replay_safe_failure(error, state)}
+      :timeout -> {:error, replay_safe_failure(timeout_error(session.timeout), state)}
     end
   end
 
-  defp halt_stream(%Session{} = session, error) do
+  defp halt_stream(%Session{} = session, state, error) do
     remaining = max(session.deadline - monotonic_ms(), 0)
     await_or_stop_stream_task(session.task, session.tag, remaining)
     cancel_relays(session.tag, error)
-    {:error, error}
+    {:error, replay_safe_failure(error, state)}
   end
 
-  defp timeout(%Session{} = session) do
+  defp timeout(%Session{} = session, state) do
     error = timeout_error(session.timeout)
     cancel_relays(session.tag, error)
     stop_stream_task(session.task)
     cancel_relays(session.tag, error)
-    {:error, error}
+    {:error, replay_safe_failure(error, state)}
   end
 
   defp await_or_stop_stream_task(%StreamTask{} = task, tag, timeout) do
@@ -257,7 +258,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   end
 
   defp timeout_error(timeout),
-    do: HTTP.error(:timeout, "Provider did not finish within #{timeout}ms", true)
+    do: HTTP.error(:timeout, "Provider did not finish within #{timeout}ms", false)
 
   defp cancellation_error,
     do: HTTP.error(:request_cancelled, "Provider request was cancelled", false)
@@ -341,20 +342,24 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
   end
 
   defp apply_event({:text, text}, state, emit) do
-    state |> flush_note(emit) |> buffer_text(text, emit)
+    state
+    |> mark_output_observed(text)
+    |> flush_note(emit)
+    |> buffer_text(text, emit)
   end
 
   # Reasoning uses the same bounded batching as answer text. A segment keeps
   # its first frame sequence across batches so the transcript can join them.
   # Notes remain advisory and never set valid_output?.
   defp apply_event({:note, note}, state, emit) do
-    state = flush_pending(state, emit)
+    state = state |> mark_output_observed(note) |> flush_pending(emit)
     {chunks, buffer} = TextBuffer.append(state.note_buffer, note)
     state |> Map.put(:note_buffer, buffer) |> emit_note_chunks(chunks, emit)
   end
 
   defp apply_event({:tool_started, tool, tool_state}, state, emit) do
     state
+    |> Map.put(:output_observed?, true)
     |> flush_note(emit)
     |> put_in([:tool_calls, tool_call_id(tool_state)], unfinished_call(tool, tool_state))
   end
@@ -369,12 +374,15 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
     }
 
     state
+    |> Map.put(:output_observed?, true)
     |> flush_note(emit)
     |> put_in([:tool_calls, id], call)
     |> Map.put(:valid_output?, true)
   end
 
-  defp apply_event({:usage, usage}, state, _emit), do: %{state | usage: usage}
+  defp apply_event({:usage, usage}, state, _emit),
+    do: %{state | usage: usage, output_observed?: true}
+
   defp apply_event(:done, state, emit), do: flush_note(state, emit)
 
   defp apply_event({:protocol_error, reason}, state, _emit),
@@ -503,6 +511,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
       usage: nil,
       protocol_error: nil,
       valid_output?: false,
+      output_observed?: false,
       text: "",
       tool_calls: %{}
     }
@@ -519,6 +528,23 @@ defmodule ReyCode.Provider.OpenAICompatible.Stream do
 
   defp protocol_error,
     do: {:error, HTTP.error(:protocol_error, @protocol_error_message, false)}
+
+  defp mark_output_observed(state, value) when is_binary(value) and value != "",
+    do: %{state | output_observed?: true}
+
+  defp mark_output_observed(state, _value), do: state
+
+  defp replay_safe_failure(%ReyCode.Failure{retryable?: true} = error, %{
+         output_observed?: true
+       }) do
+    %{
+      error
+      | retryable?: false,
+        message: error.message <> "; automatic retry stopped after provider output was observed"
+    }
+  end
+
+  defp replay_safe_failure(error, _state), do: error
 
   defp authorization(nil), do: []
   defp authorization(key), do: [{"Authorization", "Bearer " <> key}]

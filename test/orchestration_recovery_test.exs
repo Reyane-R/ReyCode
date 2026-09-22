@@ -11,12 +11,13 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     OperatorQuestions,
     Participant,
     Projector,
+    ProviderRoundAttempt,
     Session,
     ToolRun,
     Turn
   }
 
-  alias ReyCode.Provider.{Frame, Runtime}
+  alias ReyCode.Provider.{Frame, Response, Runtime}
   alias ReyCode.Test.Wait
 
   @agent_registry __MODULE__.AgentRegistry
@@ -241,6 +242,121 @@ defmodule ReyCode.Orchestration.RecoveryTest do
     replayed = Projector.replay(EventStore.load(store))
 
     assert live == replayed
+  end
+
+  test "a durable final ProviderRound completes after restart without another provider request" do
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "rey_code_final_round_recovery_#{System.pid()}_#{System.unique_integer([:positive])}.sqlite3"
+      )
+
+    store = start_supervised!({EventStore, name: nil, path: path})
+    start_supervised!({Registry, keys: :unique, name: @agent_registry})
+    start_supervised!({Registry, keys: :duplicate, name: @event_registry})
+    start_supervised!({DynamicSupervisor, strategy: :one_for_one, name: @agent_supervisor})
+    catalog = start_supervised!({BlockingCatalog, test_pid: self()})
+
+    session_id = "room-final-round"
+    turn_id = "turn-final-round"
+    invocation_id = "inv-final-round"
+    message_id = "msg-final-round"
+
+    participant = %Participant{
+      id: "builder",
+      name: "Builder",
+      perspective: "builder",
+      provider: :open_code,
+      model: nil,
+      kind: :primary
+    }
+
+    session = %Session{id: session_id}
+
+    turn = %Turn{
+      id: turn_id,
+      session_id: session_id,
+      mode: :direct,
+      input_kind: :operator
+    }
+
+    invocation = %Invocation{
+      id: invocation_id,
+      session_id: session_id,
+      turn_id: turn_id,
+      message_id: message_id,
+      participant: participant,
+      status: :running
+    }
+
+    attempt = %ProviderRoundAttempt{
+      round_index: 0,
+      attempt: 1,
+      frame_sequence_at_start: 0,
+      provider_id: "open_code",
+      state: :started
+    }
+
+    entries =
+      [
+        EventEntries.session_created(
+          session_id,
+          "final-round",
+          "Final Round",
+          System.tmp_dir!(),
+          [participant]
+        )
+      ] ++
+        EventEntries.queue_turn(turn, "Finish durably", "msg-user-final-round", 2) ++
+        [EventEntries.turn_started(turn)] ++
+        EventEntries.open_invocations(
+          session,
+          turn,
+          [
+            %{
+              participant_id: participant.id,
+              participant: participant,
+              phase_index: 0,
+              label: "response",
+              system_prompt: "Respond",
+              attempt: 1
+            }
+          ],
+          [{invocation_id, message_id}]
+        ) ++
+        [
+          EventEntries.invocation_started(invocation),
+          EventEntries.provider_round_attempt_started(invocation, attempt),
+          EventEntries.provider_round(invocation, 0, Response.to_wire(Response.new(text: "done")))
+        ]
+
+    assert {:ok, _events} = EventStore.append_many(entries, store)
+
+    start_supervised!(
+      {Engine,
+       name: @engine,
+       event_store: store,
+       agent_supervisor: @agent_supervisor,
+       agent_registry: @agent_registry,
+       event_registry: @event_registry,
+       provider_catalog: catalog,
+       config: RuntimeConfig.fresh(global_concurrency: 1, workspace_concurrency: 1)}
+    )
+
+    assert Wait.terminal_turn(@engine, turn_id).outcome == :completed
+    refute_receive {:provider_waiting, ^invocation_id, _provider_pid}, 100
+
+    events = EventStore.load(store)
+
+    assert Enum.count(events, fn event ->
+             event.type == :provider_round_recorded and
+               event.data["invocation_id"] == invocation_id
+           end) == 1
+
+    assert Enum.count(events, fn event ->
+             event.type == :invocation_completed and
+               event.data["invocation_id"] == invocation_id
+           end) == 1
   end
 
   test "fails a non-replayable interrupted invocation as non-retryable" do

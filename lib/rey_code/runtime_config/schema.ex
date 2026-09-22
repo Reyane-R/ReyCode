@@ -38,6 +38,7 @@ defmodule ReyCode.RuntimeConfig.Schema do
       {:openai_compatible_chunk_latency_ms, fn -> 50 end, {:integer, 0}},
       {:openai_compatible_base_url_overrides, fn -> %{} end, :base_url_overrides},
       {:openai_compatible_capability_overrides, fn -> %{} end, :capability_overrides},
+      {:openai_compatible_model_budget_overrides, fn -> %{} end, :model_budget_overrides},
       {:openai_compatible_providers, fn -> [] end, :provider_profiles},
       {:openai_compatible_transport, fn -> nil end, {:module_or_nil, nil}},
       # Squad workflow policy
@@ -188,6 +189,9 @@ defmodule ReyCode.RuntimeConfig.Schema do
 
   defp validate_kind!(key, value, :capability_overrides), do: capability_overrides!(key, value)
 
+  defp validate_kind!(key, value, :model_budget_overrides),
+    do: model_budget_overrides!(key, value)
+
   defp validate_kind!(key, value, :simulator_options), do: simulator_options!(key, value)
 
   defp validate_kind!(key, value, :keyword_list) when is_list(value) do
@@ -330,6 +334,82 @@ defmodule ReyCode.RuntimeConfig.Schema do
   defp capability_overrides!(key, value) do
     raise ArgumentError,
           "invalid #{key}: #{inspect(value)} (expected %{provider_atom => capability flags})"
+  end
+
+  @model_budget_fields [
+    :max_prompt_bytes,
+    :context_window_tokens,
+    :output_reserve_tokens,
+    :output_limit_parameter
+  ]
+
+  defp model_budget_overrides!(key, value) when is_map(value) do
+    Map.new(value, fn
+      {provider_id, models} when is_atom(provider_id) and is_map(models) ->
+        {provider_id, model_budget_models!("#{key}.#{provider_id}", models)}
+
+      entry ->
+        raise ArgumentError,
+              "invalid #{key}: #{inspect(entry)} " <>
+                "(expected %{provider_atom => %{model_string => budget}})"
+    end)
+  end
+
+  defp model_budget_overrides!(key, value) do
+    raise ArgumentError,
+          "invalid #{key}: #{inspect(value)} " <>
+            "(expected %{provider_atom => %{model_string => budget}})"
+  end
+
+  defp model_budget_models!(path, models) do
+    Map.new(models, fn
+      {model_id, budget}
+      when is_binary(model_id) and byte_size(model_id) > 0 and is_map(budget) ->
+        {model_id, model_budget_override!("#{path}.#{inspect(model_id)}", budget)}
+
+      entry ->
+        raise ArgumentError,
+              "invalid #{path}: #{inspect(entry)} (expected model string => budget map)"
+    end)
+  end
+
+  defp model_budget_override!(path, budget) do
+    unknown_keys = Map.keys(budget) -- @model_budget_fields
+
+    if unknown_keys != [] do
+      raise ArgumentError,
+            "invalid #{path}: unknown model budget keys #{inspect(Enum.sort(unknown_keys))}"
+    end
+
+    validated = Map.new(budget, &model_budget_field!(path, &1))
+
+    validate_model_budget_reserve!(path, validated)
+    validated
+  end
+
+  defp model_budget_field!(_path, {:output_limit_parameter, value})
+       when value in [:none, :max_tokens, :max_completion_tokens],
+       do: {:output_limit_parameter, value}
+
+  defp model_budget_field!(path, {:output_limit_parameter, value}) do
+    raise ArgumentError,
+          "invalid #{path}.output_limit_parameter: #{inspect(value)} " <>
+            "(expected :none, :max_tokens, or :max_completion_tokens)"
+  end
+
+  defp model_budget_field!(path, {field, value}),
+    do: {field, bounded!("#{path}.#{field}", value, 1)}
+
+  defp validate_model_budget_reserve!(path, budget) do
+    case {Map.fetch(budget, :context_window_tokens), Map.fetch(budget, :output_reserve_tokens)} do
+      {{:ok, context_window_tokens}, {:ok, output_reserve_tokens}}
+      when output_reserve_tokens >= context_window_tokens ->
+        raise ArgumentError,
+              "invalid #{path}.output_reserve_tokens: must be less than context_window_tokens"
+
+      _other ->
+        :ok
+    end
   end
 
   defp required_profile_value!(profile, field, path, predicate, expectation) do

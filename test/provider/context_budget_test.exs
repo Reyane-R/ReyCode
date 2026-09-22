@@ -50,7 +50,15 @@ defmodule ReyCode.Provider.ContextBudgetTest do
 
     operator_limited = ContextBudget.assess(8_000, 100_000, 1_500, 3_000, 500)
     assert operator_limited.input_budget_tokens == 1_500
-    assert operator_limited.status == :maintenance_required
+    assert operator_limited.status == :too_large
+  end
+
+  test "estimated token occupancy is a hard limit independently of request bytes" do
+    assessment = ContextBudget.assess(40_004, 1_000_000, 10_000, nil, 1_000)
+
+    assert assessment.prompt_bytes < assessment.max_prompt_bytes
+    assert assessment.estimated_prompt_tokens == 10_001
+    assert assessment.status == :too_large
   end
 
   test "unknown model capacity does not fabricate a context percentage" do

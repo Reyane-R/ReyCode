@@ -26,6 +26,16 @@ defmodule ReyCode.Orchestration.ToolRuns do
     |> Enum.any?(&(&1.status == :running))
   end
 
+  @doc "Whether durable history proves any tool execution ever started."
+  @spec ever_started?(Invocation.t()) :: boolean()
+  def ever_started?(invocation) do
+    invocation
+    |> ordered_runs()
+    |> Enum.any?(fn run ->
+      not is_nil(run.started_at) or run.status in [:running, :completed, :interrupted]
+    end)
+  end
+
   @doc "Returns every tool run whose host execution had started."
   @spec running(Invocation.t()) :: [ToolRun.t()]
   def running(invocation), do: Enum.filter(ordered_runs(invocation), &(&1.status == :running))

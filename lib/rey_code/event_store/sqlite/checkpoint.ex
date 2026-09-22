@@ -11,7 +11,7 @@ defmodule ReyCode.EventStore.SQLite.Checkpoint do
   """
 
   alias ReyCode.Hashing
-  alias ReyCode.Orchestration.{Turn, VerifiedChange, VerifiedChangeResolution}
+  alias ReyCode.Orchestration.{Invocation, Turn, VerifiedChange, VerifiedChangeResolution}
 
   @projection_version 3
   @legacy_projection_version 2
@@ -99,8 +99,38 @@ defmodule ReyCode.EventStore.SQLite.Checkpoint do
     projection[:sequence] == sequence and
       Enum.all?(@required_keys, &Map.has_key?(projection, &1)) and
       valid_session_records?(projection[:sessions]) and
-      valid_turn_records?(projection[:turns], projection[:sessions])
+      valid_turn_records?(projection[:turns], projection[:sessions]) and
+      valid_invocation_records?(projection[:invocations])
   end
+
+  defp valid_invocation_records?(invocations) when is_map(invocations) do
+    Enum.all?(invocations, fn
+      {_id, invocation} when is_map(invocation) ->
+        invocation |> Invocation.from_map() |> valid_invocation_attempt?()
+
+      _entry ->
+        false
+    end)
+  rescue
+    _malformed_checkpoint -> false
+  end
+
+  defp valid_invocation_records?(_invocations), do: false
+
+  defp valid_invocation_attempt?(%Invocation{provider_round_attempt: nil}), do: true
+
+  defp valid_invocation_attempt?(%Invocation{} = invocation) do
+    attempt = invocation.provider_round_attempt
+
+    invocation.status == :running and attempt.round_index == length(invocation.rounds) and
+      valid_attempt_frame_sequence?(attempt, invocation.last_frame_sequence)
+  end
+
+  defp valid_attempt_frame_sequence?(%{state: :started} = attempt, last_frame_sequence),
+    do: attempt.frame_sequence_at_start <= last_frame_sequence
+
+  defp valid_attempt_frame_sequence?(%{state: :retry_scheduled} = attempt, last_frame_sequence),
+    do: attempt.frame_sequence_at_start == last_frame_sequence
 
   defp valid_turn_records?(turns, sessions) when is_map(turns) do
     Enum.all?(turns, fn

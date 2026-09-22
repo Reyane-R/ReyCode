@@ -243,7 +243,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
     {:ok, context} =
       wire_result(HTTPC.start(:post, "http://#{@loopback}:#{free_port}/nowhere", [], "", []))
 
-    assert {:error, %{"category" => "request_failed", "retryable" => false}} =
+    assert {:error, %{"category" => "request_failed", "retryable" => true}} =
              wire_result(HTTPC.collect(context, fn _, _acc -> {:cont, :ok} end, :ok))
   end
 
@@ -374,7 +374,7 @@ defmodule ReyCode.Provider.OpenAICompatible.HTTPC.RedirectTest do
         HTTPC.start(:post, "http://#{@loopback}:#{port}/slow", [], "{}", timeout: 3_000)
       )
 
-    assert {:error, %{"category" => "timeout", "retryable" => true}} =
+    assert {:error, %{"category" => "timeout", "retryable" => false}} =
              wire_result(HTTPC.collect(context, fn _, acc -> {:cont, acc} end, :ok))
 
     assert_receive :response_started, 5_000

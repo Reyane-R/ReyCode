@@ -8,7 +8,7 @@ defmodule ReyCode.Failure do
     prompt_too_large protocol_error provider_error provider_unavailable rate_limit rate_limited
     request_cancelled request_failed response_too_large server_error simulated_after_frame
     simulated_permanent simulated_retryable simulated_timeout timeout token_budget_exceeded
-    tool_calls_unsupported tool_denied unknown_failure
+    tool_calls_unsupported tool_denied unknown_failure unsupported_stream_options
     worker_exit worker_start_failed delegation_contract_failed
   )a
   @category_by_wire Map.new(@known_categories, &{Atom.to_string(&1), &1})

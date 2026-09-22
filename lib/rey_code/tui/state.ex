@@ -277,17 +277,67 @@ defmodule ReyCode.TUI.State do
       |> Enum.map(&ModelTier.used_tokens/1)
       |> Enum.reject(&is_nil/1)
 
-    case usages do
-      [] ->
-        "usage —"
+    base =
+      case usages do
+        [] ->
+          "usage —"
 
-      known ->
-        base = "reported #{format_tokens(Enum.sum(known))} tok"
+        known ->
+          reported = "reported #{format_tokens(Enum.sum(known))} tok"
 
-        case Spend.session_cost_usd(invocations, rates) do
-          {:ok, usd} -> "#{base} · $#{Spend.format_usd(usd)} session"
-          :unavailable -> "#{base} · session"
-        end
+          case Spend.session_cost_usd(invocations, rates) do
+            {:ok, usd} -> "#{reported} · $#{Spend.format_usd(usd)} session"
+            :unavailable -> "#{reported} · session"
+          end
+      end
+
+    case context_occupancy(latest_request_metrics(invocations, projection)) do
+      nil -> base
+      occupancy -> "#{base} · #{occupancy}"
+    end
+  end
+
+  defp context_occupancy(%{
+         prompt_bytes: prompt_bytes,
+         max_prompt_bytes: max_prompt_bytes,
+         estimated_prompt_tokens: estimated_prompt_tokens,
+         input_budget_tokens: input_budget_tokens
+       })
+       when is_integer(prompt_bytes) and is_integer(max_prompt_bytes) and max_prompt_bytes > 0 and
+              is_integer(estimated_prompt_tokens) and is_integer(input_budget_tokens) and
+              input_budget_tokens > 0 do
+    if prompt_bytes * input_budget_tokens >= estimated_prompt_tokens * max_prompt_bytes do
+      "ctx #{format_tokens(prompt_bytes)}/#{format_tokens(max_prompt_bytes)} bytes"
+    else
+      "ctx ~#{format_tokens(estimated_prompt_tokens)}/#{format_tokens(input_budget_tokens)} tok"
+    end
+  end
+
+  defp context_occupancy(%{estimated_prompt_tokens: used, input_budget_tokens: budget})
+       when is_integer(used) and is_integer(budget) and budget > 0,
+       do: "ctx ~#{format_tokens(used)}/#{format_tokens(budget)} tok"
+
+  defp context_occupancy(_metrics), do: nil
+
+  defp latest_request_metrics(invocations, projection) do
+    invocations
+    |> Enum.max_by(
+      fn invocation ->
+        metrics_sequence = Map.get(invocation, :last_request_metrics_sequence) || 0
+        max(metrics_sequence, legacy_request_metrics_sequence(invocation, projection))
+      end,
+      fn -> nil end
+    )
+    |> case do
+      nil -> nil
+      invocation -> Map.get(invocation, :last_request_metrics)
+    end
+  end
+
+  defp legacy_request_metrics_sequence(invocation, projection) do
+    case Map.get(projection.messages, Map.get(invocation, :message_id)) do
+      nil -> 0
+      message -> message.created_sequence
     end
   end
 

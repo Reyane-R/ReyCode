@@ -2,7 +2,13 @@ defmodule ReyCode.Orchestration.Engine.WorkerExit do
   @moduledoc "Classifies a monitored provider worker exit as an orchestration action."
 
   alias ReyCode.Failure
-  alias ReyCode.Orchestration.{Invocation, ToolRuns}
+
+  alias ReyCode.Orchestration.{
+    Invocation,
+    ProviderRoundAttempt,
+    ProviderRoundRecovery,
+    ToolRuns
+  }
 
   @terminal [:completed, :failed, :cancelled]
 
@@ -22,6 +28,23 @@ defmodule ReyCode.Orchestration.Engine.WorkerExit do
     cond do
       ToolRuns.awaiting?(invocation) ->
         :release
+
+      match?(%ProviderRoundAttempt{state: :retry_scheduled}, invocation.provider_round_attempt) ->
+        :requeue
+
+      match?(%ProviderRoundAttempt{state: :started}, invocation.provider_round_attempt) ->
+        if replayable?.(invocation.participant.provider) do
+          :requeue
+        else
+          {:fail,
+           Failure.new(
+             :worker_exit,
+             "Provider worker exited with an in-flight request: #{inspect(reason)}"
+           )}
+        end
+
+      ProviderRoundRecovery.durable_continuation?(invocation) ->
+        :requeue
 
       reason == :normal ->
         :requeue

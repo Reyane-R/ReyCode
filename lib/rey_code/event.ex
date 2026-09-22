@@ -6,6 +6,7 @@ defmodule ReyCode.Event do
   alias ReyCode.Orchestration.{
     InvocationContextBoundary,
     OperatorQuestions,
+    ProviderRoundAttempt,
     StrategicReview,
     Turn,
     VerifiedChange,
@@ -60,7 +61,7 @@ defmodule ReyCode.Event do
     turn_completed snapshot_recorded squad_configured squad_stage_entered squad_decision_recorded
     squad_artifact_recorded squad_retry_scheduled squad_role_configured squad_directive_added
     gate_review_requested gate_resolved squad_budget_extended tool_ask_requested tool_ask_resolved
-    provider_round_recorded tool_run_requested tool_run_approval_resolved tool_run_started
+    provider_round_attempt_started provider_round_retry_scheduled provider_round_recorded tool_run_requested tool_run_approval_resolved tool_run_started
     tool_run_completed tool_run_failed tool_run_interrupted delegation_opened
     delegation_merge_requested delegation_merge_resolved peer_message_sent
     operator_question_asked operator_question_answered operator_question_rejected
@@ -89,6 +90,7 @@ defmodule ReyCode.Event do
           | :non_negative_integer
           | :positive_integer
           | :boolean
+          | {:integer_range, integer(), integer()}
           | {:one_of, [String.t()]}
           | :participant_list
           | :participant
@@ -109,6 +111,8 @@ defmodule ReyCode.Event do
   @model_tiers ~w(smol default slow)
   @merge_decisions ~w(apply discard)
   @retry_kinds ~w(provider_retry rework)
+  @max_failure_category_bytes 64
+  @max_failure_message_bytes 4_096
 
   @frame_kinds ~w(
     text_delta agent_note usage session_started tool_started tool_completed tool_request tool_result
@@ -475,6 +479,30 @@ defmodule ReyCode.Event do
         }),
       optional: %{"steering" => :map_list}
     },
+    provider_round_attempt_started: %{
+      required:
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
+        |> Map.merge(%{
+          "round_index" => :non_negative_integer,
+          "attempt" => {:integer_range, 1, 3},
+          "frame_sequence_at_start" => :non_negative_integer,
+          "provider_id" => :id,
+          "model_id" => :nullable_text,
+          "request_metrics" => :nullable_wire_map
+        }),
+      optional: %{}
+    },
+    provider_round_retry_scheduled: %{
+      required:
+        Map.merge(@invocation_identity, @turn_session_wire_identity)
+        |> Map.merge(%{
+          "round_index" => :non_negative_integer,
+          "attempt" => {:integer_range, 1, 2},
+          "retry_eligible_at" => :id,
+          "last_failure" => :failure
+        }),
+      optional: %{}
+    },
     tool_run_requested: %{
       required:
         Map.merge(@invocation_identity, @turn_session_wire_identity)
@@ -803,6 +831,35 @@ defmodule ReyCode.Event do
 
   defp cross_field_rules(:provider_frame_recorded, _data), do: :ok
 
+  defp cross_field_rules(:provider_round_attempt_started, data) do
+    metrics_valid? =
+      case data["request_metrics"] do
+        nil -> true
+        metrics -> match?({:ok, _metrics}, ProviderRoundAttempt.RequestMetrics.from_wire(metrics))
+      end
+
+    provider_id = data["provider_id"]
+    model_id = data["model_id"]
+
+    if metrics_valid? and bounded_id?(provider_id, 128) and
+         (is_nil(model_id) or bounded_id?(model_id, 512)) do
+      :ok
+    else
+      {:error, "invalid provider_round_attempt_started event: inconsistent attempt payload"}
+    end
+  end
+
+  defp cross_field_rules(:provider_round_retry_scheduled, data) do
+    with true <- bounded_retry_failure?(data["last_failure"]),
+         true <- iso8601_timestamp?(data["retry_eligible_at"]) do
+      :ok
+    else
+      _invalid ->
+        {:error,
+         "invalid provider_round_retry_scheduled event: retry requires a retryable failure and ISO 8601 eligibility timestamp"}
+    end
+  end
+
   defp cross_field_rules(:squad_retry_scheduled, %{"kind" => "rework"} = data) do
     rework_fields_valid? =
       is_integer(data["target_stage"]) and data["target_stage"] >= 0 and
@@ -861,6 +918,12 @@ defmodule ReyCode.Event do
   defp check_rule(:boolean, value) when is_boolean(value), do: :ok
   defp check_rule(:boolean, _value), do: {:error, "must be a boolean"}
 
+  defp check_rule({:integer_range, minimum, maximum}, value) do
+    if is_integer(value) and value in minimum..maximum,
+      do: :ok,
+      else: {:error, "must be an integer from #{minimum} through #{maximum}"}
+  end
+
   defp check_rule({:one_of, values}, value) do
     if value in values,
       do: :ok,
@@ -899,6 +962,26 @@ defmodule ReyCode.Event do
   end
 
   defp participant?(_participant), do: false
+
+  defp bounded_id?(value, max_bytes),
+    do: is_binary(value) and value != "" and byte_size(value) <= max_bytes
+
+  defp bounded_retry_failure?(
+         %{"category" => category, "message" => message, "retryable" => true} = failure
+       )
+       when map_size(failure) == 3 do
+    bounded_id?(category, @max_failure_category_bytes) and
+      is_binary(message) and byte_size(message) <= @max_failure_message_bytes and
+      match?({:ok, %Failure{retryable?: true}}, Failure.from_wire(failure))
+  end
+
+  defp bounded_retry_failure?(_failure), do: false
+
+  defp iso8601_timestamp?(value) when is_binary(value) and byte_size(value) <= 64 do
+    match?({:ok, _datetime, _offset}, DateTime.from_iso8601(value))
+  end
+
+  defp iso8601_timestamp?(_value), do: false
 
   @doc "Encodes an event as JSON, raising when encoding fails."
   @spec encode!(t()) :: String.t()

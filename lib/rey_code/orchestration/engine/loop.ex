@@ -4,6 +4,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   alias ReyCode.Failure
 
   alias ReyCode.Orchestration.{
+    ContextCompaction,
     Delegation,
     DelegationWorktree,
     EventEntries,
@@ -12,6 +13,8 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     InvocationRequest,
     OperatorQuestions,
     PeerMessaging,
+    ProviderRoundAttempt,
+    ProviderRoundRecovery,
     ToolRun,
     ToolRuns,
     Turn,
@@ -174,6 +177,12 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       not is_list(frames) ->
         {:reply, {:error, :invalid_frames}, state}
 
+      frames == [] ->
+        {:reply, :ok, state}
+
+      not frame_attempt_active?(invocation) ->
+        {:reply, {:error, :provider_attempt_not_active}, state}
+
       true ->
         case ProviderFrames.collect(invocation, frames) do
           {:ok, []} ->
@@ -191,6 +200,64 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   @doc "Validates and records one provider frame."
   @spec record_frame(map(), term(), term()) :: response()
   def record_frame(state, invocation_id, frame), do: record_frames(state, invocation_id, [frame])
+
+  @doc "Durably starts the next eligible attempt for one ProviderRound."
+  @spec start_provider_round_attempt(map(), term(), term(), term(), term()) :: response()
+  def start_provider_round_attempt(
+        state,
+        invocation_id,
+        provider_id,
+        model_id,
+        request_metrics
+      ) do
+    invocation = state.projection.invocations[invocation_id]
+
+    cond do
+      invocation == nil ->
+        {:reply, {:error, :invocation_not_found}, state}
+
+      invocation.status in [:completed, :failed, :cancelled] ->
+        {:reply, {:error, :invocation_terminal}, state}
+
+      invocation.status != :running ->
+        {:reply, {:error, :invalid_provider_attempt_transition}, state}
+
+      true ->
+        start_attempt(state, invocation, provider_id, model_id, request_metrics)
+    end
+  end
+
+  @doc "Schedules a safe retry or finalizes one failed ProviderRound attempt."
+  @spec provider_round_failed(map(), term(), term()) :: response()
+  def provider_round_failed(state, invocation_id, %Failure{} = failure) do
+    case state.projection.invocations[invocation_id] do
+      nil ->
+        {:reply, :failed, state}
+
+      %{status: status} when status in [:completed, :failed, :cancelled] ->
+        {:reply, :failed, state}
+
+      invocation ->
+        now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+
+        case ProviderRoundRecovery.decide(invocation, failure, now) do
+          {:schedule_retry, attempt, delay_ms} ->
+            entry = EventEntries.provider_round_retry_scheduled(invocation, attempt)
+            next = Persistence.append_and_apply!(state, [entry])
+            {:reply, {:retry_scheduled, delay_ms}, next}
+
+          {:fail, terminal_failure} ->
+            next =
+              DelegationFinalization.finalize_invocation(
+                state,
+                invocation.id,
+                {:failed, terminal_failure}
+              )
+
+            {:reply, :failed, next}
+        end
+    end
+  end
 
   @doc "Validates and records one normalized provider round."
   @spec record_round(map(), term(), term(), term()) :: response()
@@ -218,6 +285,48 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
       invocation ->
         persist_context_boundary(state, invocation, boundary_data)
+    end
+  end
+
+  @doc "Compacts eligible Session history for one active Invocation preflight."
+  @spec compact_session_context(map(), term(), term()) :: response()
+  def compact_session_context(state, invocation_id, max_summary_bytes)
+      when is_integer(max_summary_bytes) and max_summary_bytes > 0 do
+    case state.projection.invocations[invocation_id] do
+      nil ->
+        {:reply, {:error, :invocation_not_found}, state}
+
+      %{status: status} when status in [:completed, :failed, :cancelled] ->
+        {:reply, {:error, :invocation_terminal}, state}
+
+      invocation ->
+        session = state.projection.sessions[invocation.session_id]
+        turn = state.projection.turns[invocation.turn_id]
+
+        compact_session_context(state, invocation, session, turn, max_summary_bytes)
+    end
+  end
+
+  def compact_session_context(state, _invocation_id, _max_summary_bytes),
+    do: {:reply, {:error, :invalid_context_summary_budget}, state}
+
+  defp compact_session_context(
+         state,
+         _invocation,
+         _session,
+         %{strategy_review: packet},
+         _max_bytes
+       )
+       when not is_nil(packet),
+       do: {:reply, :unchanged, state}
+
+  defp compact_session_context(state, _invocation, session, turn, max_summary_bytes) do
+    case ContextCompaction.prepare(session, turn, state.projection, max_summary_bytes) do
+      :unchanged ->
+        {:reply, :unchanged, state}
+
+      {:compact, entry} ->
+        {:reply, :ok, Persistence.append_and_apply!(state, [entry])}
     end
   end
 
@@ -252,6 +361,9 @@ defmodule ReyCode.Orchestration.Engine.Loop do
 
       invocation.status == :awaiting_delegation ->
         {:reply, {:waiting, :delegation}, state}
+
+      final_round_pending_completion?(invocation) ->
+        {:reply, {:ok, :complete}, state}
 
       true ->
         next_tool_run(state, invocation)
@@ -343,6 +455,97 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     else
       entries = Enum.map(pending_frames, &EventEntries.provider_frame(invocation, &1))
       {:reply, :ok, Persistence.append_and_apply!(state, entries)}
+    end
+  end
+
+  defp start_attempt(state, invocation, provider_id, model_id, request_metrics) do
+    case invocation.provider_round_attempt do
+      nil ->
+        append_attempt(state, invocation, provider_id, model_id, request_metrics, 1)
+
+      %ProviderRoundAttempt{state: :retry_scheduled} = scheduled ->
+        start_scheduled_attempt(
+          state,
+          invocation,
+          scheduled,
+          provider_id,
+          model_id,
+          request_metrics
+        )
+
+      %ProviderRoundAttempt{state: :started} = started ->
+        if Lifecycle.replayable?(invocation.participant.provider) do
+          {:reply, {:ok, started.attempt}, state}
+        else
+          {:reply, {:error, :provider_attempt_in_flight}, state}
+        end
+    end
+  end
+
+  defp start_scheduled_attempt(
+         state,
+         invocation,
+         scheduled,
+         provider_id,
+         model_id,
+         request_metrics
+       ) do
+    now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+    wait_ms = ProviderRoundRecovery.retry_wait_ms(scheduled, now)
+
+    cond do
+      provider_id != scheduled.provider_id or model_id != scheduled.model_id ->
+        {:reply, {:error, :provider_retry_identity_changed}, state}
+
+      invocation.last_frame_sequence != scheduled.frame_sequence_at_start ->
+        {:reply, {:error, :provider_retry_no_longer_safe}, state}
+
+      ToolRuns.started?(invocation) ->
+        {:reply, {:error, :provider_retry_no_longer_safe}, state}
+
+      wait_ms == :invalid_retry_schedule ->
+        {:reply, {:error, :invalid_provider_retry_schedule}, state}
+
+      wait_ms == 0 ->
+        append_attempt(
+          state,
+          invocation,
+          provider_id,
+          model_id,
+          request_metrics,
+          scheduled.attempt + 1
+        )
+
+      true ->
+        {:reply, {:wait, wait_ms}, state}
+    end
+  end
+
+  defp append_attempt(state, invocation, provider_id, model_id, request_metrics, attempt_count) do
+    attempt = %ProviderRoundAttempt{
+      round_index: length(invocation.rounds),
+      attempt: attempt_count,
+      frame_sequence_at_start: invocation.last_frame_sequence,
+      provider_id: provider_id,
+      model_id: model_id,
+      request_metrics: request_metrics,
+      state: :started
+    }
+
+    entry = EventEntries.provider_round_attempt_started(invocation, attempt)
+    next = Persistence.append_and_apply!(state, [entry])
+    {:reply, {:ok, attempt_count}, next}
+  end
+
+  defp frame_attempt_active?(%{provider_round_attempt: nil}), do: true
+
+  defp frame_attempt_active?(invocation) do
+    case invocation.provider_round_attempt do
+      %ProviderRoundAttempt{state: :started, round_index: round_index} ->
+        round_index == length(invocation.rounds)
+
+      _other ->
+        false
     end
   end
 
@@ -454,6 +657,13 @@ defmodule ReyCode.Orchestration.Engine.Loop do
           :ok -> {:reply, {:ok, {action, run}}, state}
           {:error, reason} -> reject_existing_run(state, invocation, run, reason)
         end
+    end
+  end
+
+  defp final_round_pending_completion?(invocation) do
+    case List.last(invocation.rounds) do
+      %{tool_calls: tool_calls} -> tool_calls in [nil, []] and invocation.pending_steering == []
+      nil -> false
     end
   end
 

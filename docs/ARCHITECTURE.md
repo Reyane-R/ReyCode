@@ -440,21 +440,34 @@ The Agent Loop follows this cycle:
 1. Ask the Engine for the invocation's current state (durable request)
 2. Drain pending tool runs (execute ready ones, pause on awaiting approval)
 3. If all tool runs are done, rebuild and exactly preflight the next provider request
-4. At 80% of a provider budget, replace complete old round prefixes with durable InvocationContextSummaries until the request reaches the 60% target or no prefix remains
+4. At 80% of a provider budget, compact eligible earlier Session Messages, then complete old Invocation round prefixes, toward the 60% target
 5. Rebuild and preflight after every durable boundary; never stream the superseded request
-6. Stream one provider round and record it (with its tool calls) durably
-7. If the round had tool calls → go to step 2
-8. If the round had no tool calls → the invocation is done
+6. Durably start a ProviderRoundAttempt, then stream one provider request
+7. Record the ProviderRound (with its tool calls) durably, clearing the attempt
+8. If the request failed with proven zero output, durably schedule a bounded retry; uncertainty fails closed
+9. If the round had tool calls → go to step 2
+10. If the round had no tool calls → the invocation is done
 ```
 
 Every step is durable. If the process crashes mid-loop, the next process picks
 up exactly where it left off — there is no in-memory-only state.
 
-Session ContextBoundaries compact earlier conversation Messages before a Turn.
+Session ContextBoundaries compact eligible earlier conversation Messages during
+the exact preflight of an active Invocation. Every nonterminal Turn's current
+input remains outside the boundary, and strategic-review packets do not compact
+unrelated Session history.
 InvocationContextBoundaries are separate: they compact only complete ProviderRound
 and terminal ToolRun prefixes within one long-running Invocation. The latest
 boundary is projected, while original execution history remains replayable.
 Adapters without exact context preflight preserve their existing stream behavior.
+
+ProviderRoundAttempt is the recovery seam for network work. A retryable failure
+with no durable frame and no started ToolRun may schedule attempts two and three
+after 1 and 3 seconds. The Engine persists the schedule before waiting and checks
+the same frame baseline again before dispatch. Buffered output and dispatched
+timeouts become non-retryable. On restart, a committed final round completes
+without a new request, terminal ToolRuns continue to the next round, and an
+in-flight real-provider request fails as interrupted rather than being replayed.
 
 The Agent (`agent.ex`) handles the mechanics: frame buffering in ETS tables,
 error containment, and provider streaming. The Agent Loop (`agent_loop.ex`)

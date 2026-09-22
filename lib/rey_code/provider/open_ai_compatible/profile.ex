@@ -14,6 +14,7 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
   a strict server that rejects those request features.
   """
 
+  alias ReyCode.Provider.ModelBudget
   alias ReyCode.RuntimeConfig
   alias ReyCode.RuntimeConfig.OpenAICompatible, as: OpenAIPolicy
 
@@ -72,6 +73,18 @@ defmodule ReyCode.Provider.OpenAICompatible.Profile do
       nil -> {:error, :unknown_provider}
       profile -> {:ok, profile}
     end
+  end
+
+  @doc "Resolves the budget for one exact model while retaining this profile as fallback."
+  @spec model_budget(t(), String.t(), OpenAIPolicy.t()) :: ModelBudget.t()
+  def model_budget(%__MODULE__{} = profile, model_id, %OpenAIPolicy{} = policy) do
+    fallback = %ModelBudget{
+      max_prompt_bytes: profile.max_prompt_bytes,
+      context_window_tokens: profile.context_window_tokens,
+      output_reserve_tokens: profile.output_reserve_tokens
+    }
+
+    ModelBudget.resolve(profile.id, model_id, fallback, policy.model_budget_overrides)
   end
 
   defp built_in do

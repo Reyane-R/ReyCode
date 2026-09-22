@@ -354,6 +354,35 @@ defmodule ReyCode.TUI.Activity do
       provider_tool ->
         %{provider_tool | id: invocation.id}
 
+      match?(%{state: :retry_scheduled}, Map.get(invocation, :provider_round_attempt)) ->
+        attempt = invocation.provider_round_attempt.attempt + 1
+
+        item(
+          invocation.id,
+          :invocation,
+          :active,
+          "Retrying",
+          "provider attempt #{attempt}",
+          elapsed(turn, now_ms),
+          nil,
+          66
+        )
+
+      match?(
+        %{state: :started, attempt: attempt} when attempt > 1,
+        Map.get(invocation, :provider_round_attempt)
+      ) ->
+        item(
+          invocation.id,
+          :invocation,
+          :active,
+          "Retrying",
+          "provider attempt #{invocation.provider_round_attempt.attempt}",
+          elapsed(turn, now_ms),
+          nil,
+          66
+        )
+
       Map.get(invocation, :attempt, 1) > 1 ->
         item(
           invocation.id,

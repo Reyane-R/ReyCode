@@ -70,6 +70,12 @@ defmodule ReyCode.EventContractTest do
         {:assistant_message_opened, "attempt", 0},
         {:provider_frame_recorded, "frame_sequence", 1.5},
         {:provider_frame_recorded, "kind", "carrier_pigeon"},
+        {:provider_round_attempt_started, "attempt", 0},
+        {:provider_round_attempt_started, "attempt", 4},
+        {:provider_round_attempt_started, "request_metrics", []},
+        {:provider_round_retry_scheduled, "attempt", 3},
+        {:provider_round_retry_scheduled, "retry_eligible_at", nil},
+        {:provider_round_retry_scheduled, "last_failure", %{"category" => :boom}},
         {:invocation_context_compacted, "through_round_index", -1},
         {:invocation_context_compacted, "generator", "mystery-v1"},
         {:invocation_completed, "metadata", []},
@@ -213,6 +219,44 @@ defmodule ReyCode.EventContractTest do
         })
 
       assert :ok = Event.validate_data(:squad_retry_scheduled, complete)
+    end
+
+    test "provider round attempt events enforce fixed metrics and retry eligibility" do
+      started = valid_data(:provider_round_attempt_started)
+
+      extra_metric =
+        put_in(started, ["request_metrics", "provider_extension"], 1)
+
+      assert {:error, reason} =
+               Event.validate_data(:provider_round_attempt_started, extra_metric)
+
+      assert reason =~ "inconsistent attempt payload"
+
+      scheduled = valid_data(:provider_round_retry_scheduled)
+
+      assert {:error, reason} =
+               Event.validate_data(
+                 :provider_round_retry_scheduled,
+                 put_in(scheduled, ["last_failure", "retryable"], false)
+               )
+
+      assert reason =~ "retry requires a retryable failure"
+
+      extended_failure =
+        update_in(scheduled, ["last_failure"], &Map.put(&1, "provider_payload", %{}))
+
+      assert {:error, reason} =
+               Event.validate_data(:provider_round_retry_scheduled, extended_failure)
+
+      assert reason =~ "retry requires a retryable failure"
+
+      assert {:error, reason} =
+               Event.validate_data(
+                 :provider_round_retry_scheduled,
+                 Map.put(scheduled, "retry_eligible_at", "tomorrow")
+               )
+
+      assert reason =~ "ISO 8601 eligibility timestamp"
     end
   end
 
@@ -556,6 +600,39 @@ defmodule ReyCode.EventContractTest do
       "text" => "working",
       "tool_calls" => [],
       "usage" => nil
+    }
+
+  defp valid_data(:provider_round_attempt_started),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "round_index" => 0,
+      "attempt" => 1,
+      "frame_sequence_at_start" => 4,
+      "provider_id" => "openai",
+      "model_id" => "gpt-5",
+      "request_metrics" => %{
+        "prompt_bytes" => 12_000,
+        "estimated_prompt_tokens" => 3_000
+      }
+    }
+
+  defp valid_data(:provider_round_retry_scheduled),
+    do: %{
+      "invocation_id" => "inv-1",
+      "message_id" => "msg-2",
+      "turn_id" => "turn-1",
+      "room_id" => "room-1",
+      "round_index" => 0,
+      "attempt" => 1,
+      "retry_eligible_at" => "2026-01-01T00:00:01.000Z",
+      "last_failure" => %{
+        "category" => "rate_limited",
+        "message" => "try later",
+        "retryable" => true
+      }
     }
 
   defp valid_data(:invocation_context_compacted),
