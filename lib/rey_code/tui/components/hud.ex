@@ -91,7 +91,6 @@ defmodule ReyCode.TUI.Components.HUD do
         </box>
         <box class="pl-3 w-full">
           <box class="text-primary font-bold">TERMINAL // ORCHESTRATION</box>
-          <box class="text-muted">AT THE EDGE OF THE BLACKWALL</box>
           <box class="text-secondary">HUMAN + MACHINE</box>
         </box>
       </box>
@@ -219,7 +218,6 @@ defmodule ReyCode.TUI.Components.HUD do
 
     ~H"""
     <box class="w-30 h-full bg-surface border-l px-2 overflow-hidden">
-      <box class="pt-1 font-bold text-boundary">{glyph(:corner, @ascii)} BLACKWALL // INTERFACE</box>
       <box
         id="home-emblem"
         implicit={Effects}
@@ -270,8 +268,8 @@ defmodule ReyCode.TUI.Components.HUD do
     ~H"""
     <box class="w-30 h-full border-l bg-surface px-1 overflow-hidden">
       <box class="inline w-full overflow-hidden">
-        <box class="text-boundary font-bold">{glyph(:corner, @ascii)} BLACKWALL // HUD</box>
-        <box class="w-full text-right text-muted">{session_tag(@session.id)}</box>
+        <box class="text-boundary font-bold">{glyph(:corner, @ascii)} </box>
+        <box class="text-muted">{session_tag(@session.id)}</box>
       </box>
       <.boundary
         id="rail-scan"

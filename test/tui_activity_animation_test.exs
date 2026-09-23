@@ -210,7 +210,7 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
     assert Breeze.Test.metadata(session).assigns.blackwall.phase == :receiving
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "partial"
-    assert screen =~ "BLACKWALL // HUD"
+    assert screen =~ "TOOL RUNS"
     assigns = Breeze.Test.metadata(session).assigns
     assert assigns.drafts[assigns.selected_session_id] == "x"
 
@@ -229,7 +229,7 @@ defmodule ReyCode.TUI.ActivityAnimationTest do
     screen = session |> Breeze.Test.render!() |> plain()
     assert screen =~ "REYCODE"
     assert screen =~ "Message Assistant"
-    refute screen =~ "BLACKWALL // HUD"
+    refute screen =~ "TOOL RUNS"
     assert screen =~ "/"
     send(provider_pid, :complete)
     push_projection(session, Wait.projection(@engine, &terminal_turn/1))

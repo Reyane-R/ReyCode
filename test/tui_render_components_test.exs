@@ -487,13 +487,13 @@ defmodule ReyCode.TUI.RenderComponentsTest do
 
     on_exit(fn -> Breeze.Test.stop(session) end)
     type(session, "draft stays put")
-    assert session |> Breeze.Test.render!() |> plain() =~ "BLACKWALL // HUD"
+    assert session |> Breeze.Test.render!() |> plain() =~ "TOOL RUNS"
     id = Breeze.Test.metadata(session).assigns.selected_session_id
 
     for {width, height} <- [{119, 38}, {130, 27}, {60, 18}, {80, 24}, {130, 38}] do
       terminal = %{session.terminal | size: %{width: width, height: height}}
       screen = session |> Breeze.Test.render!(terminal: terminal) |> plain()
-      assert String.contains?(screen, "BLACKWALL // HUD") == (width >= 120 and height >= 28)
+      assert String.contains?(screen, "TOOL RUNS") == (width >= 120 and height >= 28)
       assert screen =~ "draft stays put"
       assert screen =~ "Message Assistant"
       assert Breeze.Test.metadata(session).assigns.drafts[id] == "draft stays put"
