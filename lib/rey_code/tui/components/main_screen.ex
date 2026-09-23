@@ -8,7 +8,17 @@ defmodule ReyCode.TUI.Components.MainScreen do
   import ReyCode.TUI.OperatorQuestion, only: [question_panel: 1]
 
   import ReyCode.TUI.Components.HUD,
-    only: [hero: 1, rail: 1, home_rail: 1, scan: 1, boundary: 1, tag: 1, glyph: 2, session_tag: 1]
+    only: [
+      hero: 1,
+      rail: 1,
+      home_rail: 1,
+      scan: 1,
+      boundary: 1,
+      tag: 1,
+      glyph: 2,
+      session_tag: 1,
+      task_time: 2
+    ]
 
   alias ReyCode.Provider.Presentation
   alias ReyCode.TUI.{Action, Activity, Cancellation, Notice, State, Verification}
@@ -127,6 +137,7 @@ defmodule ReyCode.TUI.Components.MainScreen do
             :if={@rail_width > 0}
             session={@session}
             messages={@messages}
+            task_time={latest_task_time(@messages)}
             wall={@wall}
             activity_frame={@activity_frame}
             motion={@background_motion}
@@ -518,6 +529,18 @@ defmodule ReyCode.TUI.Components.MainScreen do
     " · " <>
       workspace_context(session.workspace, max(terminal_width - reserved, 12)) <>
       branch
+  end
+
+  defp latest_task_time(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      %{kind: :message, turn: %{started_at: started} = turn} when is_binary(started) ->
+        task_time(turn, DateTime.utc_now())
+
+      _item ->
+        nil
+    end)
   end
 
   defp header_token_class(class), do: "w-full h-1 overflow-hidden text-right " <> class

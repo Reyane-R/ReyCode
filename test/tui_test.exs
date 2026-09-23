@@ -1132,7 +1132,7 @@ defmodule ReyCode.TUITest do
 
     screen = session |> Breeze.Test.render!() |> plain()
     before_index = :binary.match(screen, "Inspect the project")
-    tool_index = :binary.match(screen, "Read       mix.exs")
+    tool_index = Regex.run(~r/Read\s+mix\.exs/, screen, return: :index) |> List.first()
     after_index = :binary.match(screen, "The project uses Mix")
     response_index = :binary.match(screen, "Long responses")
 

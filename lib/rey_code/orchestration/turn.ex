@@ -20,7 +20,9 @@ defmodule ReyCode.Orchestration.Turn do
     :invocation_order,
     :outcome,
     :squad,
-    :created_at
+    :created_at,
+    :started_at,
+    :completed_at
   ]
 
   defstruct id: nil,
@@ -39,7 +41,9 @@ defmodule ReyCode.Orchestration.Turn do
             invocation_order: [],
             outcome: nil,
             squad: nil,
-            created_at: nil
+            created_at: nil,
+            started_at: nil,
+            completed_at: nil
 
   @type status :: :queued | :running | :terminal
   @type outcome :: :completed | :partial | :failed | :cancelled | :reworked
@@ -60,7 +64,9 @@ defmodule ReyCode.Orchestration.Turn do
           invocation_order: [String.t()],
           outcome: outcome() | nil,
           squad: SquadRun.t() | nil,
-          created_at: term()
+          created_at: term(),
+          started_at: String.t() | nil,
+          completed_at: String.t() | nil
         }
 
   @doc "Converts a decoded or legacy turn map into the current record."

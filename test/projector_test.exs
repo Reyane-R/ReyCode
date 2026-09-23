@@ -106,7 +106,10 @@ defmodule ReyCode.Orchestration.ProjectorTest do
     assert %Session{} = state.sessions["room-1"]
     assert %Participant{} = hd(state.sessions["room-1"].participants)
     assert %Message{} = state.messages["msg-agent"]
-    assert %Turn{} = state.turns["turn-1"]
+
+    assert %Turn{started_at: "2026-08-03T00:00:00Z", completed_at: "2026-08-03T00:00:00Z"} =
+             state.turns["turn-1"]
+
     assert %Invocation{} = state.invocations["inv-1"]
     assert state.sequence == 10
     assert state.session_order == ["room-1"]

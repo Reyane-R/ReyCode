@@ -203,7 +203,7 @@ defmodule ReyCode.TUI.Activity do
     |> Enum.join(" · ")
   end
 
-  @verb_column_count 11
+  @verb_column_count 12
 
   @doc "Ledger row lead: state glyph and the verb padded to a fixed column."
   @spec row_lead(Item.t(), String.t()) :: String.t()

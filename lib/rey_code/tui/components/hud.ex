@@ -139,6 +139,37 @@ defmodule ReyCode.TUI.Components.HUD do
     """
   end
 
+  @doc "How long the latest task has taken: elapsed while running, total once terminal."
+  @spec task_time(map() | nil, DateTime.t()) :: String.t() | nil
+  def task_time(%{started_at: started} = turn, now) when is_binary(started) do
+    with {:ok, start, _offset} <- DateTime.from_iso8601(started),
+         {:ok, stop} <- task_end(turn, now) do
+      seconds = max(DateTime.diff(stop, start, :second), 0)
+      prefix = if turn.status == :terminal, do: "TASK · ", else: "TASK · running · "
+      prefix <> duration(seconds)
+    else
+      _error -> nil
+    end
+  end
+
+  def task_time(_turn, _now), do: nil
+
+  defp task_end(%{status: :terminal, completed_at: completed}, _now) when is_binary(completed) do
+    with {:ok, stop, _offset} <- DateTime.from_iso8601(completed), do: {:ok, stop}
+  end
+
+  defp task_end(%{status: :terminal}, _now), do: :error
+  defp task_end(_turn, now), do: {:ok, now}
+
+  defp duration(seconds) when seconds < 60, do: "#{seconds}s"
+
+  defp duration(seconds) when seconds < 3_600,
+    do: "#{div(seconds, 60)}m #{String.pad_leading(Integer.to_string(rem(seconds, 60)), 2, "0")}s"
+
+  defp duration(seconds),
+    do:
+      "#{div(seconds, 3_600)}h #{String.pad_leading(Integer.to_string(div(rem(seconds, 3_600), 60)), 2, "0")}m"
+
   @doc "A Session's relic tag: four hex digits derived from its identity."
   @spec session_tag(String.t() | nil) :: String.t()
   def session_tag(session_id) do
@@ -250,6 +281,7 @@ defmodule ReyCode.TUI.Components.HUD do
 
   attr :session, :map, required: true
   attr :messages, :list, required: true
+  attr :task_time, :any, default: nil
   attr :wall, :map, required: true
   attr :activity_frame, :string, required: true
   attr :motion, :boolean, required: true
@@ -287,6 +319,7 @@ defmodule ReyCode.TUI.Components.HUD do
         <box class="text-muted">{Activity.row_tail(row)}</box>
       </box>
       <box :if={@total > length(@rows)} class="pt-1 text-muted">Older in /runs</box>
+      <box :if={@task_time} class="pt-1 text-muted">{@task_time}</box>
     </box>
     """
   end

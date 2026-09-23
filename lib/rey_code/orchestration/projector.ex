@@ -246,7 +246,12 @@ defmodule ReyCode.Orchestration.Projector do
   end
 
   def apply(%Event{type: :turn_started, data: data} = event, state) do
-    state = update_turn(state, data["turn_id"], &%{&1 | status: :running})
+    state =
+      update_turn(
+        state,
+        data["turn_id"],
+        &%{&1 | status: :running, started_at: event.recorded_at}
+      )
 
     if data["detached"] == true do
       put_sequence(state, event.sequence)
@@ -729,7 +734,11 @@ defmodule ReyCode.Orchestration.Projector do
   def apply(%Event{type: :turn_completed, data: data} = event, state) do
     outcome = outcome(data["outcome"])
 
-    update_turn(state, data["turn_id"], &%{&1 | status: :terminal, outcome: outcome})
+    update_turn(
+      state,
+      data["turn_id"],
+      &%{&1 | status: :terminal, outcome: outcome, completed_at: event.recorded_at}
+    )
     |> update_session(data["room_id"], fn session ->
       if session.active_turn_id == data["turn_id"] do
         %{session | active_turn_id: nil}

@@ -495,7 +495,9 @@ composer is empty.
 
 At **120 columns × 28 rows** or larger, a side panel shows workspace context
 on home and, during a Session, the newest tool runs: the verb, its file or
-command, and elapsed time for active work. The header already carries state,
+command, and elapsed time for active work. Its last line shows how long the
+latest task has taken, ticking while it runs and settling on the total once it
+ends. The header already carries state,
 usage, and workspace, so the panel never repeats them. Smaller windows reclaim
 the panel's space for the transcript. Menus share a dim header strip, and the command palette has
 its own scanner.
