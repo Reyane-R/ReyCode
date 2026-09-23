@@ -4,7 +4,7 @@ defmodule ReyCode.MixProject do
   def project do
     [
       app: :rey_code,
-      version: "0.18.4",
+      version: "0.19.0",
       licenses: ["MIT"],
       elixir: "~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
