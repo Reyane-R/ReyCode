@@ -192,6 +192,10 @@ defmodule ReyCode.StoreMaintenanceTest do
     File.mkdir_p!(Path.dirname(backup))
     File.cp!(source, backup)
 
+    # A database this fresh could still be a live publisher's commit gap.
+    assert {:error, :destination_exists} = EventStore.backup(backup, store)
+
+    File.touch!(backup, System.os_time(:second) - 60)
     assert {:ok, _manifest} = EventStore.backup(backup, store)
     assert {:ok, _report} = StoreMaintenance.verify(backup)
 

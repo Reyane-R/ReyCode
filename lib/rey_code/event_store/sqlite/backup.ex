@@ -40,6 +40,10 @@ defmodule ReyCode.EventStore.SQLite.Backup do
     end
   end
 
+  # A competitor publishes its database and manifest milliseconds apart. An
+  # uncommitted database younger than this is that live gap, not residue.
+  @residue_grace_seconds 5
+
   @doc "Creates a consistent owner-only backup plus its manifest."
   @spec backup(term(), pos_integer(), Path.t()) :: {:ok, map()} | {:error, term()}
   def backup(connection, sequence, destination) do
@@ -48,20 +52,31 @@ defmodule ReyCode.EventStore.SQLite.Backup do
 
     case classify_destination(destination, manifest_path) do
       :free ->
-        run_backup(connection, sequence, destination, false)
+        run_backup(connection, sequence, destination)
 
       :committed ->
         {:error, :destination_exists}
 
-      # Only files shaped like our own interrupted artifact are recoverable
+      # Only files shaped like our own interrupted artifact, and old enough
+      # that no live publisher can still be committing them, are recoverable
       # residue; anything else belongs to its owner and stays untouched.
       :uncommitted_residue ->
-        if sqlite_store?(destination) do
+        if sqlite_store?(destination) and stale?(destination) do
           _ = File.rm(destination)
-          run_backup(connection, sequence, destination, true)
+          run_backup(connection, sequence, destination)
         else
           {:error, :destination_exists}
         end
+    end
+  end
+
+  defp stale?(destination) do
+    case File.stat(destination, time: :posix) do
+      {:ok, %File.Stat{mtime: mtime}} ->
+        System.os_time(:second) - mtime >= @residue_grace_seconds
+
+      {:error, _reason} ->
+        false
     end
   end
 
@@ -102,7 +117,7 @@ defmodule ReyCode.EventStore.SQLite.Backup do
     end
   end
 
-  defp run_backup(connection, sequence, destination, preexisting_destination?) do
+  defp run_backup(connection, sequence, destination) do
     suffix = System.unique_integer([:positive])
     temporary_database = destination <> ".tmp-#{suffix}"
     manifest_path = destination <> ".manifest.json"
@@ -122,42 +137,13 @@ defmodule ReyCode.EventStore.SQLite.Backup do
         {:ok, Map.put(manifest, :manifest, manifest_path)}
       end
 
-    case result do
-      {:ok, _manifest} ->
-        :ok
-
-      {:error, _reason} ->
-        cleanup_attempt(
-          destination,
-          manifest_path,
-          temporary_database,
-          temporary_manifest,
-          preexisting_destination?
-        )
-    end
+    # Every ordinary error removes only the temporary files this attempt
+    # created. The published database is handled at the commit boundary, so a
+    # losing publisher can never delete a competitor's freshly linked file.
+    if not match?({:ok, _manifest}, result),
+      do: Enum.each([temporary_database, temporary_manifest], &File.rm/1)
 
     result
-  end
-
-  # Every ordinary error removes the files this attempt created. The published
-  # database is removed only while uncommitted and only when no destination
-  # predated the call, so an owner's unrelated file is never destroyed.
-  defp cleanup_attempt(
-         destination,
-         manifest_path,
-         temporary_database,
-         temporary_manifest,
-         preexisting?
-       ) do
-    Enum.each([temporary_database, temporary_manifest], &File.rm/1)
-
-    if File.exists?(destination) and not preexisting? and
-         not committed?(destination, manifest_path) do
-      _ = File.rm(destination)
-      :ok
-    else
-      :ok
-    end
   end
 
   @doc "Writes the sidecar manifest describing a completed backup."
@@ -193,10 +179,16 @@ defmodule ReyCode.EventStore.SQLite.Backup do
     end
   end
 
-  defp publish_manifest(temporary_manifest, manifest_path, _destination) do
+  # The database link succeeded, so it is this attempt's own file: withdraw it
+  # when the manifest cannot follow, leaving nothing uncommitted behind.
+  defp publish_manifest(temporary_manifest, manifest_path, destination) do
     case publish_file(temporary_manifest, manifest_path) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        _ = File.rm(destination)
+        {:error, reason}
     end
   end
 
