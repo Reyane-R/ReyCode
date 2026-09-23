@@ -220,7 +220,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
        when not is_nil(packet),
        do: StrategicReview.render_output(body)
 
-  defp display_body(message), do: message.body
+  defp display_body(message), do: String.replace_invalid(message.body || "")
 
   defp message_placeholder(%{activity: nil, status: :queued}, _frame), do: "Waiting…"
   defp message_placeholder(%{activity: nil}, frame), do: frame <> " · Thinking"
@@ -413,6 +413,7 @@ defmodule ReyCode.TUI.Components.MainScreen.Timeline do
   defp wrap_note(text, width) do
     {rows, current} =
       text
+      |> String.replace_invalid()
       |> String.split(~r/\s+/u, trim: true)
       |> Enum.reduce({[], ""}, &append_note_word(&1, &2, width))
 

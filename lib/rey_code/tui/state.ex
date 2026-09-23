@@ -865,8 +865,11 @@ defmodule ReyCode.TUI.State do
     {Enum.reject(bounded, &is_nil/1), overflow}
   end
 
+  # Durable notes recorded before the buffer scrubbed partial characters
+  # can still hold broken bytes; a renderer's regex must never see them.
   defp note_lines(note) when is_binary(note) do
     note
+    |> String.replace_invalid()
     |> String.split(~r/\R+/, trim: true)
     |> Enum.map(fn line ->
       line

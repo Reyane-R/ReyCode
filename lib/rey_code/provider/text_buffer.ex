@@ -47,20 +47,25 @@ defmodule ReyCode.Provider.TextBuffer do
 
     cond do
       elapsed >= buffer.chunk_latency_ms ->
-        drain(buffer, true, now)
+        drain(buffer, :latency, now)
 
       byte_size(buffer.pending) >= buffer.chunk_bytes ->
-        drain(buffer, buffer.flush_tail_on_size?, now)
+        drain(buffer, if(buffer.flush_tail_on_size?, do: :latency, else: :size), now)
 
       true ->
         {[], buffer}
     end
   end
 
-  @doc "Emits all pending text as UTF-8-safe chunks."
+  @doc """
+  Emits all pending text as UTF-8-safe chunks.
+
+  This is the final flush for the text: a trailing partial codepoint that
+  never completed is replaced rather than emitted as broken bytes.
+  """
   @spec flush(t(), integer()) :: {[binary()], t()}
   def flush(buffer, now \\ System.monotonic_time(:millisecond)) do
-    drain(buffer, true, now)
+    drain(buffer, :final, now)
   end
 
   @doc "Returns the absolute monotonic deadline for pending text, or nil when empty."
@@ -71,11 +76,16 @@ defmodule ReyCode.Provider.TextBuffer do
       when is_integer(started_at),
       do: started_at + latency
 
-  @doc "Flushes pending text only when its latency deadline has been reached."
+  @doc """
+  Flushes pending text only when its latency deadline has been reached.
+
+  More text may still follow, so a trailing partial codepoint stays pending
+  until the bytes that complete it arrive.
+  """
   @spec flush_due(t(), integer()) :: {[binary()], t()}
   def flush_due(buffer, now \\ System.monotonic_time(:millisecond)) do
     case next_flush_deadline(buffer) do
-      deadline when is_integer(deadline) and now >= deadline -> flush(buffer, now)
+      deadline when is_integer(deadline) and now >= deadline -> drain(buffer, :latency, now)
       _deadline -> {[], buffer}
     end
   end
@@ -89,36 +99,68 @@ defmodule ReyCode.Provider.TextBuffer do
     value |> binary_part(0, max_bytes) |> trim_invalid_suffix()
   end
 
-  defp drain(%{pending: ""} = buffer, _force, _now), do: {[], %{buffer | started_at: nil}}
+  defp drain(%{pending: ""} = buffer, _mode, _now), do: {[], %{buffer | started_at: nil}}
 
-  defp drain(buffer, force, now) do
-    if force or byte_size(buffer.pending) >= buffer.chunk_bytes do
-      {chunk, buffer} = take_chunk(buffer, now)
-      {rest, buffer} = drain(buffer, force, now)
-      {[chunk | rest], buffer}
+  # Providers split multibyte characters across stream events. The bytes of
+  # a character still in flight stay pending; everything else is made valid
+  # before it can reach a durable note or a renderer's regex.
+  defp drain(buffer, mode, now) do
+    {ready, tail} = split_incomplete_tail(buffer.pending)
+    ready = String.replace_invalid(ready)
+
+    {chunks, rest} =
+      case mode do
+        :final -> take_chunks(ready <> String.replace_invalid(tail), buffer.chunk_bytes, true)
+        :latency -> take_chunks(ready, buffer.chunk_bytes, true)
+        :size -> take_chunks(ready, buffer.chunk_bytes, false)
+      end
+
+    pending = if(mode == :final, do: rest, else: rest <> tail)
+    {chunks, %{buffer | pending: pending, started_at: if(pending == "", do: nil, else: now)}}
+  end
+
+  defp take_chunks("", _chunk_bytes, _all?), do: {[], ""}
+
+  defp take_chunks(value, chunk_bytes, all?) do
+    if all? or byte_size(value) >= chunk_bytes do
+      chunk =
+        case truncate_utf8(value, min(byte_size(value), chunk_bytes)) do
+          "" -> value |> String.next_grapheme() |> elem(0)
+          prefix -> prefix
+        end
+
+      rest = binary_part(value, byte_size(chunk), byte_size(value) - byte_size(chunk))
+      {chunks, rest} = take_chunks(rest, chunk_bytes, all?)
+      {[chunk | chunks], rest}
     else
-      {[], buffer}
+      {[], value}
     end
   end
 
-  defp take_chunk(buffer, now) do
-    size = min(byte_size(buffer.pending), buffer.chunk_bytes)
+  # A trailing lead byte with too few continuation bytes is a character whose
+  # remaining bytes have not arrived yet. At most three bytes can be pending.
+  defp split_incomplete_tail(binary) do
+    size = byte_size(binary)
 
-    chunk =
-      case truncate_utf8(buffer.pending, size) do
-        "" -> buffer.pending |> String.next_grapheme() |> elem(0)
-        value -> value
+    Enum.find_value(1..min(3, size)//1, {binary, ""}, fn back ->
+      <<head::binary-size(size - back), lead, continuation::binary>> = binary
+
+      if incomplete_sequence?(lead, continuation),
+        do: {head, binary_part(binary, size - back, back)}
+    end)
+  end
+
+  defp incomplete_sequence?(lead, continuation) do
+    needed =
+      cond do
+        lead in 0xC2..0xDF -> 2
+        lead in 0xE0..0xEF -> 3
+        lead in 0xF0..0xF4 -> 4
+        true -> 0
       end
 
-    rest =
-      binary_part(
-        buffer.pending,
-        byte_size(chunk),
-        byte_size(buffer.pending) - byte_size(chunk)
-      )
-
-    next = %{buffer | pending: rest, started_at: if(rest == "", do: nil, else: now)}
-    {chunk, next}
+    needed > byte_size(continuation) + 1 and
+      continuation |> :binary.bin_to_list() |> Enum.all?(&(&1 in 0x80..0xBF))
   end
 
   defp trim_invalid_suffix(value) do

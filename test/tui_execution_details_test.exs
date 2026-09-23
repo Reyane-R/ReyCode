@@ -329,6 +329,16 @@ defmodule ReyCode.TUI.ExecutionDetailsTest do
     assert screen =~ "Hide details"
   end
 
+  test "notes and answers holding broken bytes render instead of crashing" do
+    broken = "1. " <> <<0xE2, 0x9C>>
+    rows = [%{kind: :note, text: broken}, tool(:running)]
+    active = %{message("answer", rows) | status: :streaming, body: "Body " <> broken}
+    screen = [active] |> start(30) |> Breeze.Test.render!() |> plain()
+
+    assert screen =~ "┆ 1. �"
+    assert screen =~ "Body 1. �"
+  end
+
   test "fenced code in the answer sits on the panel surface" do
     reply = %{message("answer", []) | body: "Intro\n\n```\ncode line\n```\n\nOutro"}
     lines = [reply] |> start(30) |> Breeze.Test.render!() |> String.split("\n")

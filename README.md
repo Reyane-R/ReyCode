@@ -637,7 +637,10 @@ working while reserving Shift-drag for terminal selection. See
 [Ghostty's mouse selection settings](https://ghostty.org/docs/config/reference#mouse-shift-capture).
 
 Answer and reasoning chunks are persisted as they arrive from the provider's
-byte/latency buffer, including before stream completion. Answer text that
+byte/latency buffer, including before stream completion. Characters split across
+stream events wait for their remaining bytes before being recorded. Incomplete
+characters at stream completion and malformed text in older transcripts display
+as replacement characters rather than crashing the terminal. Answer text that
 resumes after a tool round starts a new paragraph, so sentences from separate
 rounds are never glued together. Active thinking stays
 visible; after completion it collapses under **Thinking · Show details**.

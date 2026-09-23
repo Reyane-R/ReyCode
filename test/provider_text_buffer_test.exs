@@ -77,6 +77,30 @@ defmodule ReyCode.Provider.TextBufferTest do
     assert buffer.pending == ""
   end
 
+  # A provider may split one character across two stream events; the deadline
+  # can land between them. The half character must wait, not be emitted.
+  test "a latency flush holds a trailing partial character until it completes" do
+    buffer = TextBuffer.new(chunk_bytes: 64, chunk_latency_ms: 50)
+    {[], buffer} = TextBuffer.append(buffer, "1. " <> <<0xE2, 0x9C>>, 100)
+
+    assert {["1. "], buffer} = TextBuffer.flush_due(buffer, 200)
+    assert buffer.pending == <<0xE2, 0x9C>>
+
+    assert {[], buffer} = TextBuffer.append(buffer, <<0x93>> <> " done", 201)
+    assert {["✓ done"], buffer} = TextBuffer.flush_due(buffer, 300)
+    assert buffer.pending == ""
+  end
+
+  test "a final flush replaces a partial character and mid-stream garbage" do
+    buffer = TextBuffer.new(chunk_bytes: 64, chunk_latency_ms: 50)
+    {[], buffer} = TextBuffer.append(buffer, "ok" <> <<0xFF>> <> "x" <> <<0xE2>>, 100)
+
+    assert {[chunk], buffer} = TextBuffer.flush(buffer, 101)
+    assert String.valid?(chunk)
+    assert chunk == "ok�x�"
+    assert buffer.pending == ""
+  end
+
   test "generic truncation never exceeds its byte limit" do
     assert TextBuffer.truncate_utf8("é", 1) == ""
     assert TextBuffer.truncate_utf8("é", 2) == "é"
@@ -109,6 +133,37 @@ defmodule ReyCode.Provider.TextBufferTest do
       assert String.valid?(truncated)
       assert byte_size(truncated) <= max_bytes
       assert String.starts_with?(text, truncated)
+    end
+  end
+
+  property "byte-split streams preserve characters across size and latency flushes" do
+    check all(
+            text <- string(:utf8, min_length: 1, max_length: 64),
+            chunk_bytes <- integer(1..16),
+            flush_tail? <- boolean()
+          ) do
+      buffer =
+        TextBuffer.new(
+          chunk_bytes: chunk_bytes,
+          chunk_latency_ms: 1,
+          flush_tail_on_size?: flush_tail?
+        )
+
+      {emitted, buffer} =
+        text
+        |> :binary.bin_to_list()
+        |> Enum.with_index()
+        |> Enum.map_reduce(buffer, fn {byte, index}, buffer ->
+          {chunks, buffer} = TextBuffer.append(buffer, <<byte>>, index * 2)
+          {due, buffer} = TextBuffer.flush_due(buffer, index * 2 + 1)
+          assert Enum.all?(chunks ++ due, &String.valid?/1)
+          {chunks ++ due, buffer}
+        end)
+
+      {last, buffer} = TextBuffer.flush(buffer)
+      assert Enum.all?(last, &String.valid?/1)
+      assert IO.iodata_to_binary([emitted, last]) == text
+      assert buffer.pending == ""
     end
   end
 end
