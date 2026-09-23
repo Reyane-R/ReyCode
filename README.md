@@ -154,8 +154,12 @@ mix rey_code.engine status
 mix rey_code.engine stop
 ```
 
-Clients reconnect with a fresh snapshot after a connection loss. Unacknowledged
-commands are never automatically replayed: inspect history before retrying them.
+Between polls, an attached terminal receives only the events appended since
+its last sequence and projects them locally with the engine's own projector;
+a terminal further behind than the engine's bounded recent-event ring receives
+a whole snapshot instead. Clients reconnect with a fresh snapshot after a
+connection loss. Unacknowledged commands are never automatically replayed:
+inspect history before retrying them.
 All clients must match the engine's protocol, exact code build, storage path,
 and engine settings. A new build, or a changed engine configuration such as a
 different shell environment, automatically replaces an idle compatible engine

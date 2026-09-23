@@ -147,7 +147,7 @@ defmodule ReyCode.LocalEngine.Server do
     try do
       case Protocol.recv(socket) do
         {:ok, {:hello, ^identity}} ->
-          :ok = Protocol.send(socket, {:ok, snapshots(services, {-1, -1})})
+          :ok = Protocol.send(socket, {:ok, full_snapshots(services)})
           serve_calls(socket, services)
 
         {:ok, {:hello, other}} ->
@@ -312,14 +312,30 @@ defmodule ReyCode.LocalEngine.Server do
     _kind, _reason -> {:error, :engine_operation_failed}
   end
 
+  defp full_snapshots(services) do
+    %{
+      projection: GenServer.call(services.engine, :snapshot),
+      events: [],
+      catalog: GenServer.call(services.catalog, :snapshot)
+    }
+  end
+
+  # A poll answers with the events since the client's sequence. Only a client
+  # too far behind for the engine's ring pays for a whole projection copy.
   defp snapshots(services, {sequence, generation}) do
-    projection = GenServer.call(services.engine, :snapshot)
     catalog = GenServer.call(services.catalog, :snapshot)
 
-    %{
-      projection: if(projection.sequence > sequence, do: projection),
-      catalog: if(catalog.generation != generation, do: catalog)
-    }
+    update =
+      case GenServer.call(services.engine, {:events_since, sequence}) do
+        {:ok, events} ->
+          %{projection: nil, events: events}
+
+        :stale ->
+          projection = GenServer.call(services.engine, :snapshot)
+          %{projection: if(projection.sequence > sequence, do: projection), events: []}
+      end
+
+    Map.put(update, :catalog, if(catalog.generation != generation, do: catalog))
   end
 
   defp dispatch(:engine, {:ui_start_verified_change, session, options}, services),

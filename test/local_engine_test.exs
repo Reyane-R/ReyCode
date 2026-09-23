@@ -2,7 +2,7 @@ defmodule ReyCode.LocalEngineTest do
   use ExUnit.Case, async: false
   alias ReyCode.{EventStore, RuntimeConfig}
   alias ReyCode.LocalEngine.{Connection, Launcher, Protocol, Proxy, Server}
-  alias ReyCode.Orchestration.Engine
+  alias ReyCode.Orchestration.{Engine, Projector}
   alias ReyCode.Provider.Catalog, as: ProviderCatalog
   alias ReyCode.Provider.Catalog.Snapshot
   alias ReyCode.Provider.Credentials
@@ -316,6 +316,37 @@ defmodule ReyCode.LocalEngineTest do
     assert Map.has_key?(received.sessions, id)
   end
 
+  test "polls carry only the events since the client's sequence and rebuild the projection",
+       context do
+    first = client(context, {__MODULE__.ClientA, __MODULE__.ProxyA, __MODULE__.RegistryA})
+    baseline = Connection.snapshot(:engine, first.connection)
+
+    ids =
+      for title <- ["delta one", "delta two", "delta three"] do
+        {:ok, id} = Engine.create_blank_session(title, context.tmp_dir, context.engine)
+        id
+      end
+
+    engine_snapshot = Engine.snapshot(context.engine)
+    assert engine_snapshot.sequence > baseline.sequence
+
+    # The engine hands out exactly the appended events, in order, and refuses
+    # a gap it no longer holds.
+    assert {:ok, events} = GenServer.call(context.engine, {:events_since, baseline.sequence})
+
+    assert Enum.map(events, & &1.sequence) ==
+             Enum.to_list((baseline.sequence + 1)..engine_snapshot.sequence)
+
+    assert Enum.reduce(events, baseline, &Projector.apply/2) == engine_snapshot
+    assert {:ok, []} = GenServer.call(context.engine, {:events_since, engine_snapshot.sequence})
+    assert :stale = GenServer.call(context.engine, {:events_since, -1})
+
+    # The client converges on the same projection through its polls alone.
+    assert await_sequence(first.connection, engine_snapshot.sequence, 100)
+    assert Connection.snapshot(:engine, first.connection) == engine_snapshot
+    assert Enum.all?(ids, &Map.has_key?(engine_snapshot.sessions, &1))
+  end
+
   test "clients reconnect with fresh history and do not replay disconnected requests", context do
     first = client(context, {__MODULE__.ClientA, __MODULE__.ProxyA, __MODULE__.RegistryA})
     Engine.subscribe(first.proxy)
@@ -443,6 +474,17 @@ defmodule ReyCode.LocalEngineTest do
       after
         10 -> await_text(view, text, remaining - 1)
       end
+    end
+  end
+
+  defp await_sequence(_connection, _sequence, 0), do: false
+
+  defp await_sequence(connection, sequence, remaining) do
+    if Connection.snapshot(:engine, connection).sequence >= sequence do
+      true
+    else
+      Process.sleep(20)
+      await_sequence(connection, sequence, remaining - 1)
     end
   end
 

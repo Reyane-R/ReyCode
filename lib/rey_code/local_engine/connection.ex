@@ -2,6 +2,7 @@ defmodule ReyCode.LocalEngine.Connection do
   @moduledoc "One terminal's reconnecting engine connection. Mutating requests are never replayed."
   use GenServer
   alias ReyCode.LocalEngine.{Launcher, Protocol}
+  alias ReyCode.Orchestration.Projector
   @poll_ms 100
   @max_pending_count 64
 
@@ -54,7 +55,8 @@ defmodule ReyCode.LocalEngine.Connection do
           registry: Keyword.get(opts, :registry, ReyCode.EventRegistry),
           poll_ms: poll_ms,
           connection_error: nil,
-          epoch: 0
+          epoch: 0,
+          resync?: false
         }
 
         send(self(), {:poll, state.epoch})
@@ -124,10 +126,9 @@ defmodule ReyCode.LocalEngine.Connection do
   def handle_info({:poll, epoch}, %{epoch: epoch, socket: nil} = state), do: {:noreply, state}
 
   def handle_info({:poll, epoch}, %{epoch: epoch} = state) do
-    case Protocol.send(
-           state.socket,
-           {:poll, {state.projection.sequence, state.remote_generation}}
-         ) do
+    sequence = if state.resync?, do: -1, else: state.projection.sequence
+
+    case Protocol.send(state.socket, {:poll, {sequence, state.remote_generation}}) do
       :ok ->
         timer = Process.send_after(self(), {:poll_timeout, state.socket}, 10_000)
         {:noreply, %{state | polling: timer}}
@@ -201,11 +202,16 @@ defmodule ReyCode.LocalEngine.Connection do
       end
 
     state =
-      if snapshots.projection do
-        broadcast(state, :orchestration, {:projection_snapshot, snapshots.projection})
-        %{state | projection: snapshots.projection}
-      else
-        state
+      cond do
+        snapshots.projection ->
+          broadcast(state, :orchestration, {:projection_snapshot, snapshots.projection})
+          %{state | projection: snapshots.projection, resync?: false}
+
+        Map.get(snapshots, :events, []) != [] ->
+          apply_events(state, snapshots.events)
+
+        true ->
+          state
       end
 
     if snapshots.catalog do
@@ -215,6 +221,23 @@ defmodule ReyCode.LocalEngine.Connection do
     else
       state
     end
+  end
+
+  # Deltas are applied with the engine's own pure projector. Any break in
+  # continuity, or an event this build cannot project, asks for a snapshot.
+  defp apply_events(state, events) do
+    expected = state.projection.sequence + 1
+    sequences = Enum.map(events, & &1.sequence)
+
+    if sequences == Enum.to_list(expected..(expected + length(events) - 1)//1) do
+      projection = Enum.reduce(events, state.projection, &Projector.apply/2)
+      broadcast(state, :orchestration, {:projection_snapshot, projection})
+      %{state | projection: projection}
+    else
+      %{state | resync?: true}
+    end
+  rescue
+    _error -> %{state | resync?: true}
   end
 
   defp reply_pending(state, id, {:engine_result, result, projection}) do

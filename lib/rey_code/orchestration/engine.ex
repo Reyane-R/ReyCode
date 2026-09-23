@@ -389,7 +389,8 @@ defmodule ReyCode.Orchestration.Engine do
       simulator_opts: simulator_opts,
       config: config,
       name: Keyword.get(opts, :name, __MODULE__),
-      accepting_clients?: true
+      accepting_clients?: true,
+      recent_events: []
     }
 
     state = state |> Lifecycle.ensure_default_session() |> Lifecycle.ensure_primary_participants()
@@ -433,6 +434,9 @@ defmodule ReyCode.Orchestration.Engine do
   end
 
   def handle_call(:snapshot, _from, state), do: {:reply, state.projection, state}
+
+  def handle_call({:events_since, sequence}, _from, state) when is_integer(sequence),
+    do: {:reply, Persistence.events_since(state, sequence), state}
 
   def handle_call(:prepare_restart, _from, state) do
     case VerifiedChangeResolution.idle(state) do

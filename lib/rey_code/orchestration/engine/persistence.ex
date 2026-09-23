@@ -54,12 +54,46 @@ defmodule ReyCode.Orchestration.Engine.Persistence do
     end
   end
 
+  # Attached terminals poll for the events since their last sequence instead
+  # of copying the whole projection. The ring covers a few seconds of the
+  # busiest streaming; a client further behind receives a full snapshot.
+  @recent_events_count 512
+
   @doc "Appends entries and projects them without emitting runtime side effects."
   @spec append_and_project!(map(), [EventStore.entry()]) :: map()
   def append_and_project!(state, entries) do
-    entries
-    |> append!(state.event_store, state.projection.sequence)
+    events = append!(entries, state.event_store, state.projection.sequence)
+
+    events
     |> Enum.reduce(state, &project(&2, &1))
+    |> remember_events(events)
+  end
+
+  @doc """
+  Events appended after `sequence`, when the bounded ring still holds them.
+
+  Returns `{:ok, []}` for a client that is current, `{:ok, events}` in append
+  order, or `:stale` when the gap exceeds the ring and a snapshot is needed.
+  """
+  @spec events_since(map(), integer()) :: {:ok, [ReyCode.Event.t()]} | :stale
+  def events_since(state, sequence) do
+    recent = Map.get(state, :recent_events, [])
+
+    cond do
+      sequence >= state.projection.sequence ->
+        {:ok, []}
+
+      recent != [] and hd(recent).sequence <= sequence + 1 ->
+        {:ok, Enum.filter(recent, &(&1.sequence > sequence))}
+
+      true ->
+        :stale
+    end
+  end
+
+  defp remember_events(state, events) do
+    recent = Map.get(state, :recent_events, []) ++ events
+    Map.put(state, :recent_events, Enum.take(recent, -@recent_events_count))
   end
 
   # Every append pins the projection's own sequence as the store's expected
@@ -78,7 +112,7 @@ defmodule ReyCode.Orchestration.Engine.Persistence do
     maybe_checkpoint(projection, state)
     broadcast_snapshot(projection, state.event_registry)
 
-    %{state | projection: projection}
+    remember_events(%{state | projection: projection}, events)
   end
 
   defp append!(entries, event_store, expected_sequence) do
