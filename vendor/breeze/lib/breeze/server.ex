@@ -81,6 +81,8 @@ defmodule Breeze.Server do
 
   @flush_input_batch :flush_input_batch
   @flush_input_render :flush_input_render
+  @flush_partial_input :flush_partial_input
+  @partial_input_hold_ms 40
   @input_render_interval_ms 16
   @logger_collector_attempts 3
   defstruct [
@@ -930,6 +932,20 @@ defmodule Breeze.Server do
     {:noreply, remove_monitored_process(state, pid, ref)}
   end
 
+  def handle_info({@flush_partial_input, token}, %{input: %{partial_timer_token: token}} = state) do
+    partial = state.input.partial_sequence
+
+    state =
+      state
+      |> update_input(partial_sequence: "", partial_timer_token: nil)
+      |> enqueue_decoded(partial)
+      |> schedule_input_flush()
+
+    {:noreply, state}
+  end
+
+  def handle_info({@flush_partial_input, _stale_token}, state), do: {:noreply, state}
+
   def handle_info(_message, state), do: {:noreply, state}
 
   defp handle_root_view_down(_reason, state) when not is_nil(state.crash), do: {:noreply, state}
@@ -1004,13 +1020,31 @@ defmodule Breeze.Server do
 
   defp enqueue_reader_data(state, data) do
     started_at = System.monotonic_time(:microsecond)
+    {complete, partial} = Breeze.Input.split_complete(state.input.partial_sequence <> data)
 
-    data
-    |> Breeze.Input.decode_all()
-    |> Enum.reduce(state, &Input.enqueue(&2, &1))
+    state
+    |> enqueue_decoded(complete)
+    |> hold_partial_sequence(partial)
     |> Debug.put_stat(:last_input_us, System.monotonic_time(:microsecond) - started_at)
     |> schedule_input_flush()
   end
+
+  defp enqueue_decoded(state, data) do
+    data
+    |> Breeze.Input.decode_all()
+    |> Enum.reduce(state, &Input.enqueue(&2, &1))
+  end
+
+  # An incomplete escape sequence waits for the rest of its bytes. A lone ESC
+  # that nothing follows is a real Escape key, delivered after a short hold.
+  defp hold_partial_sequence(state, ""), do: update_input(state, partial_sequence: "", partial_timer_token: nil)
+
+  defp hold_partial_sequence(state, partial) do
+    token = make_ref()
+    Process.send_after(self(), {@flush_partial_input, token}, @partial_input_hold_ms)
+    update_input(state, partial_sequence: partial, partial_timer_token: token)
+  end
+
 
   defp replace_runtime_state(state, runtime_state),
     do: replace_runtime_state(state, runtime_state, :runtime_state_replaced)

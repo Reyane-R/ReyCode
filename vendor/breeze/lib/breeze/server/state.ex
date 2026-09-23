@@ -13,7 +13,9 @@ defmodule Breeze.Server.State.Input do
     render_after_flush?: false,
     render_boundary?: false,
     last_interaction_at: nil,
-    global_keybindings: []
+    global_keybindings: [],
+    partial_sequence: "",
+    partial_timer_token: nil
   ]
 end
 
