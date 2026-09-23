@@ -26,7 +26,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Primary Participant** — The one Participant that receives ordinary Operator messages. Every Session has exactly one.
 
-**Task Participant** — User-created Participant with a standing responsibility and independently selected provider/model. It runs only through explicit Delegation.
+**Task Participant** — User-created Participant with a standing responsibility and independently selected provider/model. It runs only through Delegation: an Operator `/task` Turn or an agent-initiated `spawn_task`/`spawn_tasks` call from the Primary Assistant.
 
 **Delegation** — A Turn explicitly addressed to one Task Participant for one task.
 

@@ -2,7 +2,7 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
   @moduledoc "Plans one invocation for ordinary conversation or explicit delegation."
   use ReyCode.Orchestration.Workflow
 
-  alias ReyCode.Orchestration.{StrategicReview, Workflow, WorkingContract}
+  alias ReyCode.Orchestration.{Delegation, StrategicReview, Workflow, WorkingContract}
 
   @impl true
   def plan(session, %{strategy_review: packet} = turn, _projection) when not is_nil(packet) do
@@ -32,7 +32,8 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
             do: "detached task",
             else: if(delegated?, do: "delegated task", else: "assistant response")
           ),
-        system_prompt: system_prompt(participant, delegated?, detached?, Map.get(turn, :task))
+        system_prompt:
+          system_prompt(session, participant, delegated?, detached?, Map.get(turn, :task))
       }
     ]
   end
@@ -50,19 +51,25 @@ defmodule ReyCode.Orchestration.Workflow.Direct do
       raise "session #{session.id} has no participant #{participant_id}"
   end
 
-  defp system_prompt(participant, false, false, _task) do
-    ("You are #{participant.name}, the session's primary coding assistant. " <>
-       "Responsibility: #{participant.perspective}.")
-    |> WorkingContract.append()
+  # A verified-change Session restricts tools to the change boundary, which
+  # excludes delegation, so its prompt must not advertise task agents.
+  defp system_prompt(session, participant, false, false, _task) do
+    identity =
+      "You are #{participant.name}, the session's primary coding assistant. " <>
+        "Responsibility: #{participant.perspective}."
+
+    if is_nil(session.verified_change),
+      do: WorkingContract.append(identity <> "\n\n" <> Delegation.primary_guidance(session)),
+      else: WorkingContract.append(identity)
   end
 
-  defp system_prompt(participant, true, false, _task) do
+  defp system_prompt(_session, participant, true, false, _task) do
     ("You are the #{participant.name} task agent. " <>
        "Standing responsibility: #{participant.perspective}. Complete only the delegated task.")
     |> WorkingContract.append()
   end
 
-  defp system_prompt(participant, true, true, task) do
+  defp system_prompt(_session, participant, true, true, task) do
     ("You are the #{participant.name} task agent. " <>
        "Standing responsibility: #{participant.perspective}. " <>
        "Complete the detached task and report the result.\n\nDetached task:\n#{task}")

@@ -9,7 +9,7 @@ defmodule ReyCode.Orchestration.Delegation do
   uncertainty never opens a child Invocation.
   """
 
-  alias ReyCode.Orchestration.{Invocation, Participant, Projection, WorkingContract}
+  alias ReyCode.Orchestration.{Invocation, Participant, Projection, Session, WorkingContract}
   alias ReyCode.Provider.TextBuffer
 
   @tool_name "spawn_task"
@@ -20,6 +20,12 @@ defmodule ReyCode.Orchestration.Delegation do
   @report_max_bytes 16_384
   @schema_max_bytes 16_384
   @schema_max_depth 8
+  @roster_max_count 16
+  @roster_perspective_max_bytes 240
+
+  @delegation_policy """
+  Delegate when it helps: bounded exploration, review, or test runs that a task agent can finish from a self-contained brief. Use spawn_task for one subtask and spawn_tasks for independent subtasks that can run in parallel. Each brief must stand alone: goal, relevant paths, and the exact result expected back. Do simple work directly; delegation adds overhead. Concurrent children must not edit the same files; use isolate=true for edits that could conflict. You remain responsible for the final answer: integrate and verify every report before responding. Children cannot delegate further.
+  """
 
   defmodule Plan do
     @moduledoc false
@@ -73,6 +79,44 @@ defmodule ReyCode.Orchestration.Delegation do
   def tool_name, do: @tool_name
   @spec batch_tool_name() :: String.t()
   def batch_tool_name, do: @batch_tool_name
+
+  @doc """
+  Bounded delegation guidance for one ordinary primary Invocation: the exact-name
+  roster of eligible Task Participants plus when and how to use `spawn_task`.
+
+  Only names `authorize/4` would accept are listed (kind `:task`, unique name),
+  sorted by name and capped at #{@roster_max_count}. No eligible target yields an
+  explicit no-worker sentence instead of an empty list.
+  """
+  @spec primary_guidance(Session.t()) :: String.t()
+  def primary_guidance(%Session{participants: participants}) do
+    names = Enum.map(participants, & &1.name)
+
+    targets =
+      participants
+      |> Enum.filter(&(&1.kind == :task and Enum.count(names, fn n -> n == &1.name end) == 1))
+      |> Enum.sort_by(& &1.name)
+
+    case Enum.split(targets, @roster_max_count) do
+      {[], _rest} ->
+        "No task agents are configured in this session. Do all work yourself; " <>
+          "spawn_task and spawn_tasks have no valid target and will be rejected."
+
+      {shown, hidden} ->
+        lines = Enum.map_join(shown, "\n", &"- #{&1.name}: #{roster_perspective(&1.perspective)}")
+
+        omitted =
+          if hidden == [], do: "", else: "\n(#{length(hidden)} more task agents not listed)"
+
+        "Task agents available for delegation (use these exact names as `agent`):\n" <>
+          lines <> omitted <> "\n\n" <> String.trim(@delegation_policy)
+    end
+  end
+
+  defp roster_perspective(nil), do: "(no standing responsibility recorded)"
+
+  defp roster_perspective(perspective),
+    do: TextBuffer.truncate_utf8(perspective, @roster_perspective_max_bytes)
 
   @doc "Built-in delegation bounds; configuration may only lower or raise them explicitly."
   @spec default_bounds() :: bounds()

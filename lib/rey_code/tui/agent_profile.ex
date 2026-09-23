@@ -110,7 +110,9 @@ defmodule ReyCode.TUI.AgentProfile do
     <box class="w-screen h-screen bg px-4 pt-3">
       <box class="w-full border-b border-muted pb-1">
         <box class="font-bold text-primary">Create a task agent</box>
-        <box class="text-muted">Task agents run only when you explicitly delegate work.</box>
+        <box class="text-muted">
+          Task agents run when you delegate with /task or when the assistant delegates to them.
+        </box>
       </box>
       <box :if={@term.agent_profile.step == :name} class="pt-3 w-full">
         <box class="text-muted">AGENT NAME</box>

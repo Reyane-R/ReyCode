@@ -390,9 +390,12 @@ Task agents are opt-in durable profiles:
    its provider and model.
 2. Run `/task`, choose exactly one task agent, and enter a concrete task.
 
-Creating an agent never runs it. Ordinary conversation never invokes task
-agents. This allows a Release agent, Test agent, and Documentation agent to use
-different models without automatically multiplying token cost.
+Creating an agent never runs it. Task agents run in two ways: you delegate
+explicitly with `/task`, or the Primary Assistant delegates on its own with
+`spawn_task`/`spawn_tasks` when a subtask benefits from it (see
+[Agent-initiated delegation](#agent-initiated-delegation)). This allows a
+Release agent, Test agent, and Documentation agent to use different models
+without automatically multiplying token cost.
 
 Each Invocation freezes project instructions before it starts. ReyCode loads
 `AGENTS.md` from at most eight Workspace ancestors, root first. Optional
@@ -1227,7 +1230,22 @@ turn as failed without any side effect.
 
 ## Agent-initiated delegation
 
-A running assistant can hand bounded subtasks to one of your task agents by
+Every ordinary Primary Assistant Turn starts with a bounded roster of the
+session's task agents (exact name plus standing responsibility, sorted by name,
+at most 16 listed) and guidance on when to delegate: bounded exploration,
+review, or test runs go to a task agent with a self-contained brief;
+independent subtasks run in parallel through `spawn_tasks`; simple work stays
+with the assistant, which integrates every report and owns the final answer.
+The decision is the model's, so delegation is not guaranteed on any given
+request. To force it, name the agent ("ask Luna to run the tests") or use
+`/task`. Watch delegated children in `/hub`.
+
+When no task agents are configured, the roster says so and the assistant does
+all work itself; `spawn_task` calls with no valid target are rejected. Verified
+Change and Strategic Review Turns never receive the roster because their tool
+sets exclude delegation.
+
+A running assistant hands a bounded subtask to one of your task agents by
 calling the `spawn_task` orchestration tool with an exact participant name and
 a self-contained brief:
 
