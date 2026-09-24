@@ -4,7 +4,10 @@ defmodule ReyCode.Tool.Grep do
 
   Traversal never follows symlinks and only scans regular files reached
   without one; files containing null bytes are skipped as binary rather than
-  garbled. Match counts, scanned-file counts, and skipped-binary counts are
+  garbled. Build and dependency directories are pruned during traversal so a
+  large repository reaches real sources before the file cap or deadline stops
+  it; an explicitly targeted path is always searched. Match counts,
+  scanned-file counts, skipped-binary counts, and pruned-directory counts are
   reported in metadata, with `truncated` set when the match cap cut the
   search short.
   """
@@ -12,6 +15,11 @@ defmodule ReyCode.Tool.Grep do
 
   alias ReyCode.RuntimeConfig.Tools.Grep, as: GrepPolicy
   alias ReyCode.Tool.{Request, Result, Support}
+
+  # ponytail: a fixed list, not a config knob or .gitignore parser. These are
+  # the directories that exhaust max_files before any source is read. Make it
+  # configurable when a real repository needs a different set.
+  @pruned_directories ~w(.git node_modules _build deps target vendor dist .venv __pycache__)
 
   @impl true
   def run(%Request{arguments: arguments} = request, opts) do
@@ -30,7 +38,15 @@ defmodule ReyCode.Tool.Grep do
   end
 
   defp search(root, regex, limits) do
-    acc = %{lines: [], matches: 0, files: 0, binary: 0, skipped: 0, truncated?: false}
+    acc = %{
+      lines: [],
+      matches: 0,
+      files: 0,
+      binary: 0,
+      skipped: 0,
+      pruned: 0,
+      truncated?: false
+    }
 
     case File.lstat(root) do
       {:ok, %File.Stat{type: :regular}} -> respond(scan_file(root, regex, acc, limits))
@@ -47,7 +63,8 @@ defmodule ReyCode.Tool.Grep do
         "matches" => acc.matches,
         "files_scanned" => acc.files,
         "binary_files_skipped" => acc.binary,
-        "files_skipped" => acc.skipped
+        "files_skipped" => acc.skipped,
+        "directories_pruned" => acc.pruned
       }
     )
   end
@@ -89,12 +106,21 @@ defmodule ReyCode.Tool.Grep do
             scan_file(path, regex, acc, limits)
 
           {:ok, %File.Stat{type: :directory}} ->
-            walk(path, regex, acc, limits)
+            visit_directory(path, regex, acc, limits)
 
           _other ->
             %{acc | skipped: acc.skipped + 1}
         end
     end
+  end
+
+  # Pruning applies to traversal only: `search/3` reaches an explicitly
+  # targeted directory through `walk/4`, so asking for node_modules by path
+  # still searches it.
+  defp visit_directory(path, regex, acc, limits) do
+    if Path.basename(path) in @pruned_directories,
+      do: %{acc | pruned: acc.pruned + 1},
+      else: walk(path, regex, acc, limits)
   end
 
   defp scan_file(path, regex, acc, limits) do

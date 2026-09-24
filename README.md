@@ -1110,6 +1110,13 @@ filesystem tools require `path` (`.` means the workspace root); `glob` and
 and `write` requires `content` as well as `path`. `read` accepts optional
 1-based `offset` and positive `limit` line counts.
 
+`grep` prunes build and dependency directories while walking — `.git`,
+`node_modules`, `_build`, `deps`, `target`, `vendor`, `dist`, `.venv`, and
+`__pycache__` — so a large repository reaches real sources before the file cap
+or deadline stops the search. Pruning applies to traversal only: pointing
+`path` straight at one of those directories still searches it. Results report
+`directories_pruned` alongside the scanned and skipped counts.
+
 For editable files within the read byte limit, `read` returns a lowercase
 SHA-256 `source_hash`. `edit` requires that hash and one or more unique
 replacement patches. It validates every patch against the same snapshot,

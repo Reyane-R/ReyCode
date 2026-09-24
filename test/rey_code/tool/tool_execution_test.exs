@@ -279,6 +279,32 @@ defmodule ReyCode.ToolExecutionTest do
              } = run("grep", %{path: @workspace, pattern: "needle"})
     end
 
+    test "prunes build and dependency directories but searches one when targeted" do
+      Enum.each(["node_modules", ".git", "_build"], fn directory ->
+        nested = Path.join([@workspace, directory, "pkg"])
+        File.mkdir_p!(nested)
+        File.write!(Path.join(nested, "dep.js"), "needle\n")
+      end)
+
+      File.write!(Path.join(@workspace, "src.ex"), "needle\n")
+
+      assert %Result{
+               ok: true,
+               output: output,
+               metadata: %{"files_scanned" => 1, "directories_pruned" => 3}
+             } = run("grep", %{path: @workspace, pattern: "needle"})
+
+      assert output =~ "src.ex:1:needle"
+      refute output =~ "node_modules"
+
+      targeted = Path.join(@workspace, "node_modules")
+
+      assert %Result{ok: true, output: inner, metadata: %{"directories_pruned" => 0}} =
+               run("grep", %{path: targeted, pattern: "needle"})
+
+      assert inner =~ "dep.js:1:needle"
+    end
+
     test "rejects an invalid regex" do
       assert %Result{ok: false, error: :invalid_pattern} =
                run("grep", %{path: @workspace, pattern: "["})
