@@ -8,6 +8,7 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
 
   alias ReyCode.Orchestration.{
     Delegation,
+    Invocation,
     Participant,
     Projection,
     Session,
@@ -19,10 +20,21 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
   alias ReyCode.Orchestration.Workflow.Direct
 
   @roster_header "Task agents available for delegation"
-  @no_worker "No task agents are configured in this session."
+  @no_worker "No task agents are configured in this session,"
 
-  defp participant(name, kind, perspective \\ "work"),
-    do: %Participant{id: String.downcase(name), name: name, perspective: perspective, kind: kind}
+  defp participant(name, kind, perspective \\ "work") do
+    %Participant{
+      id: String.downcase(name),
+      name: name,
+      perspective: perspective,
+      kind: kind,
+      provider: :openai,
+      model: "gpt-5"
+    }
+  end
+
+  defp unconfigured(name),
+    do: %{participant(name, :task) | provider: :unconfigured, model: nil}
 
   defp primary_prompt(session) do
     [plan] = Direct.plan(session, %Turn{id: "t", participant_id: nil}, %Projection{})
@@ -54,9 +66,53 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
     assert prompt == primary_prompt(session)
   end
 
+  test "a seeded worker with no model is listed but marked unusable" do
+    session = %Session{
+      id: "s",
+      participants: [participant("Assistant", :primary), unconfigured("Explorer")]
+    }
+
+    prompt = primary_prompt(session)
+    assert prompt =~ "- Explorer: work [needs a model — not usable yet]"
+    refute prompt =~ @no_worker
+    assert prompt =~ "cannot run yet"
+  end
+
+  test "delegation to a worker with no model is rejected before any child opens" do
+    session = %Session{
+      id: "s",
+      participants: [participant("Assistant", :primary), unconfigured("Explorer")]
+    }
+
+    projection = %Projection{
+      sessions: %{"s" => session},
+      turns: %{"t" => %Turn{id: "t", mode: :direct}}
+    }
+
+    invocation = %Invocation{id: "i", turn_id: "t", session_id: "s", delegation_depth: 0}
+    bounds = Delegation.default_bounds()
+
+    assert {:error, :agent_unconfigured} =
+             Delegation.authorize(
+               invocation,
+               %{"agent" => "Explorer", "brief" => "Find the parser"},
+               projection,
+               bounds
+             )
+
+    assert {:error, :agent_unconfigured} =
+             Delegation.authorize_batch(
+               invocation,
+               %{"tasks" => [%{"agent" => "Explorer", "brief" => "Find the parser"}]},
+               projection,
+               bounds
+             )
+  end
+
   test "an empty roster says so instead of advertising delegation" do
     prompt = primary_prompt(%Session{id: "s", participants: [participant("Assistant", :primary)]})
     assert prompt =~ @no_worker
+    assert prompt =~ "do not narrate it"
     refute prompt =~ @roster_header
   end
 

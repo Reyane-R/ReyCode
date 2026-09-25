@@ -24,7 +24,7 @@ defmodule ReyCode.Orchestration.Delegation do
   @roster_perspective_max_bytes 240
 
   @delegation_policy """
-  Delegate when it helps: bounded exploration, review, or test runs that a task agent can finish from a self-contained brief. Use spawn_task for one subtask and spawn_tasks for independent subtasks that can run in parallel. Each brief must stand alone: goal, relevant paths, and the exact result expected back. Do simple work directly; delegation adds overhead. Concurrent children must not edit the same files; use isolate=true for edits that could conflict. You remain responsible for the final answer: integrate and verify every report before responding. Children cannot delegate further.
+  Delegate when it helps: bounded exploration, review, or test runs that a task agent can finish from a self-contained brief. A target marked "needs a model" cannot run yet: do not call spawn_task on it, and instead say in one sentence that you would delegate this and that the Operator can enable it by choosing a model with /agents. Use spawn_task for one subtask and spawn_tasks for independent subtasks that can run in parallel. Each brief must stand alone: goal, relevant paths, and the exact result expected back. Do simple work directly; delegation adds overhead. Concurrent children must not edit the same files; use isolate=true for edits that could conflict. You remain responsible for the final answer: integrate and verify every report before responding. Children cannot delegate further.
   """
 
   defmodule Plan do
@@ -74,6 +74,7 @@ defmodule ReyCode.Orchestration.Delegation do
           | :ambiguous_agent
           | :duplicate_agent
           | :primary_target
+          | :agent_unconfigured
           | :delegation_unsupported_in_squad
   @spec tool_name() :: String.t()
   def tool_name, do: @tool_name
@@ -99,11 +100,13 @@ defmodule ReyCode.Orchestration.Delegation do
 
     case Enum.split(targets, @roster_max_count) do
       {[], _rest} ->
-        "No task agents are configured in this session. Do all work yourself; " <>
-          "spawn_task and spawn_tasks have no valid target and will be rejected."
+        "No task agents are configured in this session, so spawn_task and " <>
+          "spawn_tasks have no valid target. Do all work yourself. This is " <>
+          "routine setup information: do not narrate it or apologize for it " <>
+          "unless the Operator asks about delegation."
 
       {shown, hidden} ->
-        lines = Enum.map_join(shown, "\n", &"- #{&1.name}: #{roster_perspective(&1.perspective)}")
+        lines = Enum.map_join(shown, "\n", &roster_line/1)
 
         omitted =
           if hidden == [], do: "", else: "\n(#{length(hidden)} more task agents not listed)"
@@ -111,6 +114,11 @@ defmodule ReyCode.Orchestration.Delegation do
         "Task agents available for delegation (use these exact names as `agent`):\n" <>
           lines <> omitted <> "\n\n" <> String.trim(@delegation_policy)
     end
+  end
+
+  defp roster_line(participant) do
+    "- #{participant.name}: #{roster_perspective(participant.perspective)}" <>
+      if(Participant.configured?(participant), do: "", else: " [needs a model — not usable yet]")
   end
 
   defp roster_perspective(nil), do: "(no standing responsibility recorded)"
@@ -510,11 +518,20 @@ defmodule ReyCode.Orchestration.Delegation do
   defp resolve_participant(session, agent) do
     case Enum.filter(session.participants, &(&1.name == agent)) do
       [] -> {:error, :unknown_agent}
-      [%Participant{kind: :task} = participant] -> {:ok, participant}
+      [%Participant{kind: :task} = participant] -> configured(participant)
       [%Participant{}] -> {:error, :primary_target}
       [_single] -> {:error, :unknown_agent}
       _multiple -> {:error, :ambiguous_agent}
     end
+  end
+
+  # A seeded Task Participant carries no provider or model until the Operator
+  # picks one. Rejecting here means the child Invocation never opens, so the
+  # first delegation costs nothing and the Operator chooses the spend.
+  defp configured(%Participant{} = participant) do
+    if Participant.configured?(participant),
+      do: {:ok, participant},
+      else: {:error, :agent_unconfigured}
   end
 
   defp bounded(nil), do: nil

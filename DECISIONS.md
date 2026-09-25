@@ -20,6 +20,44 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D51 - Zero-setup delegation needs ephemeral workers, not seeded Participants (Direction - 2026-09-25)
+
+The Primary now carries a delegation roster and policy, but a Session whose
+Operator never ran `/agent` has nothing to delegate to, so delegation never
+happens. Seeding default Task Participants into every new Session was tried as
+the fix and rejected on evidence; the attempt is recorded here so it is not
+repeated.
+
+Seeding collided with four separate surfaces:
+
+- **Squad seats resolve by id against the same Participant list.** A seeded
+  `reviewer` silently shadowed the Squad Reviewer seat, and the squad Turn
+  failed with a provider-unavailable child.
+- **Compare and Debate plan over every Participant.** Three seeds turned a
+  two-model audition into a five-way fan-out.
+- **Turn admission requires every Participant to be runtime-ready.** Seeds with
+  no provider blocked every Turn in the Session.
+- **`:unconfigured` is the default provider**, so "has the Operator chosen a
+  provider" is not expressible as a property of a Participant. The Primary of a
+  fresh Session is `:unconfigured` too, and legitimately runs.
+
+The shared conclusion: `Session.participants` means *durable named profiles the
+Operator addresses and configures*. Throwaway exploration workers are a
+different concept and overloading one list for both breaks the surfaces that
+iterate it. Delegation stays addressed to configured Task Participants (D27).
+
+Direction: zero-setup delegation arrives as ephemeral workers, where the caller
+describes the worker it needs instead of naming a persisted Participant, with no
+`participant_added` event, no seat-id namespace, and no place in Compare,
+Debate, Eval, or admission. Depth, child caps, brief bounds, approval, and
+durability are unchanged. That needs a CONTEXT.md term and its own decision
+before implementation.
+
+Shipped now, independent of the above: delegation to a Task Participant with no
+provider fails closed as `agent_unconfigured` before a child Invocation opens,
+so nothing is spent, and the roster marks such a target unusable rather than
+inviting a call that would die at runtime.
+
 ### D50 - ProviderRound retries are durable and replay-safe (Policy - 2026-09-22)
 
 Each external request for one ProviderRound begins with a durable

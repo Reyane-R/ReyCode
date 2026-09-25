@@ -1266,6 +1266,11 @@ usage) then enters the parent's conversation as the tool result. The timeline
 shows the child as its own message under the turn, with a `delegate · <agent>`
 row on the parent.
 
+A task agent with no provider or model yet is listed in the roster as unusable
+and rejected with `agent_unconfigured` before any child starts, so a delegation
+you have not enabled costs nothing. Choose its model with `/agents`, then the
+assistant can delegate to it.
+
 Delegation is depth-bounded: children cannot delegate further (delegation
 depth 1), each invocation spawns at most
 `delegation_max_children_per_invocation` children (default 8), and briefs are

@@ -24,6 +24,19 @@ defmodule ReyCode.Orchestration.Participant do
           kind: kind()
         }
 
+  @doc """
+  Whether the Operator has chosen a provider for this Participant.
+
+  Default Task Participants are seeded without one, so every surface that plans
+  or admits Invocations filters on this rather than assuming each Participant is
+  runnable. A chosen provider may still fail to resolve; that stays the
+  catalog's answer, not this one. A nil model is legitimate because some
+  providers resolve their own default.
+  """
+  @spec configured?(t()) :: boolean()
+  def configured?(%__MODULE__{provider: provider}),
+    do: provider not in [:unconfigured, "unconfigured", nil]
+
   @doc "Converts a decoded or legacy participant map into the current record."
   @spec from_map(t() | map()) :: t()
   def from_map(participant) when is_map(participant) do

@@ -1209,7 +1209,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   end
 
   defp reject_delegation(state, invocation, run, reason) do
-    error = if is_atom(reason), do: Atom.to_string(reason), else: inspect(reason)
+    error = rejection_error(reason)
 
     entries = [
       EventEntries.tool_run_requested(invocation, %{run | authorization: :denied}),
@@ -1223,6 +1223,17 @@ defmodule ReyCode.Orchestration.Engine.Loop do
     denied = next.projection.invocations[invocation.id].tool_runs[run.id]
     {:reply, {:ok, {:denied, denied}}, next}
   end
+
+  # One reason needs more than its atom: the Operator has to choose a model
+  # before any task agent can run, and only they can do it.
+  defp rejection_error(:agent_unconfigured) do
+    "agent_unconfigured: this task agent has no provider or model yet, so no " <>
+      "child was started and nothing was spent. Ask the Operator to choose one " <>
+      "with /agents, then retry the delegation."
+  end
+
+  defp rejection_error(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp rejection_error(reason), do: inspect(reason)
 
   defp delegation_bounds(state) do
     orchestration = state.config.orchestration
