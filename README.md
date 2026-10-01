@@ -1336,15 +1336,19 @@ Or type `/desktop` in the TUI, which starts it inside the running TUI and
 opens your browser. ReyCode Desktop is a browser client for the same shared
 engine as the TUI, so you can keep both open and they stay in sync.
 
-- **Sessions:** start a new conversation in any workspace you have used, or
-  open an existing one. Sessions that are working are marked.
-- **Conversation:** the live timeline with a composer (Enter sends,
-  Shift+Enter breaks the line). While the assistant works, messages queue as
-  follow-ups and **Stop** cancels the turn.
-- **Approvals:** tool requests show the exact arguments with Approve / Deny,
-  and assistant questions render as a form.
-- **Workers:** delegated workers appear side by side with status, model, tool
-  runs, and report; an isolated worker's diff shows with Apply / Discard.
+- **Sidebar:** your conversations grouped by workspace, newest first, with a
+  dot on the ones that are working. **New conversation** opens a composer with
+  a workspace picker.
+- **Conversation:** replies render as Markdown (sanitized), and each reply
+  lists the steps the agent took (Read, Ran, …) in the TUI's wording. The
+  composer sends on Enter (Shift+Enter breaks the line). While the assistant
+  works, messages queue as follow-ups and **Stop** cancels the turn. When the
+  newest turn fails, **Try again** retries it.
+- **Needs you:** tool approvals (with the exact arguments) and assistant
+  questions appear above the composer.
+- **Workers:** a rail on the right shows each delegated worker's status,
+  model, steps, and report. An isolated worker's diff comes with **Apply
+  changes** / **Discard**.
 
 Access is local and needs a token. The server listens on 127.0.0.1 only, and
 every page and action needs a random access token that exists only in that

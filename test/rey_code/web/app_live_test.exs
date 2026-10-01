@@ -1,4 +1,4 @@
-defmodule ReyCode.Web.SessionLiveTest do
+defmodule ReyCode.Web.AppLiveTest do
   use ExUnit.Case, async: true
 
   import Phoenix.LiveViewTest, only: [rendered_to_string: 1]
@@ -12,21 +12,23 @@ defmodule ReyCode.Web.SessionLiveTest do
     Participant,
     Projection,
     Session,
-    ToolAsk
+    ToolAsk,
+    ToolRun,
+    Turn
   }
 
-  alias ReyCode.Web.{SessionLive, SessionsLive}
+  alias ReyCode.Web.AppLive
 
   defp projection(sequence) do
     message = %Message{
       id: "m1",
       author: %Author{kind: :agent, id: "a", name: "Assistant"},
       status: :streaming,
-      body: "<b>hi</b>"
+      body: "**hi** from `markdown`\n\n<script>alert(1)</script>"
     }
 
     report = %Message{id: "m2", invocation_id: "child", body: "Found 3 callers"}
-    asking = %Message{id: "m3", invocation_id: "parent", body: ""}
+    asking = %Message{id: "m3", invocation_id: "parent", body: "Let me check"}
 
     question =
       OperatorQuestion.from_map(%{
@@ -48,6 +50,15 @@ defmodule ReyCode.Web.SessionLiveTest do
       turn_id: "t1",
       message_id: "m3",
       participant: %Participant{name: "Assistant"},
+      tool_run_order: ["run-read"],
+      tool_runs: %{
+        "run-read" => %ToolRun{
+          id: "run-read",
+          tool: "read",
+          arguments: %{"path" => "/w/src/parser.ex"},
+          status: :completed
+        }
+      },
       pending_tool_review: %ToolAsk{
         request_id: "run-bash",
         tool: "bash",
@@ -93,40 +104,55 @@ defmodule ReyCode.Web.SessionLiveTest do
   end
 
   defp socket(assigns),
-    do: %Phoenix.LiveView.Socket{assigns: Map.merge(%{__changed__: %{}, notice: nil}, assigns)}
+    do: %Phoenix.LiveView.Socket{
+      assigns: Map.merge(%{__changed__: %{}, notice: nil, html_cache: %{}, id: nil}, assigns)
+    }
 
   test "timeline renders escaped messages and ignores stale broadcasts" do
     {:noreply, socket} =
-      SessionLive.handle_info(
+      AppLive.handle_info(
         {:projection_snapshot, projection(2)},
         socket(%{id: "s1", sequence: 1})
       )
 
-    html = rendered_to_string(SessionLive.render(socket.assigns))
+    html = rendered_to_string(AppLive.render(socket.assigns))
     assert html =~ "Fix parser"
-    # Oldest first: the streaming "hi" (m1) is above the worker report (m2).
-    [_above, timeline] = String.split(html, ~s(id="timeline"), parts: 2)
-    assert :binary.match(timeline, "&lt;b&gt;hi") < :binary.match(timeline, "Found 3 callers")
-    assert html =~ "Assistant"
-    assert html =~ "streaming"
-    assert html =~ "&lt;b&gt;hi&lt;/b&gt;"
+    [_above, rest] = String.split(html, ~s(id="timeline"), parts: 2)
+    [timeline, _dock_and_rail] = String.split(rest, ~s(class="dock"), parts: 2)
+
+    # Oldest first, markdown rendered, model HTML stripped.
+    assert {first, _length} = :binary.match(timeline, "<strong>hi</strong>")
+    assert {second, _length} = :binary.match(timeline, "Let me check")
+    assert first < second
+
+    refute html =~ "<script>alert"
+    assert timeline =~ "<code>markdown</code>"
+    assert timeline =~ "streaming"
+
+    # Tool steps use the TUI's activity wording.
+    assert timeline =~ ~s(<span class="tool-label">Read</span>)
+    assert timeline =~ "parser.ex"
+
+    # A worker's report lives in the workers rail, not the timeline.
+    refute timeline =~ "Found 3 callers"
     assert html =~ "Worker 1"
-    assert html =~ "needs you"
-    assert html =~ "2 tool runs"
-    assert html =~ "Found 3 callers"
+    assert html =~ "Needs you"
+    assert html =~ "gpt-5, 2 steps"
     assert html =~ ~s(<span class="add">+new</span>)
     assert html =~ ~s(<span class="del">-old</span>)
     assert html =~ ~s(phx-value-decision="apply")
-    assert html =~ "Assistant wants to run <code>bash</code>"
+
+    assert html =~ "wants to run <code>bash</code>"
     assert html =~ "mix test"
     assert html =~ ~s(phx-value-run="run-bash")
     assert html =~ "Which parser?"
     assert html =~ ~s(name="other-)
-    assert html =~ "Queue a follow-up"
-    assert html =~ "Stop"
+    assert html =~ "Add a follow-up"
+    assert html =~ ~s(phx-click="stop")
+    refute html =~ "Try again"
 
     assert {:noreply, stale} =
-             SessionLive.handle_event(
+             AppLive.handle_event(
                "answer",
                %{"invocation" => "parent", "request" => "old-request"},
                socket
@@ -135,21 +161,43 @@ defmodule ReyCode.Web.SessionLiveTest do
     assert stale.assigns.notice =~ "already answered"
 
     assert {:noreply, ^socket} =
-             SessionLive.handle_info({:projection_snapshot, projection(2)}, socket)
+             AppLive.handle_info({:projection_snapshot, projection(2)}, socket)
 
     {:noreply, missing} =
-      SessionLive.handle_info(
+      AppLive.handle_info(
         {:projection_snapshot, projection(3)},
         socket(%{id: "nope", sequence: 0})
       )
 
-    assert rendered_to_string(SessionLive.render(missing.assigns)) =~ "Session not found"
+    assert rendered_to_string(AppLive.render(missing.assigns)) =~ "no longer exists"
   end
 
-  test "session list links each session" do
+  test "home lists sessions by workspace and offers a composer" do
     {:noreply, socket} =
-      SessionsLive.handle_info({:projection_snapshot, projection(1)}, socket(%{sequence: 0}))
+      AppLive.handle_info({:projection_snapshot, projection(1)}, socket(%{sequence: 0}))
 
-    assert rendered_to_string(SessionsLive.render(socket.assigns)) =~ ~s(href="/sessions/s1")
+    html = rendered_to_string(AppLive.render(socket.assigns))
+    assert html =~ ~s(href="/sessions/s1")
+    assert html =~ "What should we work on?"
+    assert html =~ ~s(<option value="/w">)
+    assert html =~ ~s(class="dot")
+  end
+
+  test "a failed newest turn offers Try again once nothing is running" do
+    failed = %Message{id: "f1", turn_id: "t9", body: "", status: :failed}
+
+    projection = %Projection{
+      sequence: 1,
+      session_order: ["s1"],
+      sessions: %{"s1" => %Session{id: "s1", workspace: "/w", message_order: ["f1"]}},
+      messages: %{"f1" => failed},
+      turns: %{"t9" => %Turn{id: "t9", outcome: :failed, status: :terminal}}
+    }
+
+    {:noreply, socket} =
+      AppLive.handle_info({:projection_snapshot, projection}, socket(%{id: "s1", sequence: 0}))
+
+    assert socket.assigns.retry_turn_id == "t9"
+    assert rendered_to_string(AppLive.render(socket.assigns)) =~ "Try again"
   end
 end

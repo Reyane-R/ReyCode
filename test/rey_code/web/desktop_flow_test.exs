@@ -45,6 +45,21 @@ defmodule ReyCode.Web.DesktopFlowTest do
              "hello from the browser"
   end
 
+  test "home starts a conversation in a known workspace", %{conn: conn, session_id: source} do
+    workspace = Engine.snapshot().sessions[source].workspace
+    {:ok, view, html} = live(conn, "/")
+    assert html =~ "What should we work on?"
+
+    view
+    |> form("#start", body: "map the parser", workspace: workspace)
+    |> render_submit()
+
+    "/sessions/" <> new_id = assert_patch(view)
+    refute new_id == source
+    assert render(view) =~ "map the parser"
+    assert Engine.snapshot().sessions[new_id].title == "map the parser"
+  end
+
   test "blank messages are ignored", %{conn: conn, session_id: id} do
     {:ok, view, _html} = live(conn, "/sessions/#{id}")
     refute view |> form("#composer", body: "   ") |> render_submit() =~ "Could not send"

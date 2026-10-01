@@ -18,8 +18,8 @@ defmodule ReyCode.Web.Router do
     pipe_through :browser
 
     live_session :desktop, on_mount: ReyCode.Web.Auth do
-      live "/", ReyCode.Web.SessionsLive
-      live "/sessions/:id", ReyCode.Web.SessionLive
+      live "/", ReyCode.Web.AppLive
+      live "/sessions/:id", ReyCode.Web.AppLive
     end
   end
 end
