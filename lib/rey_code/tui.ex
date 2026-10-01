@@ -223,11 +223,13 @@ defmodule ReyCode.TUI do
     ReyCode.Herdr.release()
     server = self()
 
+    # Breeze's halt_fun stops the VM once the terminal is restored; stopping here on
+    # :DOWN raced that restore and left the shell unusable. Only force a stuck shutdown.
     Task.start(fn ->
       ref = Process.monitor(server)
 
       receive do
-        {:DOWN, ^ref, :process, ^server, _reason} -> System.stop(0)
+        {:DOWN, ^ref, :process, ^server, _reason} -> :ok
       after
         @shutdown_timeout_ms -> System.stop(1)
       end

@@ -83,6 +83,7 @@ defmodule ReyCode.Application do
   @doc false
   @spec tui_server_child_spec(ReyCode.RuntimeConfig.t()) :: Supervisor.child_spec()
   def tui_server_child_spec(runtime_config) do
+    # halt_fun: Breeze calls it only after restoring the terminal (cooked mode, keyboard protocol).
     Supervisor.child_spec(
       {Breeze.Server,
        view: ReyCode.TUI,
@@ -90,6 +91,7 @@ defmodule ReyCode.Application do
        theme: ReyCode.Theme.default(),
        logger: :replace,
        mouse: [mode: :drag],
+       halt_fun: &System.stop/0,
        global_keybindings: ReyCode.TUI.global_keybindings(runtime_config)},
       restart: :transient
     )

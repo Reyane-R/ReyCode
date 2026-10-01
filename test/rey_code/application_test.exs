@@ -18,4 +18,11 @@ defmodule ReyCode.ApplicationTest do
     assert %{start: {Breeze.Server, :start_link, [options]}} = spec
     assert options[:mouse] == [mode: :drag]
   end
+
+  test "interactive server stops the VM through Breeze so the terminal is restored first" do
+    spec = ReyCode.Application.tui_server_child_spec(ReyCode.RuntimeConfig.fresh())
+
+    assert %{start: {Breeze.Server, :start_link, [options]}} = spec
+    assert options[:halt_fun] == (&System.stop/0)
+  end
 end
