@@ -94,6 +94,10 @@ if [ "\$1" = "engine" ]; then
   shift
   exec "${runtime_dir}/bin/rey_code" eval 'ReyCode.CLI.Engine.main(System.argv())' "\$@"
 fi
+if [ "\$1" = "desktop" ]; then
+  shift
+  exec "${runtime_dir}/bin/rey_code" eval 'ReyCode.CLI.Desktop.main(System.argv())' "\$@"
+fi
 if [ "\$1" = "run" ]; then
   shift
   exec "${runtime_dir}/bin/rey_code" eval 'ReyCode.CLI.Run.main(System.argv())' "\$@"

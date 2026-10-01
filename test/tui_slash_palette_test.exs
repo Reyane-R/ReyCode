@@ -17,6 +17,7 @@ defmodule ReyCode.TUI.SlashPaletteTest do
     assert Enum.map(SlashPalette.matches("/tl"), & &1.command) == ["/tools"]
     assert Enum.map(SlashPalette.matches("/res"), & &1.command) == ["/resume"]
     assert Enum.map(SlashPalette.matches("/exp"), & &1.command) == ["/export"]
+    assert Enum.map(SlashPalette.matches("/desk"), & &1.command) == ["/desktop"]
 
     assert Enum.map(SlashPalette.matches("/"), & &1.command) ==
              ~w(/new /resume /agents /@agents /@review /@settings)

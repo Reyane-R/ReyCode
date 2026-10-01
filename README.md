@@ -32,7 +32,9 @@ mix deps.get && mix run --no-halt
 
 Opens a clean session in your terminal. Then:
 
-- `/agent` — create a task agent with its own provider and model
+- just ask: the assistant starts its own workers for parallel or exploratory work
+- `/desktop` — open ReyCode Desktop, a live browser view with workers side by side
+- `/agent` — create a named task agent with its own provider and model
 - `/task` — delegate one task to that agent
 
 That's the whole loop. Squad workflows, project memory, and release gating are
@@ -416,6 +418,7 @@ content digest and exact source paths so restart behavior cannot drift.
 - `/fork`: branch the current Session at its latest durable sequence
 - `/rewind <sequence>`: branch the current Session at an earlier durable sequence
 - `/tree` or `Ctrl+B`: navigate the durable SessionFork tree; `F` forks the selected node
+- `/desktop`: open ReyCode Desktop, the read-only web view, in your browser
 - `/export`: write a deterministic Markdown Session export inside `.reycode/exports`
 - `/advise [brief]`: run an explicit review through the configured Advisor Participant
 - `/advise strategy [focus]`: review recent Workspace work for evidence-backed strategic alternatives
@@ -1323,12 +1326,14 @@ lifecycle without occupying the Session's active Turn slot. Its Task
 Participant Message streams into the ordinary transcript and becomes the
 durable auto-delivery when terminal.
 
-## Web view (`mix rey_code.web`)
+## ReyCode Desktop (`reycode desktop`)
 
-    mix rey_code.web              # http://127.0.0.1:4747
-    mix rey_code.web --port 5000
+    reycode desktop               # opens http://127.0.0.1:4747
+    reycode desktop --port 5000
+    mix rey_code.web              # same, from a source checkout
 
-A read-only browser view of your Sessions that updates live. It connects to
+Or type `/desktop` in the TUI, which starts it inside the running TUI and
+opens your browser. ReyCode Desktop is a read-only browser view of your Sessions that updates live. It connects to
 the shared engine like the TUI, so you can keep both open. Each Session page
 shows its delegated workers side by side (status, model, tool runs, report,
 and the isolated diff while it waits for Apply/Discard) above the timeline.

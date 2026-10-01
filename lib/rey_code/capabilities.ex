@@ -43,6 +43,11 @@ defmodule ReyCode.Capabilities do
       description: "Return the newest FollowUp to the composer",
       action: :dequeue
     },
+    %{
+      command: "/desktop",
+      description: "Open the read-only web view (ReyCode Desktop) in your browser",
+      action: :desktop
+    },
     %{command: "/export", description: "Export the current Session", action: :export},
     %{command: "/fork", description: "Fork the current Session", action: :fork},
     %{command: "/help", description: "Explain what ReyCode can do", action: :help},

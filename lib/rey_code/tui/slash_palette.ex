@@ -5,7 +5,7 @@ defmodule ReyCode.TUI.SlashPalette do
   """
 
   alias Breeze.{Component, View}
-  alias ReyCode.Capabilities
+  alias ReyCode.{Capabilities, Web}
   alias ReyCode.Orchestration.Projection
   alias ReyCode.TUI.State
 
@@ -466,6 +466,7 @@ defmodule ReyCode.TUI.SlashPalette do
   defp run_action(term, :decisions, nil), do: {:noreply, Decisions.open(term)}
   defp run_action(term, :challenge, nil), do: {:noreply, Challenge.open(term)}
   defp run_action(term, :hotkeys, nil), do: {:noreply, Hotkeys.open(term)}
+  defp run_action(term, :desktop, nil), do: {:noreply, close(term, desktop_notice())}
   defp run_action(term, :prompt_history, nil), do: {:noreply, PromptHistory.open(term)}
   defp run_action(term, :retry, nil), do: Recovery.retry_latest(term)
   defp run_action(term, :session_tree, nil), do: {:noreply, SessionTree.open(term)}
@@ -661,5 +662,22 @@ defmodule ReyCode.TUI.SlashPalette do
     )
     |> min(@max_visible_row_count)
     |> max(1)
+  end
+
+  defp desktop_notice do
+    port = Web.default_port()
+
+    with {:ok, _pid} <- Web.start(port),
+         url = Web.url(port),
+         :ok <- Web.open_browser(url) do
+      Notice.new(:success, "ReyCode Desktop opened at #{url}")
+    else
+      # The server is up; only the browser hand-off failed.
+      {:error, :browser_unavailable} ->
+        Notice.new(:info, "ReyCode Desktop is running at #{Web.url(port)}")
+
+      {:error, reason} ->
+        Notice.new(:error, Web.describe_error(reason, port))
+    end
   end
 end

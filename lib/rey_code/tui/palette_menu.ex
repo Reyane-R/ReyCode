@@ -47,6 +47,7 @@ defmodule ReyCode.TUI.PaletteMenu do
     "/theme" => {"Choose theme", "appearance colors"},
     "/hotkeys" => {"Inspect keyboard shortcuts", "keys keybindings"},
     "/help" => {"Help & all commands", "help capabilities"},
+    "/desktop" => {"Open ReyCode Desktop", "web browser"},
     "/export" => {"Export conversation", "save markdown html"},
     "/fork" => {"Fork conversation", "branch conversation"},
     "/history" => {"Search prompt history", "previous prompts"},
