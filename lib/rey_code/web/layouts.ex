@@ -32,9 +32,11 @@ defmodule ReyCode.Web.Layouts do
   # ponytail: inline CSS, move to a stylesheet once there is more than one screen's worth.
   defp css do
     """
-    :root { --bg:#fbfaf8; --fg:#1d1b18; --muted:#77716a; --line:#e7e3dd; --card:#fff; --accent:#c2410c; }
+    :root { --bg:#fbfaf8; --fg:#1d1b18; --muted:#77716a; --line:#e7e3dd; --card:#fff; --accent:#c2410c;
+      --ok-bg:#e7f5ec; --ok-fg:#15803d; --bad-bg:#fdecec; --bad-fg:#b91c1c; --run-bg:#e8effd; --run-fg:#1d4ed8; }
     @media (prefers-color-scheme: dark) {
-      :root { --bg:#141210; --fg:#ece8e2; --muted:#9a938a; --line:#2a2622; --card:#1c1a17; --accent:#fb923c; }
+      :root { --bg:#141210; --fg:#ece8e2; --muted:#9a938a; --line:#2a2622; --card:#1c1a17; --accent:#fb923c;
+        --ok-bg:#12291b; --ok-fg:#4ade80; --bad-bg:#2c1414; --bad-fg:#f87171; --run-bg:#14203a; --run-fg:#60a5fa; }
     }
     * { box-sizing: border-box; }
     body { margin:0; background:var(--bg); color:var(--fg);
@@ -52,6 +54,23 @@ defmodule ReyCode.Web.Layouts do
     .body { white-space: pre-wrap; overflow-wrap: anywhere; }
     .body pre, .body code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
     .status { font-weight: 400; color: var(--muted); margin-left: 6px; }
+    h2 { font-size: 15px; margin: 28px 0 10px; }
+    .workers { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 12px; }
+    .worker { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 12px 14px; min-width: 0; }
+    .worker header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .worker details { margin-top: 8px; }
+    .worker summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+    .worker .body { max-height: 320px; overflow: auto; font-size: 14px; }
+    .pill { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
+    .pill-running, .pill-streaming { background: var(--run-bg); color: var(--run-fg); }
+    .pill-completed { background: var(--ok-bg); color: var(--ok-fg); }
+    .pill-failed, .pill-cancelled { background: var(--bad-bg); color: var(--bad-fg); }
+    .pill-waiting_tool_approval { background: var(--accent); color: var(--bg); }
+    .diff { margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--bg); overflow: auto; max-height: 420px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .diff span { display: block; min-height: 1.45em; white-space: pre; }
+    .diff .add { color: var(--ok-fg); } .diff .del { color: var(--bad-fg); }
+    .diff .hunk { color: var(--run-fg); } .diff .meta { color: var(--muted); }
     """
   end
 end
