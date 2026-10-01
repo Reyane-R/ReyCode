@@ -1323,6 +1323,18 @@ lifecycle without occupying the Session's active Turn slot. Its Task
 Participant Message streams into the ordinary transcript and becomes the
 durable auto-delivery when terminal.
 
+## Web view (`mix rey_code.web`)
+
+    mix rey_code.web              # http://127.0.0.1:4747
+    mix rey_code.web --port 5000
+
+A read-only browser view of your Sessions that updates live. It connects to
+the shared engine like the TUI, so you can keep both open. Each Session page
+shows its delegated workers side by side (status, model, tool runs, report,
+and the isolated diff while it waits for Apply/Discard) above the timeline.
+It never changes anything: approvals and messages still go through the TUI.
+It listens on 127.0.0.1 only because there is no authentication yet.
+
 ## Operator questions, WorkPlans, and model tiers
 
 Providers can pause only their own Invocation for one bounded grouped request:
