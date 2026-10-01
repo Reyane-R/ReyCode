@@ -20,7 +20,7 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
   alias ReyCode.Orchestration.Workflow.Direct
 
   @roster_header "Task agents available for delegation"
-  @no_worker "No task agents are configured in this session,"
+  @worker_policy "Omit `agent` to start a worker on your own model"
 
   defp participant(name, kind, perspective \\ "work") do
     %Participant{
@@ -74,7 +74,6 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
 
     prompt = primary_prompt(session)
     assert prompt =~ "- Explorer: work [needs a model — not usable yet]"
-    refute prompt =~ @no_worker
     assert prompt =~ "cannot run yet"
   end
 
@@ -109,11 +108,64 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
              )
   end
 
-  test "an empty roster says so instead of advertising delegation" do
+  test "an empty roster still offers delegation to ephemeral workers" do
     prompt = primary_prompt(%Session{id: "s", participants: [participant("Assistant", :primary)]})
-    assert prompt =~ @no_worker
-    assert prompt =~ "do not narrate it"
+    assert prompt =~ @worker_policy
+    assert prompt =~ "spawn_tasks for independent subtasks"
     refute prompt =~ @roster_header
+  end
+
+  test "an omitted agent starts an ephemeral worker on the caller's model" do
+    primary = participant("Assistant", :primary)
+    session = %Session{id: "s", participants: [primary]}
+
+    projection = %Projection{
+      sessions: %{"s" => session},
+      turns: %{"t" => %Turn{id: "t", mode: :direct}}
+    }
+
+    invocation = %Invocation{
+      id: "i",
+      turn_id: "t",
+      session_id: "s",
+      delegation_depth: 0,
+      participant: primary
+    }
+
+    bounds = Delegation.default_bounds()
+
+    assert {:ok, %Delegation.Plan{participant: worker}} =
+             Delegation.authorize(invocation, %{"brief" => "Find the parser"}, projection, bounds)
+
+    assert %Participant{name: "Worker", kind: :task, provider: :openai, model: "gpt-5"} = worker
+    refute worker.id == primary.id
+
+    assert {:ok, %Delegation.BatchPlan{workers: workers, integrator: integrator}} =
+             Delegation.authorize_batch(
+               invocation,
+               %{
+                 "tasks" => [%{"brief" => "a"}, %{"brief" => "b"}],
+                 "integrator" => %{"brief" => "c"}
+               },
+               projection,
+               bounds
+             )
+
+    assert Enum.map(workers, & &1.participant.name) == ["Worker 1", "Worker 2"]
+    assert integrator.participant.name == "Integrator"
+
+    assert {:error, :worker_cannot_detach} =
+             Delegation.authorize(
+               invocation,
+               %{"brief" => "later", "detach" => true},
+               projection,
+               bounds
+             )
+
+    unconfigured_caller = %{invocation | participant: %{primary | provider: :unconfigured}}
+
+    assert {:error, :agent_unconfigured} =
+             Delegation.authorize(unconfigured_caller, %{"brief" => "x"}, projection, bounds)
   end
 
   test "roster is bounded in count and per-responsibility bytes" do
@@ -157,7 +209,7 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
 
     for prompt <- [delegated.system_prompt, detached.system_prompt, child, verified] do
       refute prompt =~ @roster_header
-      refute prompt =~ @no_worker
+      refute prompt =~ @worker_policy
       refute prompt =~ "spawn_task"
     end
   end

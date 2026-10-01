@@ -885,7 +885,10 @@ defmodule ReyCode.Provider.OpenAICompatible do
 
   defp delegation_task_schema(include_detach?) do
     properties = %{
-      "agent" => %{"type" => "string", "description" => "Exact task participant name"},
+      "agent" => %{
+        "type" => "string",
+        "description" => "Exact task agent name; omit to start a worker on your own model"
+      },
       "brief" => %{"type" => "string", "description" => "Self-contained task instruction"},
       "output_schema" => %{
         "type" => "object",
@@ -901,13 +904,14 @@ defmodule ReyCode.Provider.OpenAICompatible do
       if include_detach? do
         Map.put(properties, "detach", %{
           "type" => "boolean",
-          "description" => "Run in an independent background Turn and return its receipt now"
+          "description" =>
+            "Run in an independent background Turn and return its receipt now; requires agent"
         })
       else
         properties
       end
 
-    object_schema(properties, ["agent", "brief"])
+    object_schema(properties, ["brief"])
   end
 
   defp object_schema(properties, required) do

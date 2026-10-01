@@ -1019,6 +1019,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
   defp wave_child_spec(child, invocation, run, depth) do
     %{
       participant_id: child.plan.participant.id,
+      participant: child.plan.participant,
       phase_index: if(child.dependencies == [], do: 0, else: 1),
       label: if(child.dependencies == [], do: "delegated task", else: "integration task"),
       system_prompt: Delegation.child_system_prompt(child.plan),
@@ -1137,6 +1138,7 @@ defmodule ReyCode.Orchestration.Engine.Loop do
       {:ok, workspace} ->
         child_spec = %{
           participant_id: plan.participant.id,
+          participant: plan.participant,
           phase_index: 0,
           label: "delegated task",
           system_prompt: Delegation.child_system_prompt(plan),

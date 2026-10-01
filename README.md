@@ -1247,15 +1247,20 @@ The decision is the model's, so delegation is not guaranteed on any given
 request. To force it, name the agent ("ask Luna to run the tests") or use
 `/task`. Watch delegated children in `/hub`.
 
-When no task agents are configured, the roster says so and the assistant does
-all work itself; `spawn_task` calls with no valid target are rejected. Verified
-Change and Strategic Review Turns never receive the roster because their tool
-sets exclude delegation.
+You do not need to create task agents for the assistant to delegate. A
+`spawn_task` call that omits `agent` starts a temporary worker on the
+assistant's own provider and model; `spawn_tasks` names them `Worker 1`,
+`Worker 2`, … and an unnamed integrator `Integrator`. Workers are not added to
+the session, so they never appear in `/agents`, Compare, Debate, or squads, and
+cannot run detached. Name a task agent only when you want its standing
+responsibility or a different model. Verified Change and Strategic Review Turns
+never receive delegation guidance because their tool sets exclude delegation.
 
-A running assistant hands a bounded subtask to one of your task agents by
-calling the `spawn_task` orchestration tool with an exact participant name and
-a self-contained brief:
+A running assistant hands a bounded subtask to a worker, or to one of your task
+agents by exact name, by calling the `spawn_task` orchestration tool with a
+self-contained brief:
 
+    spawn_task  {"brief": "Find every caller of Parser.parse/1 and report paths"}
     spawn_task  {"agent": "Luna", "brief": "Run the focused test suite and report failures"}
 
 The child invocation runs in the same turn with its own durable loop, its own

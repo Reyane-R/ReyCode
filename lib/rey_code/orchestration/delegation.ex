@@ -4,8 +4,8 @@ defmodule ReyCode.Orchestration.Delegation do
 
   The high-tier caller decides when to delegate; this module decides whether a
   `spawn_task` or `spawn_tasks` call is admissible: strict shapes, exact-name
-  task-Participant addressing, frozen shared/output contracts, persisted depth,
-  and explicit per-caller caps. Every rejection is deterministic and recorded;
+  task-Participant addressing or an EphemeralWorker, frozen shared/output
+  contracts, persisted depth, and explicit per-caller caps. Every rejection is deterministic and recorded;
   uncertainty never opens a child Invocation.
   """
 
@@ -24,7 +24,7 @@ defmodule ReyCode.Orchestration.Delegation do
   @roster_perspective_max_bytes 240
 
   @delegation_policy """
-  Delegate when it helps: bounded exploration, review, or test runs that a task agent can finish from a self-contained brief. A target marked "needs a model" cannot run yet: do not call spawn_task on it, and instead say in one sentence that you would delegate this and that the Operator can enable it by choosing a model with /agents. Use spawn_task for one subtask and spawn_tasks for independent subtasks that can run in parallel. Each brief must stand alone: goal, relevant paths, and the exact result expected back. Do simple work directly; delegation adds overhead. Concurrent children must not edit the same files; use isolate=true for edits that could conflict. You remain responsible for the final answer: integrate and verify every report before responding. Children cannot delegate further.
+  Delegate when it helps: bounded exploration, review, or test runs that a worker can finish from a self-contained brief. Omit `agent` to start a worker on your own model; name a task agent only to use its responsibility and model. A task agent marked "needs a model" cannot run yet: omit `agent` instead. Use spawn_task for one subtask and spawn_tasks for independent subtasks that can run in parallel. Each brief must stand alone: goal, relevant paths, and the exact result expected back. Do simple work directly; delegation adds overhead. Concurrent children must not edit the same files; use isolate=true for edits that could conflict. You remain responsible for the final answer: integrate and verify every report before responding. Children cannot delegate further.
   """
 
   defmodule Plan do
@@ -75,6 +75,7 @@ defmodule ReyCode.Orchestration.Delegation do
           | :duplicate_agent
           | :primary_target
           | :agent_unconfigured
+          | :worker_cannot_detach
           | :delegation_unsupported_in_squad
   @spec tool_name() :: String.t()
   def tool_name, do: @tool_name
@@ -82,12 +83,12 @@ defmodule ReyCode.Orchestration.Delegation do
   def batch_tool_name, do: @batch_tool_name
 
   @doc """
-  Bounded delegation guidance for one ordinary primary Invocation: the exact-name
-  roster of eligible Task Participants plus when and how to use `spawn_task`.
+  Bounded delegation guidance for one ordinary primary Invocation: when and how
+  to use `spawn_task`, plus the exact-name roster of eligible Task Participants.
 
-  Only names `authorize/4` would accept are listed (kind `:task`, unique name),
-  sorted by name and capped at #{@roster_max_count}. No eligible target yields an
-  explicit no-worker sentence instead of an empty list.
+  Delegation is always offered because an omitted `agent` starts an
+  EphemeralWorker. Only names `authorize/4` would accept are listed (kind
+  `:task`, unique name), sorted by name and capped at #{@roster_max_count}.
   """
   @spec primary_guidance(Session.t()) :: String.t()
   def primary_guidance(%Session{participants: participants}) do
@@ -98,22 +99,17 @@ defmodule ReyCode.Orchestration.Delegation do
       |> Enum.filter(&(&1.kind == :task and Enum.count(names, fn n -> n == &1.name end) == 1))
       |> Enum.sort_by(& &1.name)
 
-    case Enum.split(targets, @roster_max_count) do
-      {[], _rest} ->
-        "No task agents are configured in this session, so spawn_task and " <>
-          "spawn_tasks have no valid target. Do all work yourself. This is " <>
-          "routine setup information: do not narrate it or apologize for it " <>
-          "unless the Operator asks about delegation."
+    String.trim(@delegation_policy) <> roster(Enum.split(targets, @roster_max_count))
+  end
 
-      {shown, hidden} ->
-        lines = Enum.map_join(shown, "\n", &roster_line/1)
+  defp roster({[], _hidden}), do: ""
 
-        omitted =
-          if hidden == [], do: "", else: "\n(#{length(hidden)} more task agents not listed)"
+  defp roster({shown, hidden}) do
+    lines = Enum.map_join(shown, "\n", &roster_line/1)
+    omitted = if hidden == [], do: "", else: "\n(#{length(hidden)} more task agents not listed)"
 
-        "Task agents available for delegation (use these exact names as `agent`):\n" <>
-          lines <> omitted <> "\n\n" <> String.trim(@delegation_policy)
-    end
+    "\n\nTask agents available for delegation (use these exact names as `agent`):\n" <>
+      lines <> omitted
   end
 
   defp roster_line(participant) do
@@ -134,9 +130,11 @@ defmodule ReyCode.Orchestration.Delegation do
   @doc """
   Validates one `spawn_task` call against addressing rules and bounds.
 
-  Arguments must be `%{"agent" => binary, "brief" => binary}`; the agent name
-  matches exactly one session participant of kind `:task`. Primary participants
-  and unknown names reject without spawning.
+  Arguments must be `%{"brief" => binary}` with an optional `"agent"`. A named
+  agent matches exactly one session participant of kind `:task`; primary
+  participants and unknown names reject without spawning. An omitted agent
+  starts an EphemeralWorker, which cannot detach because a detached Turn
+  addresses a Session participant.
   """
   @spec authorize(Invocation.t(), term(), Projection.t(), bounds()) ::
           {:ok, Plan.t()} | {:error, rejection()}
@@ -147,8 +145,9 @@ defmodule ReyCode.Orchestration.Delegation do
          :ok <- check_schema(output_schema),
          :ok <- check_depth(invocation),
          :ok <- check_child_cap(invocation, 1, bounds.max_children),
+         :ok <- check_detach(agent, detach?),
          {:ok, participant} <-
-           resolve_participant(projection.sessions[invocation.session_id], agent) do
+           resolve_participant(invocation, projection, agent, "Worker") do
       {:ok,
        %Plan{
          participant: participant,
@@ -264,7 +263,7 @@ defmodule ReyCode.Orchestration.Delegation do
     isolate? = argument(arguments, "isolate", false)
     detach? = argument(arguments, "detach", false)
 
-    if Enum.all?(keys, &(&1 in allowed)) and is_binary(agent) and
+    if Enum.all?(keys, &(&1 in allowed)) and (is_nil(agent) or is_binary(agent)) and
          is_binary(brief) and (is_nil(output_schema) or is_map(output_schema)) and
          is_boolean(isolate?) and is_boolean(detach?) do
       {:ok, agent, brief, output_schema, isolate?, detach?}
@@ -306,8 +305,12 @@ defmodule ReyCode.Orchestration.Delegation do
   defp parse_batch_arguments(_arguments), do: {:error, :invalid_arguments}
 
   defp authorize_batch_tasks(arguments, invocation, projection, bounds, shared_context) do
-    Enum.reduce_while(arguments, {:ok, []}, fn task, {:ok, plans} ->
-      case authorize_batch_task(task, invocation, projection, bounds, shared_context) do
+    arguments
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({:ok, []}, fn {task, index}, {:ok, plans} ->
+      worker_name = "Worker #{index}"
+
+      case authorize_batch_task(task, invocation, projection, bounds, shared_context, worker_name) do
         {:ok, plan} -> {:cont, {:ok, plans ++ [plan]}}
         {:error, _reason} = error -> {:halt, error}
       end
@@ -317,15 +320,22 @@ defmodule ReyCode.Orchestration.Delegation do
   defp authorize_integrator(nil, _invocation, _projection, _bounds, _shared_context),
     do: {:ok, nil}
 
-  defp authorize_integrator(arguments, invocation, projection, bounds, shared_context),
-    do: authorize_batch_task(arguments, invocation, projection, bounds, shared_context)
+  defp authorize_integrator(arguments, invocation, projection, bounds, shared_context) do
+    authorize_batch_task(arguments, invocation, projection, bounds, shared_context, "Integrator")
+  end
 
-  defp authorize_batch_task(arguments, invocation, projection, bounds, shared_context) do
+  defp authorize_batch_task(
+         arguments,
+         invocation,
+         projection,
+         bounds,
+         shared_context,
+         worker_name
+       ) do
     with {:ok, agent, brief, output_schema, isolate?, false} <- parse_arguments(arguments),
          :ok <- check_brief(brief, bounds.brief_max_bytes),
          :ok <- check_schema(output_schema),
-         {:ok, participant} <-
-           resolve_participant(projection.sessions[invocation.session_id], agent) do
+         {:ok, participant} <- resolve_participant(invocation, projection, agent, worker_name) do
       {:ok,
        %Plan{
          participant: participant,
@@ -474,6 +484,9 @@ defmodule ReyCode.Orchestration.Delegation do
       else: :ok
   end
 
+  defp check_detach(nil, true), do: {:error, :worker_cannot_detach}
+  defp check_detach(_agent, _detach?), do: :ok
+
   defp check_brief(brief, brief_max_bytes) do
     if byte_size(brief) > brief_max_bytes,
       do: {:error, :brief_too_large},
@@ -513,9 +526,32 @@ defmodule ReyCode.Orchestration.Delegation do
 
   defp run_child_ids(run), do: run.child_invocation_ids
 
-  defp resolve_participant(nil, _agent), do: {:error, :unknown_agent}
+  defp resolve_participant(invocation, _projection, nil, worker_name),
+    do: ephemeral_worker(invocation, worker_name)
 
-  defp resolve_participant(session, agent) do
+  defp resolve_participant(invocation, projection, agent, _worker_name),
+    do: named_participant(projection.sessions[invocation.session_id], agent)
+
+  # An EphemeralWorker is never added to the Session: it exists only as the
+  # participant snapshot on its child Invocation's opening event, so Squad
+  # seats, Compare, Debate, and admission never see it (D51).
+  defp ephemeral_worker(%Invocation{participant: %Participant{} = caller} = invocation, name) do
+    worker = %Participant{
+      caller
+      | id: "#{invocation.id}/#{name}",
+        name: name,
+        perspective: "general-purpose worker for one delegated task",
+        kind: :task
+    }
+
+    configured(worker)
+  end
+
+  defp ephemeral_worker(_invocation, _name), do: {:error, :unknown_agent}
+
+  defp named_participant(nil, _agent), do: {:error, :unknown_agent}
+
+  defp named_participant(session, agent) do
     case Enum.filter(session.participants, &(&1.name == agent)) do
       [] -> {:error, :unknown_agent}
       [%Participant{kind: :task} = participant] -> configured(participant)

@@ -30,6 +30,8 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Delegation** — A Turn explicitly addressed to one Task Participant for one task.
 
+**EphemeralWorker** — Unnamed, throwaway delegation target started when a `spawn_task`/`spawn_tasks` call omits `agent`. It runs on the calling Invocation's provider and model and exists only as the participant snapshot on its child Invocation; it is never a Session Participant, so it has no `participant_added` event, no seat, no place in Compare, Debate, Eval, or admission, and cannot run as a DetachedDelegation. _Avoid_: default agent, seeded agent.
+
 **Message** — Durable communication authored by an Operator or produced by an Invocation.
 
 **DelegationContract** — Frozen optional JSON output schema and workspace-isolation choice for one delegated child Invocation. Realized in code by `ReyCode.Orchestration.Delegation.Plan` (`output_schema`, `isolate?`) and `ReyCode.Orchestration.InvocationExecution`; `ReyCode.Orchestration.WorkingContract` is an unrelated prompt-traceability helper.
@@ -124,7 +126,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 
 **Spend** — Display-time estimate of what reported usage would cost at per-model list prices (USD per million input/output tokens). Computed from current rates at render time and never persisted; unavailable when a model has no rate or a usage record lacks an input/output split.
 
-**spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant.
+**spawn_task** — Orchestration tool a Provider sees in its tool definitions; the engine claims it and spawns one child Invocation addressed to an exact task Participant, or to an EphemeralWorker when `agent` is omitted.
 
 **Delegation (agent-initiated)** — Durable parent/child handoff via `spawn_task`: the parent Invocation suspends (`:awaiting_delegation`) with zero provider rounds until the child terminates; the child's report re-enters the parent conversation as the ToolRun result.
 
@@ -214,7 +216,7 @@ This file is the canonical glossary for ReyCode's orchestration context. It cont
 - A VerifiedChange has at most one VerifiedChangeResolution; requesting revisions creates a new change rather than reopening terminal evidence. Waiting for tool approval or an OperatorQuestion is not terminal verification failure in an interactive run.
 - A Session has exactly one Primary Participant, zero or more Task Participants, and may have Squad Seats.
 - An ordinary Turn invokes only the Session's Primary Participant.
-- A Delegation invokes exactly one Task Participant.
+- A Delegation invokes exactly one Task Participant or EphemeralWorker.
 - An Invocation belongs to one Turn and one Participant or Seat.
 - A Steering belongs to one active Invocation and is recorded into exactly one ProviderRound when consumed.
 - A DelegationContract belongs to exactly one delegated child Invocation; its IsolationWorktree, when present, has the same owner.

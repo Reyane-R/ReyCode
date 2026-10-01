@@ -464,7 +464,7 @@ defmodule ReyCode.TUI.Activity do
   defp delegation_target(run, _child_ids, target_graphemes) do
     run.arguments
     |> argument("agent")
-    |> then(&(&1 || "unknown agent"))
+    |> then(&(&1 || "worker"))
     |> single_line()
     |> truncate(target_graphemes)
   end
@@ -875,7 +875,9 @@ defmodule ReyCode.TUI.Activity do
     do: argument(arguments, "name") || argument(arguments, "action")
 
   defp raw_tool_target("bash", arguments, _workspace), do: argument(arguments, "command")
-  defp raw_tool_target("spawn_task", arguments, _workspace), do: argument(arguments, "agent")
+
+  defp raw_tool_target("spawn_task", arguments, _workspace),
+    do: argument(arguments, "agent") || "worker"
 
   defp raw_tool_target("spawn_tasks", arguments, _workspace) do
     tasks = argument(arguments, "tasks") || []

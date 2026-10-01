@@ -20,7 +20,19 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
-### D51 - Zero-setup delegation needs ephemeral workers, not seeded Participants (Direction - 2026-09-25)
+### D51 - Zero-setup delegation uses ephemeral workers, not seeded Participants (Policy - 2026-09-27)
+
+**Executed 2026-09-27.** Requiring the Operator to create task agents before
+the assistant could delegate proved unintuitive in use: sessions never
+delegated. `spawn_task`/`spawn_tasks` now accept an omitted `agent`, which
+starts an EphemeralWorker (CONTEXT.md) that snapshots the calling Invocation's
+provider and model. It exists only as the participant snapshot on its child
+Invocation's opening event, so none of the collisions below apply. It cannot
+detach, because a detached Turn addresses a Session participant. An
+`:unconfigured` caller still fails closed as `agent_unconfigured`. Named Task
+Participants keep exact-name, fail-closed addressing.
+
+Original record (2026-09-25):
 
 The Primary now carries a delegation roster and policy, but a Session whose
 Operator never ran `/agent` has nothing to delegate to, so delegation never
