@@ -191,6 +191,8 @@ defmodule ReyCode.Web.AppLiveTest do
     assert html =~ "What should we work on?"
     assert html =~ ~s(<option value="/w">)
     assert html =~ "Search conversations"
+    # Hidden until LiveView marks the root as disconnected.
+    assert html =~ ~s(class="offline" role="status")
     assert html =~ ~s(class="dot")
   end
 

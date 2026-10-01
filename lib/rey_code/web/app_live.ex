@@ -492,6 +492,11 @@ defmodule ReyCode.Web.AppLive do
   @impl true
   def render(assigns) do
     ~H"""
+    <div class="offline" role="status">
+      <strong>Not connected to ReyCode.</strong>
+      What you see may be out of date and buttons do nothing. Reconnecting… If ReyCode
+      Desktop was restarted, open it again with /desktop or <code>reycode desktop</code>.
+    </div>
     <div class={["app", @workers != [] && "has-workers"]}>
       <aside id="sidebar" class="sidebar">
         <div class="brand">

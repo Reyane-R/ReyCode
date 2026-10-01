@@ -255,7 +255,13 @@ defmodule ReyCode.Web.Layouts do
     .diff .add { color: var(--green); } .diff .del { color: var(--red); }
     .diff .hunk { color: var(--cyan); } .diff .meta { color: var(--dim); }
 
-    @keyframes blink { 50% { opacity: 0; } }
+    /* LiveView marks its root phx-error / phx-*-error while the server is unreachable. */
+    .offline { display: none; position: fixed; z-index: 10; left: 50%; top: 14px; transform: translateX(-50%);
+      width: min(640px, 100% - 32px); padding: 10px 14px; border: 1px solid var(--red); border-left-width: 3px;
+      border-radius: 8px; background: var(--surface); font-size: 13px; line-height: 1.5; }
+    .phx-error .offline, .phx-client-error .offline, .phx-server-error .offline { display: block; }
+    .phx-error .app, .phx-client-error .app, .phx-server-error .app { opacity: 0.45; pointer-events: none; }
+        @keyframes blink { 50% { opacity: 0; } }
     @keyframes pulse { 50% { opacity: 0.35; } }
     @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 
