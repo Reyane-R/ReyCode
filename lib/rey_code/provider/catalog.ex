@@ -149,10 +149,15 @@ defmodule ReyCode.Provider.Catalog do
   def handle_call({:resolve_when_ready, provider, model}, from, state) do
     key = provider_key(state.config, provider)
 
-    if get_in(state.providers, [key, :status]) == :checking do
-      {:noreply, %{state | awaiters: [{from, key, model} | state.awaiters]}}
-    else
-      {:reply, resolve_entry(key, state.providers[key], model, state), state}
+    case get_in(state.providers, [key, :status]) do
+      :checking ->
+        {:noreply, %{state | awaiters: [{from, key, model} | state.awaiters]}}
+
+      :error ->
+        recheck_errored(state, key, model, from)
+
+      _settled ->
+        {:reply, resolve_entry(key, state.providers[key], model, state), state}
     end
   end
 
@@ -227,6 +232,22 @@ defmodule ReyCode.Provider.Catalog do
   # Results and timer messages from cancelled or superseded probes are
   # intentionally ignored.
   def handle_info(_, state), do: {:noreply, state}
+
+  # A failed background probe must not fail new work on its own: one transient
+  # timeout would otherwise kill every Invocation admitted until the retry. The
+  # caller waits for a fresh probe of that provider instead, at most one
+  # in-flight round plus one probe (retry_interval + probe_timeout), and fails
+  # closed if that probe fails too.
+  defp recheck_errored(state, key, model, from) do
+    if state.discovery? and List.keymember?(state.probe_targets, key, 0) do
+      state =
+        if map_size(state.probes) == 0, do: start_probe(cancel_refresh_timer(state)), else: state
+
+      {:noreply, %{state | awaiters: [{from, key, model} | state.awaiters]}}
+    else
+      {:reply, resolve_entry(key, state.providers[key], model, state), state}
+    end
+  end
 
   # A new round never overlaps an in-flight one; results racing a finished
   # or superseded round are dropped because their probe entry is gone.

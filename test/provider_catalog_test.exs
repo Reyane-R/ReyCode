@@ -144,6 +144,45 @@ defmodule ReyCode.Provider.CatalogTest do
     assert status?(catalog, :ollama, :configured)
   end
 
+  test "new work re-probes a provider whose last background probe failed" do
+    {:ok, attempts} = Agent.start_link(fn -> 0 end)
+
+    catalog =
+      start_catalog(
+        discover: fn
+          %{id: :deepseek} = profile ->
+            # The first probe fails transiently; the next one succeeds.
+            case Agent.get_and_update(attempts, &{&1, &1 + 1}) do
+              0 -> {:error, :timeout}
+              _later -> discovery(profile)
+            end
+
+          profile ->
+            discovery(profile)
+        end
+      )
+
+    assert status?(catalog, :deepseek, :error)
+
+    assert {:ok, %Runtime{provider_id: :deepseek}} =
+             Catalog.resolve_when_ready(:deepseek, "deepseek-chat", catalog)
+
+    assert Agent.get(attempts, & &1) == 2
+  end
+
+  test "a provider that keeps failing its probe still fails closed for new work" do
+    catalog =
+      start_catalog(
+        discover: fn
+          %{id: :deepseek} -> {:error, :offline}
+          profile -> discovery(profile)
+        end
+      )
+
+    assert status?(catalog, :deepseek, :error)
+    assert {:error, :error} = Catalog.resolve_when_ready(:deepseek, "deepseek-chat", catalog)
+  end
+
   test "readiness waiters receive the selected API result" do
     parent = self()
 

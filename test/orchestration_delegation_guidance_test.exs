@@ -162,6 +162,14 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
                bounds
              )
 
+    assert {:ok, %Delegation.Plan{participant: %Participant{name: "Worker"}}} =
+             Delegation.authorize(
+               invocation,
+               %{"agent" => " ", "brief" => "x"},
+               projection,
+               bounds
+             )
+
     unconfigured_caller = %{invocation | participant: %{primary | provider: :unconfigured}}
 
     assert {:error, :agent_unconfigured} =
@@ -212,5 +220,23 @@ defmodule ReyCode.Orchestration.DelegationGuidanceTest do
       refute prompt =~ @worker_policy
       refute prompt =~ "spawn_task"
     end
+  end
+
+  test "a schema'd report wrapped in a json fence is accepted and still validated" do
+    schema = %{
+      "type" => "object",
+      "required" => ["file"],
+      "properties" => %{"file" => %{"type" => "string"}}
+    }
+
+    fenced = "Here is my report:\n\n```json\n{\"file\": \"src/cli.ts\"}\n```\n\nDone."
+
+    assert {:ok, %{"file" => "src/cli.ts"}} = Delegation.validate_output(fenced, schema)
+
+    assert {:error, :delegation_output_missing_required} =
+             Delegation.validate_output("```json\n{\"other\": 1}\n```", schema)
+
+    assert {:error, :delegation_output_not_json} =
+             Delegation.validate_output("I found the bug in src/cli.ts.", schema)
   end
 end

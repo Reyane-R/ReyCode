@@ -257,7 +257,7 @@ defmodule ReyCode.Orchestration.Delegation do
   defp parse_arguments(arguments) when is_map(arguments) do
     allowed = ~w(agent brief output_schema isolate detach)
     keys = arguments |> Map.keys() |> Enum.map(&to_string/1)
-    agent = argument(arguments, "agent")
+    agent = blank_to_nil(argument(arguments, "agent"))
     brief = argument(arguments, "brief")
     output_schema = argument(arguments, "output_schema")
     isolate? = argument(arguments, "isolate", false)
@@ -273,6 +273,12 @@ defmodule ReyCode.Orchestration.Delegation do
   end
 
   defp parse_arguments(_arguments), do: {:error, :invalid_arguments}
+
+  # Models often send "agent": "" for "no particular agent"; that means an EphemeralWorker.
+  defp blank_to_nil(value) when is_binary(value),
+    do: if(String.trim(value) == "", do: nil, else: value)
+
+  defp blank_to_nil(value), do: value
 
   defp argument(arguments, key, default \\ nil),
     do: Map.get(arguments, key, Map.get(arguments, argument_key(key), default))
@@ -400,7 +406,7 @@ defmodule ReyCode.Orchestration.Delegation do
   def validate_output(output, nil), do: {:ok, output || ""}
 
   def validate_output(output, schema) when is_binary(output) do
-    with {:ok, value} <- Jason.decode(output),
+    with {:ok, value} <- decode_report(output),
          :ok <- validate_value(value, schema, 0) do
       {:ok, value}
     else
@@ -410,6 +416,22 @@ defmodule ReyCode.Orchestration.Delegation do
   end
 
   def validate_output(_output, _schema), do: {:error, :delegation_output_missing}
+
+  # Models routinely wrap the requested JSON in a ```json fence with a sentence
+  # around it. The first fenced block is accepted, still schema-validated, so
+  # prose with no valid JSON keeps failing closed.
+  defp decode_report(output) do
+    case Jason.decode(output) do
+      {:ok, value} ->
+        {:ok, value}
+
+      {:error, %Jason.DecodeError{}} = error ->
+        case Regex.run(~r/```(?:json)?[ \t]*\n(.*?)\n[ \t]*```/s, output, capture: :all_but_first) do
+          [fenced] -> Jason.decode(fenced)
+          nil -> error
+        end
+    end
+  end
 
   defp validate_value(_value, _schema, depth) when depth > @schema_max_depth,
     do: {:error, :delegation_output_too_deep}
