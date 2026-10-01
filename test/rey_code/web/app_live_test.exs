@@ -170,6 +170,21 @@ defmodule ReyCode.Web.AppLiveTest do
 
     assert stale.assigns.notice =~ "already answered"
 
+    # A current answer is built from the form and handed to the Engine; this
+    # fixture's invocation is unknown to it, so the refusal surfaces as a notice.
+    [item] = socket.assigns.question.request.questions
+
+    for picked <- [%{"q-#{item.id}" => "new"}, %{"q-#{item.id}" => ["old", "new"]}, %{}] do
+      params =
+        Map.merge(
+          %{"invocation" => "parent", "request" => "q1", "other-#{item.id}" => " custom "},
+          picked
+        )
+
+      assert {:noreply, answered} = AppLive.handle_event("answer", params, socket)
+      assert answered.assigns.notice =~ "Could not answer"
+    end
+
     assert {:noreply, ^socket} =
              AppLive.handle_info({:projection_snapshot, projection(2)}, socket)
 
