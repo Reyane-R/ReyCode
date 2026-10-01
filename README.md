@@ -1328,17 +1328,29 @@ durable auto-delivery when terminal.
 
 ## ReyCode Desktop (`reycode desktop`)
 
-    reycode desktop               # opens http://127.0.0.1:4747
+    reycode desktop               # opens http://127.0.0.1:4747 in your browser
     reycode desktop --port 5000
     mix rey_code.web              # same, from a source checkout
 
 Or type `/desktop` in the TUI, which starts it inside the running TUI and
-opens your browser. ReyCode Desktop is a read-only browser view of your Sessions that updates live. It connects to
-the shared engine like the TUI, so you can keep both open. Each Session page
-shows its delegated workers side by side (status, model, tool runs, report,
-and the isolated diff while it waits for Apply/Discard) above the timeline.
-It never changes anything: approvals and messages still go through the TUI.
-It listens on 127.0.0.1 only because there is no authentication yet.
+opens your browser. ReyCode Desktop is a browser client for the same shared
+engine as the TUI, so you can keep both open and they stay in sync.
+
+- **Sessions:** start a new conversation in any workspace you have used, or
+  open an existing one. Sessions that are working are marked.
+- **Conversation:** the live timeline with a composer (Enter sends,
+  Shift+Enter breaks the line). While the assistant works, messages queue as
+  follow-ups and **Stop** cancels the turn.
+- **Approvals:** tool requests show the exact arguments with Approve / Deny,
+  and assistant questions render as a form.
+- **Workers:** delegated workers appear side by side with status, model, tool
+  runs, and report; an isolated worker's diff shows with Apply / Discard.
+
+Access is local and needs a token. The server listens on 127.0.0.1 only, and
+every page and action needs a random access token that exists only in that
+running process. The link that `/desktop` or `reycode desktop` opens carries
+the token once and then moves it into a browser cookie. A browser without it
+gets 403. `@file` mentions are not expanded from the browser yet.
 
 ## Operator questions, WorkPlans, and model tiers
 

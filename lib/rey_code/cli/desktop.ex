@@ -18,7 +18,7 @@ defmodule ReyCode.CLI.Desktop do
   defp serve(port, halt) do
     with {:ok, _apps} <- Application.ensure_started_without_tui(),
          {:ok, pid} <- Web.start(port) do
-      url = Web.url(port)
+      url = Web.open_url(port)
       IO.puts("ReyCode Desktop: #{url}  (Ctrl+C to stop)")
       _ = Web.open_browser(url)
 

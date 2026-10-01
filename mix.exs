@@ -44,7 +44,8 @@ defmodule ReyCode.MixProject do
       {:dialyxir, "~> 1.4", only: :dev, runtime: false},
       {:stream_data, "~> 1.1", only: [:dev, :test]},
       {:excoveralls, "~> 0.18.5", only: :test},
-      {:castore, "~> 1.0", only: :test}
+      {:castore, "~> 1.0", only: :test},
+      {:lazy_html, ">= 0.1.0", only: :test}
     ]
   end
 

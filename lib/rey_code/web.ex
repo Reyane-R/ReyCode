@@ -4,7 +4,9 @@ defmodule ReyCode.Web do
 
   Shared by `reycode desktop`, `mix rey_code.web`, and the TUI's `/desktop`.
   The endpoint runs under `ReyCode.Supervisor`, so it never takes the caller
-  down with it, and binds to loopback only because there is no authentication.
+  down with it, and binds to loopback only. Every page and action also needs
+  the per-VM access token carried by `open_url/1`, so another local process or
+  browser tab that only knows the port cannot read or act on Sessions.
   """
 
   alias ReyCode.Web.Endpoint
@@ -16,6 +18,31 @@ defmodule ReyCode.Web do
 
   @spec url(pos_integer()) :: String.t()
   def url(port), do: "http://127.0.0.1:#{port}"
+
+  @doc "The URL that grants this browser access: it carries the access token once."
+  @spec open_url(pos_integer()) :: String.t()
+  def open_url(port), do: url(port) <> "/?token=" <> token()
+
+  @doc "This VM's access token, created on first use and never written to disk."
+  @spec token() :: String.t()
+  def token do
+    case :persistent_term.get({__MODULE__, :token}, nil) do
+      nil ->
+        token = Base.url_encode64(:crypto.strong_rand_bytes(32), padding: false)
+        :persistent_term.put({__MODULE__, :token}, token)
+        token
+
+      token ->
+        token
+    end
+  end
+
+  @doc "Constant-time check of a presented token."
+  @spec valid_token?(term()) :: boolean()
+  def valid_token?(presented) when is_binary(presented),
+    do: Plug.Crypto.secure_compare(presented, token())
+
+  def valid_token?(_presented), do: false
 
   @doc "Starts the endpoint once; a second call returns the running one."
   @spec start(pos_integer()) :: {:ok, pid()} | {:error, term()}
@@ -74,7 +101,8 @@ defmodule ReyCode.Web do
   def describe_error(reason, port) do
     if inspect(reason) =~ "eaddrinuse",
       do:
-        "Port #{port} is already in use. If ReyCode Desktop is already running, open #{url(port)}.",
+        "Port #{port} is already in use. If ReyCode Desktop is already running, " <>
+          "use the link it opened or printed (it carries that instance's access token).",
       else: "Could not start ReyCode Desktop: #{inspect(reason)}"
   end
 end

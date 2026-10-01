@@ -669,12 +669,12 @@ defmodule ReyCode.TUI.SlashPalette do
 
     with {:ok, _pid} <- Web.start(port),
          url = Web.url(port),
-         :ok <- Web.open_browser(url) do
+         :ok <- Web.open_browser(Web.open_url(port)) do
       Notice.new(:success, "ReyCode Desktop opened at #{url}")
     else
       # The server is up; only the browser hand-off failed.
       {:error, :browser_unavailable} ->
-        Notice.new(:info, "ReyCode Desktop is running at #{Web.url(port)}")
+        Notice.new(:info, "ReyCode Desktop is running; open #{Web.open_url(port)}")
 
       {:error, reason} ->
         Notice.new(:error, Web.describe_error(reason, port))

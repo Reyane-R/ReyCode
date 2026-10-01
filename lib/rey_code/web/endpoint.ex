@@ -10,10 +10,10 @@ defmodule ReyCode.Web.Endpoint do
 
   @session_options [store: :cookie, key: "_rey_code_web", signing_salt: "reycode-web"]
 
-  socket("/live", Phoenix.LiveView.Socket, websocket: [connect_info: [session: @session_options]])
+  socket "/live", Phoenix.LiveView.Socket, websocket: [connect_info: [session: @session_options]]
 
-  plug(Plug.Static, at: "/assets/phoenix", from: {:phoenix, "priv/static"})
-  plug(Plug.Static, at: "/assets/live_view", from: {:phoenix_live_view, "priv/static"})
-  plug(Plug.Session, @session_options)
-  plug(ReyCode.Web.Router)
+  plug Plug.Static, at: "/assets/phoenix", from: {:phoenix, "priv/static"}
+  plug Plug.Static, at: "/assets/live_view", from: {:phoenix_live_view, "priv/static"}
+  plug Plug.Session, @session_options
+  plug ReyCode.Web.Router
 end

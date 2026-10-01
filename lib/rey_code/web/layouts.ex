@@ -21,7 +21,26 @@ defmodule ReyCode.Web.Layouts do
         </script>
         <script>
           const csrf = document.querySelector("meta[name='csrf-token']").content;
-          new LiveView.LiveSocket("/live", Phoenix.Socket, {params: {_csrf_token: csrf}}).connect();
+          const hooks = {
+            // Enter sends, Shift+Enter breaks the line; the server clears the box only after a send succeeds.
+            Composer: {
+              mounted() {
+                const input = this.el.querySelector("textarea");
+                input.addEventListener("keydown", (e) => {
+                  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.el.requestSubmit(); }
+                });
+                this.handleEvent("composer:clear", () => { input.value = ""; input.focus(); });
+              }
+            },
+            // Follow new output only while the reader is already at the bottom.
+            StickToBottom: {
+              mounted() { this.atBottom = true; window.addEventListener("scroll", () => {
+                this.atBottom = window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; });
+                window.scrollTo(0, document.body.scrollHeight); },
+              updated() { if (this.atBottom) window.scrollTo(0, document.body.scrollHeight); }
+            }
+          };
+          new LiveView.LiveSocket("/live", Phoenix.Socket, {hooks, params: {_csrf_token: csrf}}).connect();
         </script>
       </head>
       <body>{@inner_content}</body>
@@ -68,6 +87,33 @@ defmodule ReyCode.Web.Layouts do
     .pill-waiting_tool_approval { background: var(--accent); color: var(--bg); }
     .diff { margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--bg); overflow: auto; max-height: 420px;
       font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    main.with-composer { padding-bottom: 170px; }
+    button { font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 8px; cursor: pointer;
+      border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+    button:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+    .buttons { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .action-card { border: 1px solid var(--accent); border-radius: 10px; background: var(--card); padding: 12px 14px; margin: 16px 0; }
+    .action-card fieldset { border: 0; padding: 0; margin: 0 0 10px; }
+    .action-card legend { padding: 0; margin-bottom: 6px; }
+    .option { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; cursor: pointer; }
+    .option input { margin-top: 4px; }
+    .args { margin: 8px 0 0; padding: 8px; border-radius: 6px; background: var(--bg); overflow: auto; max-height: 240px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    input[type=text], textarea { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+      border-radius: 8px; padding: 8px 10px; width: 100%; }
+    input[type=text]:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    .composer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--line);
+      padding: 12px 16px 14px; }
+    .composer > * { max-width: 860px; margin-left: auto; margin-right: auto; }
+    .composer-row { display: flex; gap: 8px; align-items: flex-end; }
+    .composer textarea { resize: vertical; min-height: 44px; max-height: 40vh; }
+    .hint { margin-top: 4px; font-size: 12px; }
+    .start .composer-row { margin-top: 8px; }
+    select { font: inherit; font-size: 14px; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+      border-radius: 8px; padding: 6px 8px; flex: 1; min-width: 0; }
+    .list .pill { margin-left: 8px; }
+    .notice { color: var(--bad-fg); font-size: 13px; margin-bottom: 6px; }
     .diff span { display: block; min-height: 1.45em; white-space: pre; }
     .diff .add { color: var(--ok-fg); } .diff .del { color: var(--bad-fg); }
     .diff .hunk { color: var(--run-fg); } .diff .meta { color: var(--muted); }

@@ -20,6 +20,22 @@ and explicitly configured task agents; squad workflows remain opt-in.
 
 ## Active decisions
 
+### D52 - ReyCode Desktop is a second Engine client gated by a per-process token (Policy - 2026-10-01)
+
+ReyCode Desktop (`reycode desktop`, `/desktop`) is a Phoenix LiveView client
+of the same Engine the TUI uses. It writes nothing itself: every owner action
+calls an existing Engine function, so durability and approval rules stay in
+one place. That keeps the terminal-native North Star: the TUI remains a full
+client, and the browser is an addition for things a terminal does badly
+(workers side by side, diffs, rich layout).
+
+Access fails closed on two layers. The server binds 127.0.0.1 only, and every
+page and LiveView mount requires a 256-bit token. The token is generated per
+VM, never written to disk, handed over once in the opened URL, and kept in a
+signed cookie. Knowing the port is not enough to read or act. There are no
+accounts, so it cannot be shared with another person. Remote rooms need real
+authentication and a decision of their own before the bind address changes.
+
 ### D51 - Zero-setup delegation uses ephemeral workers, not seeded Participants (Policy - 2026-09-27)
 
 **Executed 2026-09-27.** Requiring the Operator to create task agents before
