@@ -14,4 +14,6 @@ config :rey_code,
   tui_reduced_motion: false,
   start_tui: config_env() != :test
 
+config :phoenix, :json_library, Jason
+
 import_config "#{config_env()}.exs"
