@@ -1337,11 +1337,14 @@ opens your browser. ReyCode Desktop is a browser client for the same shared
 engine as the TUI, so you can keep both open and they stay in sync.
 
 - **Sidebar:** your conversations grouped by workspace, newest first, with a
-  dot on the ones that are working. **New conversation** opens a composer with
-  a workspace picker.
+  dot on the ones that are working. Each workspace shows its five newest
+  (**Show N older** reveals the rest), and **Search conversations** filters
+  by title. **New conversation** opens a composer with workspace and model
+  pickers.
 - **Conversation:** replies render as Markdown (sanitized), and each reply
   lists the steps the agent took (Read, Ran, …) in the TUI's wording. The
-  composer sends on Enter (Shift+Enter breaks the line). While the assistant
+  composer sends on Enter (Shift+Enter breaks the line), and its model picker
+  switches the Assistant's provider and model, the same as `/model`. While the assistant
   works, messages queue as follow-ups and **Stop** cancels the turn. When the
   newest turn fails, **Try again** retries it.
 - **Needs you:** tool approvals (with the exact arguments) and assistant

@@ -103,10 +103,20 @@ defmodule ReyCode.Web.AppLiveTest do
     }
   end
 
-  defp socket(assigns),
-    do: %Phoenix.LiveView.Socket{
-      assigns: Map.merge(%{__changed__: %{}, notice: nil, html_cache: %{}, id: nil}, assigns)
+  defp socket(assigns) do
+    defaults = %{
+      __changed__: %{},
+      notice: nil,
+      html_cache: %{},
+      id: nil,
+      filter: "",
+      expanded: MapSet.new(),
+      models: [],
+      catalog_generation: 0
     }
+
+    %Phoenix.LiveView.Socket{assigns: Map.merge(defaults, assigns)}
+  end
 
   test "timeline renders escaped messages and ignores stale broadcasts" do
     {:noreply, socket} =
@@ -180,6 +190,7 @@ defmodule ReyCode.Web.AppLiveTest do
     assert html =~ ~s(href="/sessions/s1")
     assert html =~ "What should we work on?"
     assert html =~ ~s(<option value="/w">)
+    assert html =~ "Search conversations"
     assert html =~ ~s(class="dot")
   end
 
@@ -199,5 +210,68 @@ defmodule ReyCode.Web.AppLiveTest do
 
     assert socket.assigns.retry_turn_id == "t9"
     assert rendered_to_string(AppLive.render(socket.assigns)) =~ "Try again"
+  end
+
+  test "search narrows the sidebar and older conversations collapse until expanded" do
+    sessions =
+      for n <- 1..7, into: %{} do
+        {"s#{n}", %Session{id: "s#{n}", title: "task #{n}", workspace: "/w", message_order: []}}
+      end
+
+    projection = %Projection{
+      sequence: 1,
+      session_order: Enum.map(1..7, &"s#{&1}"),
+      sessions: Map.put(sessions, "s7", %{sessions["s7"] | title: "parser bug"})
+    }
+
+    {:noreply, socket} =
+      AppLive.handle_info({:projection_snapshot, projection}, socket(%{sequence: 0}))
+
+    html = rendered_to_string(AppLive.render(socket.assigns))
+    assert html =~ "Show 2 older"
+    refute html =~ "task 1<"
+
+    {:noreply, expanded} = AppLive.handle_event("expand", %{"workspace" => "/w"}, socket)
+    refute rendered_to_string(AppLive.render(expanded.assigns)) =~ "Show 2 older"
+
+    {:noreply, filtered} = AppLive.handle_event("filter", %{"filter" => " PARSER "}, socket)
+    filtered_html = rendered_to_string(AppLive.render(filtered.assigns))
+    assert filtered_html =~ "parser bug"
+    refute filtered_html =~ "task 6"
+
+    {:noreply, none} = AppLive.handle_event("filter", %{"filter" => "zzz"}, socket)
+    assert rendered_to_string(AppLive.render(none.assigns)) =~ "No conversation matches"
+  end
+
+  test "the composer offers catalog models and rejects values the catalog never offered" do
+    providers = %{
+      openai: %{id: :openai, name: "OpenAI", status: :configured, models: ["gpt-5", "gpt-5-mini"]},
+      off: %{id: :off, name: "Off", status: :unavailable, models: ["x"]}
+    }
+
+    {:noreply, socket} =
+      AppLive.handle_info({:projection_snapshot, projection(2)}, socket(%{id: "s1", sequence: 1}))
+
+    {:noreply, socket} =
+      AppLive.handle_info(
+        {:provider_catalog_updated, %{generation: 5, providers: providers}},
+        socket
+      )
+
+    assert Enum.map(socket.assigns.models, & &1.value) == ["openai::gpt-5", "openai::gpt-5-mini"]
+    html = rendered_to_string(AppLive.render(socket.assigns))
+    assert html =~ ~s(id="model-picker")
+    assert html =~ "OpenAI · gpt-5-mini"
+    refute html =~ "Off · x"
+
+    # A stale catalog broadcast is ignored.
+    assert {:noreply, ^socket} =
+             AppLive.handle_info(
+               {:provider_catalog_updated, %{generation: 5, providers: %{}}},
+               socket
+             )
+
+    {:noreply, rejected} = AppLive.handle_event("model", %{"model" => "evil::anything"}, socket)
+    assert rejected.assigns.notice =~ "model unavailable"
   end
 end

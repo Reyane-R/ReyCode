@@ -17,7 +17,7 @@ defmodule ReyCode.Web.Layouts do
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap"
         />
         <style>
           <%= Phoenix.HTML.raw(css()) %>
@@ -76,13 +76,14 @@ defmodule ReyCode.Web.Layouts do
       --bg: #090508; --surface: #0E0709; --panel: #1C0D16; --line: #3B1119; --boundary: #5A1A24;
       --text: #E8E2E3; --muted: #9A8A91; --dim: #7D6E75;
       --cyan: #25E0FF; --rose: #D96B7C; --yellow: #FCEE09; --red: #FF5268; --green: #68E8AD;
-      --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+      /* Monospace throughout, like the TUI; Chakra Petch only for the mark. */
       --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-      --display: "Chakra Petch", var(--sans);
+      --sans: var(--mono);
+      --display: "Chakra Petch", var(--mono);
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
-    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 var(--sans); }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.65 var(--mono); }
     a { color: inherit; text-decoration: none; }
     :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 4px; }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -106,15 +107,26 @@ defmodule ReyCode.Web.Layouts do
     .wordmark::after { content: ""; display: inline-block; width: 0.5em; height: 0.9em; margin-left: 4px;
       background: var(--cyan); vertical-align: -0.08em; }
     .menu-toggle { display: none; }
-    .new-chat { margin: 6px 14px 14px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 6px;
-      font-weight: 500; font-size: 14px; }
-    .new-chat:hover { border-color: var(--cyan); }
-    .new-chat.inline { display: inline-block; margin: 0; }
+    .icon { flex: none; vertical-align: -3px; }
+    .nav-row { display: flex; align-items: center; gap: 10px; margin: 0 8px; padding: 7px 10px; border-radius: 6px;
+      font-size: 13.5px; color: var(--muted); }
+    .nav-row:hover, .nav-row:focus-within { background: var(--panel); color: var(--text); }
+    .new-chat { color: var(--text); }
+    .new-chat .icon { color: var(--cyan); }
+    .new-chat.inline { display: inline-flex; margin: 0; border: 1px solid var(--line); }
+    .search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); font: inherit;
+      padding: 0; }
+    .search input:focus { outline: none; }
+    .search input::placeholder { color: var(--dim); }
+    .search input::-webkit-search-cancel-button { filter: invert(0.6); }
+    .show-more { display: block; margin: 2px 0 0; padding: 5px 10px; border: 0; background: none; color: var(--dim);
+      font: 12.5px/1.4 var(--mono); }
+    .show-more:hover { color: var(--cyan); }
     .sessions { overflow-y: auto; padding: 0 8px 24px; }
-    .group h2 { font: 500 12px/1 var(--sans); color: var(--dim); margin: 16px 10px 6px; overflow: hidden;
-      text-overflow: ellipsis; white-space: nowrap; }
-    .session { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px;
-      font-size: 14px; color: var(--muted); }
+    .group h2 { display: flex; align-items: center; gap: 8px; font: 500 12px/1 var(--mono); color: var(--dim);
+      margin: 18px 10px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .session { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 34px; border-radius: 6px;
+      font-size: 13px; color: var(--muted); }
     .session:hover { background: var(--panel); color: var(--text); }
     .session.selected { background: var(--panel); color: var(--text); box-shadow: inset 2px 0 0 var(--cyan); }
     .session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -126,7 +138,7 @@ defmodule ReyCode.Web.Layouts do
     .conversation { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
     .thread-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
       padding: 18px 32px 14px; border-bottom: 1px solid var(--line); }
-    .thread-head h1 { font: 600 17px/1.35 var(--sans); margin: 0; }
+    .thread-head h1 { font: 600 15px/1.4 var(--mono); margin: 0; }
     .workspace { margin: 2px 0 0; font: 12px/1.4 var(--mono); color: var(--dim); overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap; }
     .working { font-size: 13px; color: var(--rose); white-space: nowrap; padding-top: 2px; }
@@ -194,18 +206,29 @@ defmodule ReyCode.Web.Layouts do
       font: 15px/1.55 var(--sans); padding: 2px 2px 6px; max-height: 320px; }
     .box textarea:focus { outline: none; }
     .box textarea::placeholder { color: var(--dim); }
-    .box-row { display: flex; align-items: center; gap: 8px; }
-    .box-row .hint { flex: 1; }
+    .box-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .box-row .grow { flex: 1; text-align: right; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 4px 8px;
+      border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); }
+    .chip:focus-within { border-color: var(--cyan); }
+    .chip select { min-width: 0; max-width: 260px; border: 0; color: var(--text); font: 12.5px/1.4 var(--mono);
+      padding: 2px 18px 2px 0; text-overflow: ellipsis; appearance: none; cursor: pointer;
+      background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239A8A91' stroke-width='1.4' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 2px center / 9px 6px; }
+    .chip select option { background: var(--panel); color: var(--text); }
+    .chip select:focus { outline: none; }
+    button.send { width: 34px; height: 34px; padding: 0; display: inline-grid; place-items: center; }
+    button .icon { vertical-align: -3px; }
     input[type=text] { font: inherit; width: 100%; color: var(--text); background: var(--bg);
       border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 
     /* Home */
     .home { margin: auto; width: min(680px, 100% - 32px); padding: 48px 0; }
-    .home h1 { font: 600 30px/1.2 var(--sans); letter-spacing: -0.01em; margin: 0 0 22px; }
+    .mark { font: 600 56px/1 var(--display); letter-spacing: 0.03em; margin-bottom: 14px; }
+    .mark::after { content: ""; display: inline-block; width: 0.46em; height: 0.82em; margin-left: 6px;
+      background: var(--cyan); vertical-align: -0.06em; animation: blink 1.1s steps(1) 3; }
+    .home h1 { font: 400 16px/1.4 var(--mono); color: var(--muted); margin: 0 0 26px; }
     .home .box textarea { min-height: 96px; }
-    .workspace-chip { flex: 1; min-width: 0; }
-    .workspace-chip select { max-width: 100%; font: 13px/1 var(--mono); color: var(--muted); background: var(--panel);
-      border: 1px solid var(--line); border-radius: 6px; padding: 7px 8px; }
+    .home .box-row .send { margin-left: auto; }
 
     /* Workers rail */
     .workers { border-left: 1px solid var(--line); background: var(--surface); overflow-y: auto; padding: 18px 14px; }
@@ -252,8 +275,10 @@ defmodule ReyCode.Web.Layouts do
       .app.has-workers .workers { grid-column: 1; grid-row: 3; }
       .brand { padding: 12px 16px; }
       .menu-toggle { display: inline-block; }
-      .sidebar .new-chat, .sidebar .sessions { display: none; }
-      .sidebar.open .new-chat, .sidebar.open .sessions { display: block; }
+      .sidebar .nav-row, .sidebar .sessions { display: none; }
+      .sidebar.open .nav-row { display: flex; }
+      .sidebar.open .sessions { display: block; }
+      .mark { font-size: 40px; }
       .sidebar.open .sessions { max-height: 50vh; }
       .thread-head, .timeline, .dock { padding-left: 16px; padding-right: 16px; }
       .bubble { max-width: 100%; }

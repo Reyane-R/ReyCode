@@ -60,6 +60,17 @@ defmodule ReyCode.Web.DesktopFlowTest do
     assert Engine.snapshot().sessions[new_id].title == "map the parser"
   end
 
+  test "the composer's model picker switches the Assistant's model", %{conn: conn, session_id: id} do
+    {:ok, view, html} = live(conn, "/sessions/#{id}")
+    assert html =~ "Simulator"
+
+    view |> form("#model-picker", model: "simulator::") |> render_change()
+
+    primary = Enum.find(Engine.snapshot().sessions[id].participants, &(&1.kind == :primary))
+    assert primary.provider == :simulator
+    assert render(view) =~ ~s(value="simulator::" selected)
+  end
+
   test "blank messages are ignored", %{conn: conn, session_id: id} do
     {:ok, view, _html} = live(conn, "/sessions/#{id}")
     refute view |> form("#composer", body: "   ") |> render_submit() =~ "Could not send"

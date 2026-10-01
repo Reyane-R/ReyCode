@@ -4,17 +4,17 @@ defmodule ReyCode.Web.AppLive do
   actions, and delegated workers, all live from Engine broadcasts.
 
   Owner actions go through the same Engine calls the TUI uses: start a
-  conversation, post a message, stop the active Turn, approve or deny a tool
-  request, answer an OperatorQuestion, and apply or discard an isolated
-  worker patch. The view never writes events itself.
+  conversation, post a message, switch the Assistant's model, stop the active
+  Turn, approve or deny a tool request, answer an OperatorQuestion, and apply
+  or discard an isolated worker patch. The view never writes events itself.
   """
 
   use Phoenix.LiveView
 
   alias Phoenix.LiveView.JS
   alias ReyCode.Orchestration.{Engine, Projection}
-  alias ReyCode.Provider.TextBuffer
-  alias ReyCode.TUI.Activity
+  alias ReyCode.Provider.{Catalog, TextBuffer}
+  alias ReyCode.TUI.{Activity, ModelPicker}
   alias ReyCode.Web.Markdown
 
   @sessions_max_count 100
@@ -24,15 +24,20 @@ defmodule ReyCode.Web.AppLive do
   @report_max_bytes 4_096
   @arguments_max_bytes 4_096
   @title_max_graphemes 60
+  @collapsed_sessions_count 5
+  @filter_max_bytes 200
 
   @impl true
   def mount(_params, _session, socket) do
     projection = if connected?(socket), do: Engine.subscribe(), else: Engine.snapshot()
+    catalog = if connected?(socket), do: Catalog.subscribe(), else: Catalog.snapshot()
 
     {:ok,
      socket
      |> assign(id: nil, notice: nil, html_cache: %{}, projection: projection)
-     |> assign(sequence: projection.sequence)}
+     |> assign(filter: "", expanded: MapSet.new())
+     |> assign(sequence: projection.sequence, catalog_generation: catalog.generation)
+     |> assign_models(catalog.providers)}
   end
 
   @impl true
@@ -48,12 +53,24 @@ defmodule ReyCode.Web.AppLive do
       else: {:noreply, socket}
   end
 
+  def handle_info({:provider_catalog_updated, catalog}, socket) do
+    if catalog.generation > socket.assigns.catalog_generation,
+      do:
+        {:noreply,
+         socket
+         |> assign(catalog_generation: catalog.generation)
+         |> assign_models(catalog.providers)
+         |> assign_view(socket.assigns.projection)},
+      else: {:noreply, socket}
+  end
+
   @impl true
-  def handle_event("start", %{"body" => body, "workspace" => workspace}, socket) do
+  def handle_event("start", %{"body" => body, "workspace" => workspace} = params, socket) do
     with false <- String.trim(body) == "",
          source when is_binary(source) <-
            Projection.newest_session_id_for_workspace(socket.assigns.projection, workspace),
          {:ok, session_id} <- Engine.create_session(source, title(body)),
+         :ok <- maybe_configure(socket, session_id, params["model"]),
          {:ok, _turn_id} <- Engine.post_message(session_id, body, :direct) do
       {:noreply, push_patch(socket, to: "/sessions/#{session_id}")}
     else
@@ -75,6 +92,23 @@ defmodule ReyCode.Web.AppLive do
           {:noreply, notice(socket, "Could not send: #{format(reason)}")}
       end
     end
+  end
+
+  def handle_event("model", %{"model" => value}, socket) do
+    case maybe_configure(socket, socket.assigns.id, value) do
+      :ok -> {:noreply, assign(socket, notice: nil)}
+      {:error, reason} -> {:noreply, notice(socket, "Could not switch model: #{format(reason)}")}
+    end
+  end
+
+  def handle_event("filter", %{"filter" => filter}, socket) do
+    filter = filter |> TextBuffer.truncate_utf8(@filter_max_bytes) |> String.trim()
+    {:noreply, socket |> assign(filter: filter) |> assign_view(socket.assigns.projection)}
+  end
+
+  def handle_event("expand", %{"workspace" => workspace}, socket) do
+    expanded = MapSet.put(socket.assigns.expanded, workspace)
+    {:noreply, socket |> assign(expanded: expanded) |> assign_view(socket.assigns.projection)}
   end
 
   def handle_event("stop", _params, socket) do
@@ -155,6 +189,48 @@ defmodule ReyCode.Web.AppLive do
       else: title
   end
 
+  ## Models
+
+  # Option values are "provider::model" strings matched back against the
+  # catalog's own entries, so no atom is ever built from browser input.
+  defp assign_models(socket, providers) do
+    # Some catalog entries (the test Simulator) carry no model list at all.
+    options =
+      providers
+      |> Map.new(fn {id, provider} -> {id, Map.put_new(provider, :models, [])} end)
+      |> ModelPicker.entries()
+      |> Enum.map(&Map.put(&1, :value, model_value(&1.provider, &1.model)))
+
+    assign(socket, models: options)
+  end
+
+  defp model_value(provider, model), do: "#{provider}::#{model}"
+
+  defp maybe_configure(_socket, _session_id, value) when value in [nil, ""], do: :ok
+
+  defp maybe_configure(socket, session_id, value) do
+    with %{} = entry <- Enum.find(socket.assigns.models, &(&1.value == value)),
+         %{} = session <- Map.get(socket.assigns.projection.sessions, session_id),
+         %{} = primary <- primary(session) do
+      if model_value(primary.provider, primary.model) == value,
+        do: :ok,
+        else: Engine.configure_participants(session_id, [primary.id], entry.provider, entry.model)
+    else
+      nil -> {:error, :model_unavailable}
+    end
+  end
+
+  defp primary(session), do: Enum.find(session.participants, &(&1.kind == :primary))
+
+  defp current_model(nil), do: nil
+
+  defp current_model(session) do
+    case primary(session) do
+      nil -> nil
+      participant -> model_value(participant.provider, participant.model)
+    end
+  end
+
   ## Projection → view
 
   defp assign_view(socket, projection) do
@@ -166,8 +242,9 @@ defmodule ReyCode.Web.AppLive do
     assign(socket,
       projection: projection,
       sequence: projection.sequence,
-      groups: groups(projection, sessions, now),
-      workspaces: sessions |> Enum.map(& &1.workspace) |> Enum.uniq(),
+      groups: groups(projection, sessions, now, socket.assigns.filter, socket.assigns.expanded),
+      workspaces: workspaces(projection, sessions),
+      current_model: current_model(session),
       session: session,
       messages: messages,
       html_cache: cache,
@@ -185,18 +262,42 @@ defmodule ReyCode.Web.AppLive do
     |> Enum.map(&Map.fetch!(projection.sessions, &1))
   end
 
-  # Sessions grouped by workspace, groups ordered by their newest session.
-  defp groups(projection, sessions, now) do
+  # The home picker preselects each workspace's newest conversation's model.
+  defp workspaces(projection, sessions) do
     sessions
+    |> Enum.uniq_by(& &1.workspace)
+    |> Enum.map(fn session ->
+      %{path: session.workspace, model: current_model(projection.sessions[session.id])}
+    end)
+  end
+
+  # Sessions grouped by workspace, groups ordered by their newest session.
+  # Each group shows its newest few unless expanded; a filter shows every match.
+  defp groups(projection, sessions, now, filter, expanded) do
+    needle = String.downcase(filter)
+
+    sessions
+    |> Enum.filter(&(needle == "" or String.contains?(String.downcase(&1.title || ""), needle)))
     |> Enum.with_index()
     |> Enum.group_by(fn {session, _index} -> session.workspace end)
     |> Enum.sort_by(fn {_workspace, [{_newest, index} | _older]} -> index end)
-    |> Enum.map(fn {workspace, members} ->
-      items =
-        Enum.map(members, fn {session, _index} -> session_item(projection, session, now) end)
+    |> Enum.map(
+      &group(projection, &1, now, needle != "" or MapSet.member?(expanded, elem(&1, 0)))
+    )
+  end
 
-      %{workspace: workspace, name: Path.basename(workspace || "Workspace"), sessions: items}
-    end)
+  defp group(projection, {workspace, members}, now, show_all?) do
+    items = Enum.map(members, fn {session, _index} -> session_item(projection, session, now) end)
+
+    {shown, hidden} =
+      if show_all?, do: {items, []}, else: Enum.split(items, @collapsed_sessions_count)
+
+    %{
+      workspace: workspace,
+      name: Path.basename(workspace || "Workspace"),
+      sessions: shown,
+      hidden_count: length(hidden)
+    }
   end
 
   defp session_item(projection, session, now) do
@@ -400,13 +501,25 @@ defmodule ReyCode.Web.AppLive do
             phx-click={JS.toggle_class("open", to: "#sidebar")}
             aria-label="Show conversations"
           >
-            ☰
+            <.icon name="menu" />
           </button>
         </div>
-        <.link patch="/" class="new-chat">New conversation</.link>
+        <.link patch="/" class="nav-row new-chat"><.icon name="plus" /> New conversation</.link>
+        <form class="nav-row search" phx-change="filter" phx-submit="filter" role="search">
+          <.icon name="search" />
+          <input
+            type="search"
+            name="filter"
+            value={@filter}
+            placeholder="Search conversations"
+            aria-label="Search conversations"
+            phx-debounce="150"
+            autocomplete="off"
+          />
+        </form>
         <nav class="sessions" aria-label="Conversations">
           <section :for={group <- @groups} class="group">
-            <h2 title={group.workspace}>{group.name}</h2>
+            <h2 title={group.workspace}><.icon name="folder" /> {group.name}</h2>
             <.link
               :for={item <- group.sessions}
               patch={"/sessions/#{item.id}"}
@@ -417,15 +530,26 @@ defmodule ReyCode.Web.AppLive do
               <span :if={item.working?} class="dot" title="Working"></span>
               <span class="ago">{item.ago}</span>
             </.link>
+            <button
+              :if={group.hidden_count > 0}
+              class="show-more"
+              phx-click="expand"
+              phx-value-workspace={group.workspace}
+            >
+              Show {group.hidden_count} older
+            </button>
           </section>
-          <p :if={@groups == []} class="empty-note">
+          <p :if={@groups == [] and @filter != ""} class="empty-note">
+            No conversation matches “{@filter}”.
+          </p>
+          <p :if={@groups == [] and @filter == ""} class="empty-note">
             Conversations you start appear here.
           </p>
         </nav>
       </aside>
 
       <main class="conversation">
-        <.home :if={is_nil(@id)} workspaces={@workspaces} notice={@notice} />
+        <.home :if={is_nil(@id)} workspaces={@workspaces} models={@models} notice={@notice} />
         <.missing :if={@id && is_nil(@session)} />
         <.thread
           :if={@session}
@@ -435,6 +559,8 @@ defmodule ReyCode.Web.AppLive do
           retry_turn_id={@retry_turn_id}
           question={@question}
           notice={@notice}
+          models={@models}
+          current_model={@current_model}
         />
       </main>
 
@@ -449,6 +575,7 @@ defmodule ReyCode.Web.AppLive do
   defp home(assigns) do
     ~H"""
     <section class="home">
+      <div class="mark" aria-hidden="true">ReyCode</div>
       <h1>What should we work on?</h1>
       <form :if={@workspaces != []} phx-submit="start" class="box" id="start" phx-hook="Composer">
         <textarea
@@ -459,15 +586,24 @@ defmodule ReyCode.Web.AppLive do
           autofocus
         ></textarea>
         <div class="box-row">
-          <label class="workspace-chip">
+          <label class="chip">
             <span class="sr-only">Workspace</span>
+            <.icon name="folder" />
             <select name="workspace">
-              <option :for={workspace <- @workspaces} value={workspace}>
-                {Path.basename(workspace)}
+              <option :for={workspace <- @workspaces} value={workspace.path}>
+                {Path.basename(workspace.path)}
               </option>
             </select>
           </label>
-          <button class="primary">Start</button>
+          <label :if={@models != []} class="chip">
+            <span class="sr-only">Model</span>
+            <.icon name="model" />
+            <select name="model">
+              <option value="">Same model as last time</option>
+              <option :for={model <- @models} value={model.value}>{model.label}</option>
+            </select>
+          </label>
+          <button class="primary send" aria-label="Start"><.icon name="send" /></button>
         </div>
       </form>
       <p :if={@workspaces == []} class="empty-note">
@@ -593,23 +729,44 @@ defmodule ReyCode.Web.AppLive do
 
       <p :if={@notice} class="notice" role="alert">{@notice}</p>
 
-      <form class="box" phx-submit="send" phx-hook="Composer" id="composer">
-        <textarea
-          name="body"
-          rows="2"
-          aria-label="Message"
-          placeholder={
-            if @session.active_turn_id,
-              do: "Add a follow-up. It runs when the current work finishes.",
-              else: "Message the assistant"
-          }
-        ></textarea>
+      <div class="box">
+        <form phx-submit="send" phx-hook="Composer" id="composer">
+          <textarea
+            name="body"
+            rows="2"
+            aria-label="Message"
+            placeholder={
+              if @session.active_turn_id,
+                do: "Add a follow-up. It runs when the current work finishes.",
+                else: "Message the assistant"
+            }
+          ></textarea>
+        </form>
         <div class="box-row">
-          <span class="hint">Enter to send, Shift+Enter for a new line</span>
-          <button :if={@session.active_turn_id} type="button" phx-click="stop">Stop</button>
-          <button class="primary">Send</button>
+          <form :if={@models != []} phx-change="model" class="chip" id="model-picker">
+            <label class="sr-only" for="model-select">Model</label>
+            <.icon name="model" />
+            <select name="model" id="model-select">
+              <option :if={not Enum.any?(@models, &(&1.value == @current_model))} value="" selected>
+                Choose a model
+              </option>
+              <option
+                :for={model <- @models}
+                value={model.value}
+                selected={model.value == @current_model}
+              >
+                {model.label}
+              </option>
+            </select>
+          </form>
+          <span :if={@models == []} class="hint">No models yet: run /connect in the TUI</span>
+          <span class="hint grow">Enter to send</span>
+          <button :if={@session.active_turn_id} type="button" phx-click="stop">
+            <.icon name="stop" /> Stop
+          </button>
+          <button class="primary send" form="composer" aria-label="Send"><.icon name="send" /></button>
         </div>
-      </form>
+      </div>
     </div>
     """
   end
@@ -649,6 +806,36 @@ defmodule ReyCode.Web.AppLive do
         </div>
       </div>
     </article>
+    """
+  end
+
+  # A handful of 16px stroke icons; stroke follows currentColor so state colors apply.
+  @icons %{
+    "plus" => "M8 3v10M3 8h10",
+    "search" => "M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10Zm3.5-1.5L14 14",
+    "folder" => "M2 4.5h4l1.5 1.5H14v6.5H2z",
+    "menu" => "M2.5 4h11M2.5 8h11M2.5 12h11",
+    "send" => "M8 13V3M3.5 7.5 8 3l4.5 4.5",
+    "stop" => "M4 4h8v8H4z",
+    "model" => "M8 2 13.5 5v6L8 14 2.5 11V5zM2.5 5 8 8l5.5-3M8 8v6"
+  }
+
+  attr :name, :string, required: true
+
+  defp icon(assigns) do
+    assigns = assign(assigns, :path, Map.fetch!(@icons, assigns.name))
+
+    ~H"""
+    <svg class="icon" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path
+        d={@path}
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.4"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
     """
   end
 
