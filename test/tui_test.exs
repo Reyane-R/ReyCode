@@ -2363,10 +2363,13 @@ defmodule ReyCode.TUITest do
 
     projection = long_response_projection(session)
 
+    # ~700 lines: far taller than the 32-row terminal, so every frame reuses the
+    # prepared transcript. 500 copies made the cold first render take ~3s alone
+    # and time out Breeze.Test.render!/1 (5s) under a parallel suite.
     body =
       String.duplicate(
         "## Streaming response\n\n```elixir\ndef run(value), do: {:ok, value}\n```\n\n",
-        500
+        100
       )
 
     projection = put_in(projection, [:messages, "msg-layout-assistant", :body], body)

@@ -10,6 +10,8 @@ defmodule ReyCode.ModelEvalTaskTest do
   @event_registry __MODULE__.EventRegistry
   @agent_supervisor __MODULE__.AgentSupervisor
   @engine __MODULE__.Engine
+  # Above ExUnit's 100ms default, which a loaded CI runner can miss.
+  @receive_timeout_ms 2_000
 
   defmodule ScriptedCatalog do
     use GenServer
@@ -112,10 +114,10 @@ defmodule ReyCode.ModelEvalTaskTest do
     assert review_row.summary =~ "Review completed"
     assert ModelEval.success?(report)
 
-    assert_receive :resolve_when_ready
-    assert_receive :resolve_when_ready
-    assert_receive {:task_seen, "Luna", ^task}
-    assert_receive {:task_seen, "Review", ^task}
+    assert_receive :resolve_when_ready, @receive_timeout_ms
+    assert_receive :resolve_when_ready, @receive_timeout_ms
+    assert_receive {:task_seen, "Luna", ^task}, @receive_timeout_ms
+    assert_receive {:task_seen, "Review", ^task}, @receive_timeout_ms
 
     snapshot = Engine.snapshot(@engine)
     turn = Map.fetch!(snapshot.turns, report.turn_id)
@@ -149,7 +151,7 @@ defmodule ReyCode.ModelEvalTaskTest do
     assert missing_row.summary == "agent_not_found"
     refute ModelEval.success?(report)
     assert_raise Mix.Error, fn -> Eval.ensure_success!(report) end
-    assert_receive {:task_seen, "Luna", "Inspect the change"}
+    assert_receive {:task_seen, "Luna", "Inspect the change"}, @receive_timeout_ms
     refute_receive {:task_seen, "Missing", _task}
   end
 
@@ -175,7 +177,7 @@ defmodule ReyCode.ModelEvalTaskTest do
              Engine.configure_participants(source_room, [primary.id], :simulator, nil, @engine)
 
     assert {:ok, _blocking_turn} = Engine.post_message(source_room, "block", :direct, @engine)
-    assert_receive {:task_seen, "Assistant", "block"}
+    assert_receive {:task_seen, "Assistant", "block"}, @receive_timeout_ms
 
     report = ModelEval.run(options(stack, ["Luna"], "queue pressure"), @engine)
 

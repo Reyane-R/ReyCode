@@ -5,9 +5,12 @@ defmodule ReyCode.VerifiedChangeTest do
   alias ReyCode.Orchestration.{DelegationWorktree, Engine}
   alias ReyCode.VerifiedChange.Worktree
 
-  setup do
-    suffix = System.unique_integer([:positive])
-    source = Path.join(System.tmp_dir!(), "verified-source-#{suffix}")
+  # ExUnit's per-test tmp_dir is cleared before each run, so folders left by a
+  # killed VM cannot collide the way System.unique_integer/1 names did.
+  @moduletag :tmp_dir
+
+  setup %{tmp_dir: dir} do
+    source = Path.join(dir, "source")
     File.mkdir!(source)
     git!(source, ["init", "-q"])
     File.write!(Path.join(source, "value.txt"), "before\n")
@@ -23,7 +26,6 @@ defmodule ReyCode.VerifiedChangeTest do
       "fixture"
     ])
 
-    on_exit(fn -> File.rm_rf!(source) end)
     %{source: source}
   end
 
@@ -546,7 +548,8 @@ defmodule ReyCode.VerifiedChangeTest do
     events = :"verified_events_#{suffix}"
     supervisor = :"verified_supervisor_#{suffix}"
     name = :"verified_engine_#{suffix}"
-    path = Path.join(System.tmp_dir!(), "verified-store-#{suffix}.sqlite3")
+    # Inside the per-test tmp_dir, so a store left by a killed run is never replayed.
+    path = Path.join(Path.dirname(source), "verified-store-#{suffix}.sqlite3")
     store = start_supervised!({ReyCode.EventStore, name: nil, path: path})
     start_supervised!({Registry, keys: :unique, name: registry})
     start_supervised!({Registry, keys: :duplicate, name: events})
